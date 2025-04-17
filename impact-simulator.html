@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NRL Impact Simulator</title>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <header class="mb-4">
+  <div class="relative">
+    <button id="menu-toggle" class="absolute top-4 right-4 z-50 flex items-center px-3 py-2 border rounded text-gray-700 border-gray-400 bg-white hover:text-blue-600">
+      <svg class="fill-current h-5 w-5" viewBox="0 0 20 20">
+        <path d="M0 3h20v2H0V3zm0 6h20v2H0V9zm0 6h20v2H0v-2z" />
+      </svg>
+    </button>
+    <ul id="mobile-menu" class="hidden absolute right-4 top-14 w-48 bg-gray-900 border rounded shadow-lg z-40">
+      <li><a href="index.html" class="block px-4 py-2 text-blue-600 hover:underline">Power Rankings</a></li>
+      <li><a href="predictions.html" class="block px-4 py-2 text-blue-600 hover:underline">Predictions</a></li>
+      <li><a href="impact-simulator.html" class="block px-4 py-2 text-blue-600 font-bold underline">Impact Simulator</a></li>
+    </ul>
+  </div>
+</header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8 min-h-screen overflow-auto">
+  <h2 class="text-4xl font-bold mb-8">NRL Round Impact Simulator</h2>
+  <div class="flex flex-col lg:flex-row gap-4 items-start lg:h-[calc(100vh-200px)]">
+    <!-- Match Selection Area -->
+    <div class="w-full lg:w-2/12">
+      <h3 class="text-2xl font-semibold mb-4">Select Match Outcomes</h3>
+      <div id="selection-chance" class="mb-4 text-sm text-gray-300 font-medium">
+        <!-- JS populates this -->
+      </div>
+      <form id="simulation-form" class="space-y-2 text-sm">
+        <!-- Match selection radio buttons will be injected here -->
+      </form>
+    </div>
+
+    <!-- Bar Chart Area -->
+    <div class="w-full lg:w-10/12 h-full">
+      <h3 class="text-2xl font-semibold mb-4">Simulated Outcome Probabilities</h3>
+      <div class="mb-4">
+        <label for="impact-select" class="block text-sm font-medium mb-1">Select Outcome</label>
+        <select id="impact-select" class="p-2 border rounded bg-gray-900 text-white">
+          <option>Top 8</option>
+          <option>Top 4</option>
+          <option>Minor Premiership</option>
+          <option>Wooden Spoon</option>
+        </select>
+      </div>
+      <canvas id="impactChart" class="w-full h-full"></canvas>
+    </div>
+  </div>
+      </section>
+    </main>
+
+    <script type="module" src="js/impact-simulator.js"></script>
+  <script>
+  document.getElementById("menu-toggle").addEventListener("click", () => {
+    const menu = document.getElementById("mobile-menu");
+    menu.classList.toggle("hidden");
+  });
+</script>
+</body>
+</html>
