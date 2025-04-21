@@ -152,7 +152,7 @@ const yourColourMap = {
         {
             // draw logos outside the outer ring
             id: 'outerLogos',
-            afterDraw(chart) {
+            afterDatasetsDraw(chart) {
               const { ctx } = chart;
               const meta = chart.getDatasetMeta(0);
               const arcs = meta.data;
