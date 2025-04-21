@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NRL Power Rankings</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+  <div id="site-header"></div>
+    <main class="max-w-7xl mx-auto px-4 py-8">
+      <h1 class="text-4xl font-bold mb-8">NRL Power Rankings</h1>
+
+      <!-- Rankings Table -->
+      <section class="mb-10">
+        <h2 class="text-2xl font-semibold mb-4">Power Rankings</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full bg-gray-900 border" id="rankings-table">
+            <thead>
+              <tr>
+                <th class="px-4 py-2 border">Rank</th>
+                <th class="px-4 py-2 border">Team</th>
+                <th class="px-4 py-2 border">Rating</th>
+                <th class="px-4 py-2 border">Form</th>
+                <th class="px-4 py-2 border">Top 8</th>
+                <th class="px-4 py-2 border">Top 4</th>
+                <th class="px-4 py-2 border">Minor Premiership</th>
+                <th class="px-4 py-2 border">Premiers</th>
+                <th class="px-4 py-2 border">Wooden Spoon</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Projected Ladder Table -->
+      <section class="mb-10">
+        <h2 class="text-2xl font-semibold mb-4">Projected Ladder</h2>
+        <div class="overflow-x-auto">
+          <table class="min-w-full bg-gray-900 border" id="ladder-table">
+            <thead>
+              <tr>
+                <th class="px-4 py-2 border">Rank</th>
+                <th class="px-4 py-2 border">Team</th>
+                <th class="px-4 py-2 border">Wins</th>
+                <th class="px-4 py-2 border">Losses</th>
+                <th class="px-4 py-2 border">PD</th>
+                <th class="px-4 py-2 border">For</th>
+                <th class="px-4 py-2 border">Against</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Finals Probability Chart -->
+      <section class="mb-10">
+        <h2 class="text-2xl font-semibold mb-4">Finals Probability</h2>
+        <div class="mb-4">
+          <label for="chart-select" class="block text-sm font-medium mb-1">Select Metric</label>
+          <select id="chart-select" class="p-2 border rounded bg-gray-900 text-white">
+            <option>Top 8</option>
+            <option>Top 4</option>
+            <option>Minor Premiership</option>
+            <option>Premiership</option>
+            <option>Wooden Spoon</option>
+          </select>
+        </div>
+        <canvas id="finalsChart"></canvas>
+      </section>
+
+      <!-- Scatterplot -->
+      <section class="mb-10">
+        <h2 class="text-2xl font-semibold mb-4">Offensive vs Defensive Ratings</h2>
+        <canvas id="ratingsScatter" class="bg-gray-800"$1></canvas>
+      </section>
+    </main>
+
+    <script type="module" src="../js/main.js"></script>
+  <script>
+  fetch('../components/header.html')
+    .then(res => res.text())
+    .then(html => {
+      document.getElementById("site-header").innerHTML = html;
+      const menuToggle = document.getElementById("menu-toggle");
+      const mobileMenu = document.getElementById("mobile-menu");
+      if (menuToggle && mobileMenu) {
+        menuToggle.addEventListener("click", () => {
+          mobileMenu.classList.toggle("hidden");
+        });
+      }
+    });
+</script>
+</body>
+</html>

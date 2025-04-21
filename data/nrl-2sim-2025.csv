@@ -1,0 +1,152 @@
+Match Number,Round Number,Date,Location,Home Team,Away Team,Neutral flag
+54,7,45767.16667,Cbus Super Stadium,Titans,Raiders,0
+55,7,45767.25347,McDonald Jones Stadium,Knights,Sharks,0
+56,7,45768.25,CommBank Stadium,Tigers,Eels,0
+57,8,45771.40972,Suncorp Stadium,Broncos,Bulldogs,0
+58,8,45772.25,Allianz Stadium,Roosters,Dragons,0
+59,8,45772.33333,Apollo Projects Stadium,Warriors,Knights,0
+60,8,45772.41667,AAMI Park,Storm,Rabbitohs,0
+61,8,45773.3125,Queensland Country Bank Stadium,Cowboys,Titans,0
+62,8,45773.39931,CommBank Stadium,Panthers,Manly,0
+63,8,45774.16667,GIO Stadium,Raiders,Dolphins,0
+64,8,45774.25347,Leichhardt Oval,Tigers,Sharks,0
+65,9,45779.33333,Suncorp Stadium,Sharks,Eels,1
+66,9,45779.41667,Suncorp Stadium,Roosters,Dolphins,1
+67,9,45780.20833,Suncorp Stadium,Rabbitohs,Knights,1
+68,9,45780.3125,Suncorp Stadium,Warriors,Cowboys,1
+69,9,45780.40625,Suncorp Stadium,Tigers,Dragons,1
+70,9,45781.15972,Suncorp Stadium,Titans,Bulldogs,1
+71,9,45781.25347,Suncorp Stadium,Panthers,Broncos,1
+72,9,45781.35069,Suncorp Stadium,Storm,Raiders,1
+73,10,45785.40972,CommBank Stadium,Eels,Dolphins,0
+74,10,45786.33333,McDonald Jones Stadium,Knights,Titans,0
+75,10,45786.41667,Accor Stadium,Rabbitohs,Broncos,0
+76,10,45787.20833,GIO Stadium,Raiders,Bulldogs,0
+77,10,45787.3125,WIN Stadium,Dragons,Warriors,0
+78,10,45787.39931,Queensland Country Bank Stadium,Cowboys,Panthers,0
+79,10,45788.16667,AAMI Park,Storm,Tigers,0
+80,10,45788.25347,4 Pines Park,Manly,Sharks,0
+81,11,45793.33333,McDonald Jones Stadium,Knights,Eels,0
+82,11,45793.41667,Accor Stadium,Bulldogs,Roosters,0
+83,11,45794.20833,Suncorp Stadium,Dolphins,Warriors,0
+84,11,45794.3125,Queensland Country Bank Stadium,Cowboys,Manly,0
+85,11,45794.39931,Shark Park,Sharks,Storm,0
+86,11,45795.16667,Suncorp Stadium,Broncos,Dragons,0
+87,11,45795.25347,GIO Stadium,Raiders,Titans,0
+88,11,45795.34375,Campbelltown Sports Stadium,Tigers,Rabbitohs,0
+89,12,45799.40972,Accor Stadium,Bulldogs,Dolphins,0
+90,12,45800.41667,CommBank Stadium,Eels,Manly,0
+91,12,45801.3125,Carrington Park,Panthers,Knights,0
+92,12,45801.39931,Industree Group Stadium,Roosters,Sharks,0
+93,12,45802.25347,Go Media Stadium,Warriors,Raiders,0
+94,13,45807.41667,Netstrata Jubilee Stadium,Dragons,Knights,0
+95,13,45808.20833,Cbus Super Stadium,Titans,Storm,0
+96,13,45808.3125,Queensland Country Bank Stadium,Cowboys,Tigers,0
+97,13,45808.39931,4 Pines Park,Manly,Broncos,0
+98,13,45809.16667,Accor Stadium,Rabbitohs,Warriors,0
+99,13,45809.25347,CommBank Stadium,Panthers,Eels,0
+100,13,45809.34375,Allianz Stadium,Roosters,Raiders,0
+101,14,45813.40972,McDonald Jones Stadium,Knights,Manly,0
+102,14,45814.33333,AAMI Park,Storm,Cowboys,0
+103,14,45814.41667,Suncorp Stadium,Dolphins,Dragons,0
+104,14,45815.3125,Shark Park,Sharks,Warriors,0
+105,14,45815.39931,Suncorp Stadium,Broncos,Titans,0
+106,14,45816.16667,GIO Stadium,Raiders,Rabbitohs,0
+107,14,45816.25347,CommBank Stadium,Tigers,Panthers,0
+108,14,45817.25,Accor Stadium,Bulldogs,Eels,0
+109,15,45820.40972,Shark Park,Sharks,Dragons,0
+110,15,45821.41667,Cbus Super Stadium,Titans,Manly,0
+111,15,45822.3125,McDonald Jones Stadium,Knights,Roosters,0
+112,15,45822.39931,Queensland Country Bank Stadium,Cowboys,Dolphins,0
+113,15,45823.25347,Accor Stadium,Rabbitohs,Bulldogs,0
+114,16,45828.41667,Campbelltown Sports Stadium,Tigers,Raiders,0
+115,16,45829.20833,Go Media Stadium,Warriors,Panthers,0
+116,16,45829.3125,HBF Park,Dolphins,Knights,0
+117,16,45829.39931,Accor Stadium,Rabbitohs,Storm,0
+118,16,45830.16667,Suncorp Stadium,Broncos,Sharks,0
+119,16,45830.25347,Allianz Stadium,Roosters,Cowboys,0
+120,16,45830.34375,CommBank Stadium,Eels,Titans,0
+121,17,45834.40972,CommBank Stadium,Panthers,Bulldogs,0
+122,17,45835.33333,4 Pines Park,Manly,Tigers,0
+123,17,45835.41667,McDonald Jones Stadium,Knights,Raiders,0
+124,17,45836.20833,Suncorp Stadium,Broncos,Warriors,0
+125,17,45836.3125,WIN Stadium,Dragons,Eels,0
+126,17,45836.39931,Accor Stadium,Dolphins,Rabbitohs,0
+127,17,45837.16667,AAMI Park,Storm,Sharks,0
+128,17,45837.25347,Cbus Super Stadium,Titans,Cowboys,0
+129,18,45842.41667,Accor Stadium,Bulldogs,Broncos,0
+130,18,45843.3125,GIO Stadium,Raiders,Dragons,0
+131,18,45843.39931,Queensland Country Bank Stadium,Cowboys,Storm,0
+132,18,45844.16667,Allianz Stadium,Roosters,Tigers,0
+133,18,45844.25347,4 Pines Park,Manly,Rabbitohs,0
+134,19,45849.41667,Shark Park,Sharks,Dolphins,0
+135,19,45850.20833,McDonald Jones Stadium,Knights,Storm,0
+136,19,45850.3125,Netstrata Jubilee Stadium,Dragons,Roosters,0
+137,19,45850.39931,Queensland Country Bank Stadium,Cowboys,Bulldogs,0
+138,19,45851.16667,Go Media Stadium,Warriors,Tigers,0
+139,19,45851.25347,CommBank Stadium,Eels,Panthers,0
+140,19,45851.34375,Cbus Super Stadium,Titans,Broncos,0
+141,20,45855.40972,Suncorp Stadium,Dolphins,Cowboys,0
+142,20,45856.33333,Shark Park,Sharks,Roosters,0
+143,20,45856.41667,CommBank Stadium,Panthers,Rabbitohs,0
+144,20,45857.20833,GIO Stadium,Raiders,Eels,0
+145,20,45857.3125,Accor Stadium,Bulldogs,Dragons,0
+146,20,45857.39931,AAMI Park,Storm,Manly,0
+147,20,45858.16667,Leichhardt Oval,Tigers,Titans,0
+148,20,45858.25347,McDonald Jones Stadium,Knights,Warriors,0
+149,21,45862.40972,Allianz Stadium,Roosters,Storm,0
+150,21,45863.33333,Queensland Country Bank Stadium,Cowboys,Dragons,0
+151,21,45863.41667,Suncorp Stadium,Broncos,Eels,0
+152,21,45864.20833,Go Media Stadium,Warriors,Titans,0
+153,21,45864.3125,CommBank Stadium,Panthers,Tigers,0
+154,21,45864.39931,Industree Group Stadium,Rabbitohs,Sharks,0
+155,21,45865.16667,GIO Stadium,Raiders,Knights,0
+156,21,45865.25347,Allianz Stadium,Bulldogs,Manly,0
+157,22,45869.40972,CommBank Stadium,Eels,Storm,0
+158,22,45870.33333,Go Media Stadium,Warriors,Dolphins,0
+159,22,45870.41667,Suncorp Stadium,Broncos,Rabbitohs,0
+160,22,45871.20833,Cbus Super Stadium,Titans,Panthers,0
+161,22,45871.3125,WIN Stadium,Dragons,Raiders,0
+162,22,45871.39931,4 Pines Park,Manly,Roosters,0
+163,22,45872.16667,CommBank Stadium,Tigers,Bulldogs,0
+164,22,45872.25347,Shark Park,Sharks,Cowboys,0
+165,23,45876.40972,AAMI Park,Storm,Broncos,0
+166,23,45877.33333,McDonald Jones Stadium,Knights,Panthers,0
+167,23,45877.41667,GIO Stadium,Raiders,Manly,0
+168,23,45878.20833,Netstrata Jubilee Stadium,Dragons,Sharks,0
+169,23,45878.3125,Suncorp Stadium,Dolphins,Roosters,0
+170,23,45878.39931,Accor Stadium,Bulldogs,Warriors,0
+171,23,45879.16667,Cbus Super Stadium,Titans,Rabbitohs,0
+172,23,45879.25347,CommBank Stadium,Eels,Cowboys,0
+173,24,45883.40972,CommBank Stadium,Panthers,Storm,0
+174,24,45884.33333,Go Media Stadium,Warriors,Dragons,0
+175,24,45884.41667,Allianz Stadium,Roosters,Bulldogs,0
+176,24,45885.20833,Shark Park,Sharks,Titans,0
+177,24,45885.3125,Suncorp Stadium,Broncos,Dolphins,0
+178,24,45885.39931,Allianz Stadium,Rabbitohs,Eels,0
+179,24,45886.16667,Allianz Stadium,Tigers,Manly,0
+180,24,45886.25347,Queensland Country Bank Stadium,Cowboys,Knights,0
+181,25,45890.40972,Accor Stadium,Rabbitohs,Dragons,0
+182,25,45891.33333,Glen Willow Oval,Panthers,Raiders,0
+183,25,45891.41667,AAMI Park,Storm,Bulldogs,0
+184,25,45892.20833,4 Pines Park,Manly,Dolphins,0
+185,25,45892.3125,Cbus Super Stadium,Titans,Warriors,0
+186,25,45892.39931,CommBank Stadium,Eels,Roosters,0
+187,25,45893.16667,McDonald Jones Stadium,Knights,Broncos,0
+188,25,45893.25347,Leichhardt Oval,Tigers,Cowboys,0
+189,26,45897.40972,Accor Stadium,Bulldogs,Panthers,0
+190,26,45898.33333,Go Media Stadium,Warriors,Eels,0
+191,26,45898.41667,AAMI Park,Storm,Roosters,0
+192,26,45899.20833,GIO Stadium,Raiders,Tigers,0
+193,26,45899.3125,Netstrata Jubilee Stadium,Dragons,Manly,0
+194,26,45899.39931,Queensland Country Bank Stadium,Cowboys,Broncos,0
+195,26,45900.16667,Shark Park,Sharks,Knights,0
+196,26,45900.25347,Suncorp Stadium,Dolphins,Titans,0
+197,27,45904.40972,Suncorp Stadium,Broncos,Storm,0
+198,27,45905.33333,4 Pines Park,Manly,Warriors,0
+199,27,45905.41667,Allianz Stadium,Roosters,Rabbitohs,0
+200,27,45906.20833,WIN Stadium,Dragons,Panthers,0
+201,27,45906.3125,Cbus Super Stadium,Titans,Tigers,0
+202,27,45906.39931,Accor Stadium,Bulldogs,Sharks,0
+203,27,45907.16667,Kayo Stadium,Dolphins,Raiders,0
+204,27,45907.25347,CommBank Stadium,Eels,Knights,0

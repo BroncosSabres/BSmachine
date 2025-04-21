@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>About the BS Machine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-4xl mx-auto px-6 py-10">
+      <h1 class="text-4xl font-bold mb-6">About the BS Machine</h1>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-semibold mb-2">What is this site?</h2>
+        <p class="text-gray-300">
+          The BS Machine is a data-driven platform for analysing NRL team performance, projecting outcomes, and visualising each team's season trajectory.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-semibold mb-2">How does it work?</h2>
+        <p class="text-gray-300">
+          The model uses a Bayesian approach to predict the expected score for each match based on the offensive and defensive ratings of the teams involved. After each round, the predicted result is compared to the actual outcome, and the ratings are updated accordingly. This update reflects both offensive and defensive performance, allowing the model to understand not just how strong a team is overall, but whether that strength comes from attack, defence, or both. The result is a dynamic rating system that captures team performance above or below average, split into offensive, defensive, and total rating components.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-semibold mb-2">What data do you use?</h2>
+        <p class="text-gray-300">
+          Data includes past match results, scoring margins, and season fixtures. No proprietary data is used — everything is derived from publicly available match results and team performance stats.
+        </p>
+      </section>
+
+      <section class="mb-8">
+        <h2 class="text-2xl font-semibold mb-2">Limitations</h2>
+        <p class="text-gray-300">
+          The model doesn't currently explicitly account for injuries, team announcements, or mid-season coaching changes. While accurate in trends, it's not meant to replace expert judgment.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-2xl font-semibold mb-2">Contact</h2>
+        <p class="text-gray-300">
+          This project is maintained by BroncosSabres. For questions or suggestions, reach out via Reddit at u/BroncosSabres or via email at <a href="mailto:broncossabres@gmail.com" class="underline text-blue-400 hover:text-blue-200">broncossabres@gmail.com</a>.
+        </p>
+      </section>
+    </main>
+
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+  </body>
+</html>

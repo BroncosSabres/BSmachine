@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Season Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-6xl mx-auto px-6 py-10">
+      <h1 class="text-4xl font-bold mb-6">Season Tracker</h1>
+      <p class="text-gray-300 mb-10">
+        Explore how each NRL team's performance rating and finals probabilities evolve throughout the season.
+        Hover over any point to view match context and results.
+      </p>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Rating Progression</h2>
+        <canvas id="ratingChart" class="w-full h-96"></canvas>
+      </section>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Top 8 Probability</h2>
+        <canvas id="top8Chart" class="w-full h-96"></canvas>
+      </section>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Top 4 Probability</h2>
+        <canvas id="top4Chart" class="w-full h-96"></canvas>
+      </section>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Minor Premiership Probability</h2>
+        <canvas id="minorChart" class="w-full h-96"></canvas>
+      </section>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Wooden Spoon Probability</h2>
+        <canvas id="spoonChart" class="w-full h-96"></canvas>
+      </section>
+    </main>
+
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module">
+      import { loadRoundData } from '../js/load-tracker-data.js';
+      window.loadRoundData = loadRoundData;
+    </script>
+    <script type="module">
+      import { loadMatchResults } from '../js/load-match-results.js';
+      window.loadMatchResults = loadMatchResults;
+    </script>
+    <script src="../js/tracker.js"></script>
+  </body>
+</html>

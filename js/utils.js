@@ -7,7 +7,7 @@
 export async function getLatestRoundFolder() {
     const roundCount = 30; // Check up to 30 rounds
     for (let i = roundCount; i >= 0; i--) {
-      const res = await fetch(`data/Round${i}/results.csv`);
+      const res = await fetch(`../data/Round${i}/results.csv`);
       if (res.ok) return `Round${i}`;
     }
     return null;

@@ -10,7 +10,7 @@ let resultsData = [];
 async function getLatestRoundFolder() {
   const roundCount = 30;
   for (let i = roundCount; i >= 0; i--) {
-    const response = await fetch(`data/Round${i}/results.csv`);
+    const response = await fetch(`../data/Round${i}/results.csv`);
     if (response.ok) return `Round${i}`;
   }
   return null;
@@ -24,7 +24,7 @@ async function getLatestRoundFolder() {
 
   let prevDataMap = {};
   try {
-    const prevRes = await fetch(`data/${prevRoundFolder}/results.csv`);
+    const prevRes = await fetch(`../data/${prevRoundFolder}/results.csv`);
     if (prevRes.ok) {
       const prevText = await prevRes.text();
       const prevParsed = Papa.parse(prevText, { header: true });
@@ -36,7 +36,7 @@ async function getLatestRoundFolder() {
     console.warn("Previous round data not available");
   }
 
-  const res = await fetch(`data/${roundFolder}/results.csv`);
+  const res = await fetch(`../data/${roundFolder}/results.csv`);
   const resultsText = await res.text();
   const parsedResults = Papa.parse(resultsText, { header: true });
   resultsData = parsedResults.data;
@@ -69,7 +69,7 @@ async function getLatestRoundFolder() {
     updateChart(resultsData, e.target.value, prevDataMap);
   });
 
-  const ladderRes = await fetch(`data/${roundFolder}/projected_ladder.csv`);
+  const ladderRes = await fetch(`../data/${roundFolder}/projected_ladder.csv`);
   const ladderText = await ladderRes.text();
   const parsedLadder = Papa.parse(ladderText, { header: true });
 

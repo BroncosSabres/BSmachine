@@ -3,104 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NRL Power Rankings</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+    <title>NRL Predictions Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-800 text-white">
-  <header class="mb-4">
-    <div class="relative">
-      <button id="menu-toggle" class="absolute top-4 right-4 z-50 flex items-center px-3 py-2 border rounded text-gray-700 border-gray-400 bg-white hover:text-blue-600">
-        <svg class="fill-current h-5 w-5" viewBox="0 0 20 20">
-          <path d="M0 3h20v2H0V3zm0 6h20v2H0V9zm0 6h20v2H0v-2z" />
-        </svg>
-      </button>
-      <ul id="mobile-menu" class="hidden absolute right-4 top-14 w-48 bg-white border rounded shadow-lg z-40">
-        <li><a href="index.html" class="block px-4 py-2 text-blue-600 font-bold underline">Power Rankings</a></li>
-        <li><a href="predictions.html" class="block px-4 py-2 text-blue-600 hover:underline">Predictions</a></li>
-        <li><a href="impact-simulator.html" class="block px-4 py-2 text-blue-600 hover:underline">Impact Simulator</a></li>
-      </ul>
-    </div>
-  </header>
-    <main class="max-w-7xl mx-auto px-4 py-8">
-      <h1 class="text-4xl font-bold mb-8">NRL Power Rankings</h1>
+    <div id="site-header"></div>
 
-      <!-- Rankings Table -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Power Rankings</h2>
-        <div class="overflow-x-auto">
-          <table class="min-w-full bg-gray-900 border" id="rankings-table">
-            <thead>
-              <tr>
-                <th class="px-4 py-2 border">Rank</th>
-                <th class="px-4 py-2 border">Team</th>
-                <th class="px-4 py-2 border">Rating</th>
-                <th class="px-4 py-2 border">Form</th>
-                <th class="px-4 py-2 border">Top 8</th>
-                <th class="px-4 py-2 border">Top 4</th>
-                <th class="px-4 py-2 border">Minor Premiership</th>
-                <th class="px-4 py-2 border">Premiers</th>
-                <th class="px-4 py-2 border">Wooden Spoon</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Projected Ladder Table -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Projected Ladder</h2>
-        <div class="overflow-x-auto">
-          <table class="min-w-full bg-gray-900 border" id="ladder-table">
-            <thead>
-              <tr>
-                <th class="px-4 py-2 border">Rank</th>
-                <th class="px-4 py-2 border">Team</th>
-                <th class="px-4 py-2 border">Wins</th>
-                <th class="px-4 py-2 border">Losses</th>
-                <th class="px-4 py-2 border">PD</th>
-                <th class="px-4 py-2 border">For</th>
-                <th class="px-4 py-2 border">Against</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Finals Probability Chart -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Finals Probability</h2>
-        <div class="mb-4">
-          <label for="chart-select" class="block text-sm font-medium mb-1">Select Metric</label>
-          <select id="chart-select" class="p-2 border rounded bg-gray-900 text-white">
-            <option>Top 8</option>
-            <option>Top 4</option>
-            <option>Minor Premiership</option>
-            <option>Premiership</option>
-            <option>Wooden Spoon</option>
-          </select>
-        </div>
-        <canvas id="finalsChart"></canvas>
-      </section>
-
-      <!-- Scatterplot -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Offensive vs Defensive Ratings</h2>
-        <canvas id="ratingsScatter" class="bg-gray-800"$1></canvas>
-      </section>
+    <main class="max-w-3xl mx-auto px-4 py-12 text-center">
+      <h1 class="text-4xl font-bold mb-4">The BS Machine<br>NRL Power Rankings and Predictions</h1>
+      <p class="text-lg text-gray-300 mb-8">
+        A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact in the NRL.
+      </p>
+      <div class="flex flex-col gap-4 items-center">
+        <a href="pages/about.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">About the Power Rankings</a>
+        <a href="pages/rankings.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">View Rankings</a>
+        <a href="pages/matchups.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Match Predictions</a>
+        <a href="pages/simulator.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Round Simulator</a>
+        <a href="pages/tracker.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Track the 2025 Season</a>
+      </div>
     </main>
 
-    <script type="module" src="js/main.js"></script>
-  <script>
-  document.addEventListener("DOMContentLoaded", function () {
-    document.getElementById("menu-toggle").addEventListener("click", () => {
-      const menu = document.getElementById("mobile-menu");
-      menu.classList.toggle("hidden");
+    <script>
+  fetch('components/header.html')
+    .then(res => res.text())
+    .then(html => {
+      document.getElementById("site-header").innerHTML = html;
+
+      // ✅ Hook up hamburger toggle after header is loaded
+      const menuToggle = document.getElementById("menu-toggle");
+      const mobileMenu = document.getElementById("mobile-menu");
+      if (menuToggle && mobileMenu) {
+        menuToggle.addEventListener("click", () => {
+          mobileMenu.classList.toggle("hidden");
+        });
+      }
     });
-  });
 </script>
-</body>
+  </body>
 </html>

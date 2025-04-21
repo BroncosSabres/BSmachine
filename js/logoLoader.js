@@ -1,6 +1,6 @@
 // logoLoader.js
 
-export async function loadTeamLogos(data, logoPath = 'logos') {
+export async function loadTeamLogos(data, logoPath = '../logos') {
     const logos = {};
     const loadPromises = data.filter(team => team && team["Team"]).map(team => {
       const name = team["Team"].toLowerCase();

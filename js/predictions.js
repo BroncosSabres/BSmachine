@@ -16,7 +16,7 @@ async function loadPredictions() {
     return;
   }
 
-  const predictionsPath = `data/${roundFolder}/Predictions.txt`;
+  const predictionsPath = `../data/${roundFolder}/Predictions.txt`;
   console.log("Fetching predictions from:", predictionsPath);
 
   try {

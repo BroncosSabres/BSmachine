@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NRL Match Predictions</title>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <div id="site-header"></div>
+<script>
+  fetch('../components/header.html')
+    .then(res => res.text())
+    .then(html => {
+      document.getElementById("site-header").innerHTML = html;
+      const menuToggle = document.getElementById("menu-toggle");
+      const mobileMenu = document.getElementById("mobile-menu");
+      if (menuToggle && mobileMenu) {
+        menuToggle.addEventListener("click", () => {
+          mobileMenu.classList.toggle("hidden");
+        });
+      }
+    });
+</script>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+      <h2 class="text-4xl font-bold mb-8">NRL Round Predictions</h2>
+
+      <!-- Match Predictions Table -->
+      <section class="mb-10">
+        <h3 class="text-2xl font-semibold mb-4">Upcoming Matches</h3>
+        <div class="overflow-x-auto">
+          <table class="min-w-full bg-gray-900 border" id="predictions-table">
+            <thead>
+                <tr>
+                  <th class="px-4 py-2 border">Home</th>
+                  <th class="px-4 py-2 border">Away</th>
+                  <th class="px-4 py-2 border">Predicted Winner</th>
+                  <th class="px-4 py-2 border">Win Probability</th>
+                  <th class="px-4 py-2 border">Expected Score</th>
+                  <th class="px-4 py-2 border">Expected Total Points</th>
+                </tr>
+              </thead>              
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="../js/predictions.js"></script>
+  </body>
+</html>

@@ -182,14 +182,14 @@ async function updateChart(matches) {
   const selected = getSelectedWinners(matches);
   const file = outcomeFiles[outcomeSelect.value];
   const round = await getLatestRoundFolder();
-  const res = await fetch(`data/${round}/${file}`);
+  const res = await fetch(`../data/${round}/${file}`);
   const text = await res.text();
   updateChartFromCSV(text, selected);
 }
 
 async function init() {
   const round = await getLatestRoundFolder();
-  const res = await fetch(`data/${round}/Predictions.txt`);
+  const res = await fetch(`../data/${round}/Predictions.txt`);
   const text = await res.text();
   const matches = text.trim().split("\n").map(l => JSON.parse(l.replace(/'/g, '"')));
   renderMatchOptions(matches);
