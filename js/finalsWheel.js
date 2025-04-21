@@ -58,6 +58,9 @@ const yourColourMap = {
     const resp = await fetch(resultsFile);
     const text = await resp.text();
     const rows = parseCSV(text);
+
+    // Sort teams alphabetically by name
+    rows.sort((a, b) => a.Team.localeCompare(b.Team));
   
     const teamNames   = rows.map(r => r.Team);
     const finalsOdds  = rows.map(r => +r['Top 8']    * 100);
@@ -86,11 +89,11 @@ const yourColourMap = {
       data: {
         labels: teamNames,
         datasets: [
-          { label: 'Top 8',      data: finalsOdds,  backgroundColor: teamColours,  weight: 1 },
-          { label: 'Semi Finals',      data: semiOdds,    backgroundColor: teamColours,  weight: 1 },
-          { label: 'Preliminary Finals',   data: prelimOdds,  backgroundColor: teamColours,  weight: 1 },
-          { label: 'GF',         data: gfOdds,      backgroundColor: teamColours,  weight: 1 },
-          { label: 'Premiers',   data: premierOdds, backgroundColor: teamColours,  weight: 1  }
+          { label: 'Top 8',      data: finalsOdds,  backgroundColor: teamColours,  weight: 1 , borderColor: '#ccc', borderWidth: 1},
+          { label: 'Semi Finals',      data: semiOdds,    backgroundColor: teamColours,  weight: 1 , borderColor: '#ccc', borderWidth: 1},
+          { label: 'Preliminary Finals',   data: prelimOdds,  backgroundColor: teamColours,  weight: 1 , borderColor: '#ccc', borderWidth: 1},
+          { label: 'GF',         data: gfOdds,      backgroundColor: teamColours,  weight: 1 , borderColor: '#ccc', borderWidth: 1},
+          { label: 'Premiers',   data: premierOdds, backgroundColor: teamColours,  weight: 1  , borderColor: '#ccc', borderWidth: 1}
         ]
       },
       options: {
@@ -129,7 +132,7 @@ const yourColourMap = {
               const centerY = chartArea.top + chartArea.height / 2;
               const labels = ['Qualifying Finals', 'Semi Finals', 'Preliminary Finals', 'Grand Final', 'Premiers'];
               // 20° clockwise from vertical
-              const baseAngle = -Math.PI/2 + (30 * Math.PI/180);
+              const baseAngle = -Math.PI/2 + (0 * Math.PI/180);
               labels.forEach((text, i) => {
                 const arc = chart.getDatasetMeta(i).data[0];
                 const r = arc.outerRadius - 5;
