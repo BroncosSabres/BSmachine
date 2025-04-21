@@ -5,39 +5,53 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NRL Predictions Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
   </head>
   <body class="bg-gray-800 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-3xl mx-auto px-4 py-12 text-center">
+    <main class="max-w-screen-xl mx-auto px-4 py-12 text-center md:text-center">
       <h1 class="text-4xl font-bold mb-4">The BS Machine<br>NRL Power Rankings and Predictions</h1>
       <p class="text-lg text-gray-300 mb-8">
         A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact in the NRL.
       </p>
-      <div class="flex flex-col gap-4 items-center">
-        <a href="pages/about.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">About the Power Rankings</a>
-        <a href="pages/rankings.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">View Rankings</a>
-        <a href="pages/matchups.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Match Predictions</a>
-        <a href="pages/simulator.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Round Simulator</a>
-        <a href="pages/tracker.html" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded">Track the 2025 Season</a>
+
+      <!-- Layout: Links on left, chart on right -->
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-center gap-8">
+        <!-- Left: Page Links -->
+        <div class="flex flex-col gap-4 w-full md:w-1/6 items-center md:items-start">
+          <a href="pages/about.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">About the Power Rankings</a>
+          <a href="pages/rankings.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">View Rankings</a>
+          <a href="pages/matchups.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Match Predictions</a>
+          <a href="pages/simulator.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Round Simulator</a>
+          <a href="pages/tracker.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Track the 2025 Season</a>
+        </div>
+        <!-- Right: Doughnut Chart -->
+        <div class="w-full md:w-5/6">
+          <div style="position:relative; width:100%; max-width:1000px; margin:auto;">
+            <canvas id="finalsWheel" style="width:100%; height:auto;"></canvas>
+            <img id="trophy" src="./assets/trophy.png" style="display:none">
+          </div>
+        </div>
       </div>
-    </main>
+
+    <script type="module" src="./js/finalsWheel.js"></script>
 
     <script>
-  fetch('components/header.html')
-    .then(res => res.text())
-    .then(html => {
-      document.getElementById("site-header").innerHTML = html;
+      fetch('components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
 
-      // ✅ Hook up hamburger toggle after header is loaded
-      const menuToggle = document.getElementById("menu-toggle");
-      const mobileMenu = document.getElementById("mobile-menu");
-      if (menuToggle && mobileMenu) {
-        menuToggle.addEventListener("click", () => {
-          mobileMenu.classList.toggle("hidden");
+          // ✅ Hook up hamburger toggle after header is loaded
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
         });
-      }
-    });
-</script>
+    </script>
   </body>
 </html>
