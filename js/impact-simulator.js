@@ -192,17 +192,51 @@ async function init() {
   const res = await fetch(`../data/${round}/Predictions.txt`);
   const text = await res.text();
   const matches = text.trim().split("\n").map(l => JSON.parse(l.replace(/'/g, '"')));
+
   renderMatchOptions(matches);
+
+  // Fetch real results and auto-select + grey-out winners
+  fetch('https://bsmachine-backend.onrender.com/latest-results')
+    .then(res => res.json())
+    .then(results => {
+      results.forEach(result => {
+        const matchIndex = matches.findIndex(
+          m =>
+            m.home_team.toLowerCase() === result.home.toLowerCase() &&
+            m.away_team.toLowerCase() === result.away.toLowerCase()
+        );
+        if (matchIndex !== -1) {
+          const winner = result.winner;
+          const radioSelector = `input[name='match-${matchIndex}'][value="${winner}"]`;
+          const radio = form.querySelector(radioSelector);
+          if (radio) {
+            radio.checked = true;
+            radio.disabled = true;
+
+            // Also disable the opposing button to avoid accidental changes
+            const others = form.querySelectorAll(`input[name='match-${matchIndex}']:not([value="${winner}"])`);
+            others.forEach(r => r.disabled = true);
+          }
+        }
+      });
+
+      // Update chart after applying real winners
+      updateChart(matches);
+    });
 
   form.addEventListener("change", () => updateChart(matches));
 
   document.getElementById("clear-btn").addEventListener("click", () => {
-    form.querySelectorAll("input[type='radio']").forEach(input => input.checked = false);
+    form.querySelectorAll("input[type='radio']").forEach(input => {
+      input.checked = false;
+      input.disabled = false;
+    });
     updateChart(matches);
   });
 
   outcomeSelect.addEventListener("change", () => updateChart(matches));
   updateChart(matches);
 }
+
 
 init();
