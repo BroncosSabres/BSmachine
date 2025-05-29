@@ -36,11 +36,39 @@ function getSelectedWinners(matches) {
 
 function parseCSV(csvText) {
   const rows = Papa.parse(csvText.trim(), { skipEmptyLines: true }).data;
-  const rawHeaders = rows.slice(0, 8);
-  const matchHeaders = rawHeaders[0].map((_, i) => rawHeaders.map(row => row[i])).slice(1);
-  const teamNames = rows.slice(8, 25).map(r => r[0]);
-  const teamData = rows.slice(8, 25).map(r => r.slice(1).map(x => parseFloat(x) / 100));
-  const counts = rows[26].slice(1).map(Number);
+
+  // Determine header rows count (games this week)
+  let headerRowCount = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    // Detect first team-data row: first cell non-empty and second cell numeric
+    if (row[0] && row[0].trim() !== '' && !isNaN(parseFloat(row[1]))) {
+      headerRowCount = i;
+      break;
+    }
+  }
+
+  // Extract header rows dynamically
+  const rawHeaders = rows.slice(0, headerRowCount);
+
+  // Build matchHeaders: each column after first represents a scenario across header rows
+  const matchHeaders = rawHeaders[0].slice(1).map((_, colIdx) =>
+    rawHeaders.map(row => row[colIdx + 1])
+  );
+
+  // Determine counts row index (first integer-only row after team data)
+  let countsRowIndex = rows.findIndex((row, idx) => {
+    if (idx <= headerRowCount) return false;
+    return row.slice(1).every(cell => /^\d+$/.test(cell));
+  });
+  if (countsRowIndex === -1) countsRowIndex = rows.length - 1;
+
+  // Team rows are between headers and counts row
+  const teamRows = rows.slice(headerRowCount, countsRowIndex);
+  const teamNames = teamRows.map(r => r[0]);
+  const teamData = teamRows.map(r => r.slice(1).map(x => parseFloat(x) / 100));
+  const counts = rows[countsRowIndex].slice(1).map(Number);
+
   return { matchHeaders, teamNames, teamData, counts };
 }
 
