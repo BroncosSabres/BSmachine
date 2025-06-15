@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NRL Magic Numbers</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+  </head>
+  <body class="bg-gray-800 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-4xl mx-auto px-6 py-10">
+      <h1 class="text-4xl font-bold mb-6 text-yellow-300">NRL Magic Numbers</h1>
+      <p class="text-gray-300 mb-8">
+        See how each team is tracking to hit the magic number milestones.<br>
+        <span class="text-sm text-gray-400">
+          <b>How to read:</b> Each horizontal bar shows a team's progress from their current points (left) to their projected finish (right).
+          Vertical lines mark the "magic numbers" for each key outcome.<br>
+          Zones for each outcome from Wooden Spoon to Minor Premiership are indicated with dashed lines and show the region of final competition 
+          points where the probability of the given outcome is greater than 0% but less than 100%.
+        </span>
+      </p>
+
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold mb-4">Competition Points Trajectory</h2>
+        <div class="w-full max-w-[1800px] mx-auto bg-gray-900 rounded-2xl shadow-md p-3">
+          <canvas id="magicNumbersChart" class="w-full h-[550px]"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module" src="../js/magic-numbers.js"></script>
+  </body>
+</html>
