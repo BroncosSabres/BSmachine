@@ -327,7 +327,7 @@ function drawChart(teamData, outcomeZones) {
             label: function(ctx) {
               const [start, end] = ctx.raw;
               if (ctx.dataset.label === "Predicted Points") {
-                return `Current: ${start} pts → Projected: ${end} pts`;
+                return `Min: ${start} pts → Projected: ${end} pts`;
               } else if (ctx.dataset.label === "Max Possible Points") {
                 return `Projected: ${start} pts → Max: ${end} pts`;
               }
