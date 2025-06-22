@@ -174,11 +174,13 @@ async function loadTeamDataFromResults(roundFolder) {
       const byesPlayed = currentRoundNum - gamesPlayed;
 
       const current = parseFloat(row.Points) + 2 * byesPlayed;
+      const min = parseFloat(row.Points) + 6;
       const projected = parseFloat(row["Projected Points"]) + 6;
       const max = parseFloat(row.Points) + 2 * (24 - gamesPlayed) + 6;
       return {
         team: row.Team,
         current,
+        min,
         projected,
         max
       };
@@ -237,7 +239,7 @@ function drawChart(teamData, outcomeZones) {
   const sortedLabels = combined.map(d => d.team);
 
   // Main green bar: current → projected
-  const predictedData = combined.map(d => [d.current, d.projected]);
+  const predictedData = combined.map(d => [d.min, d.projected]);
   // Blue bar: projected → max
   const maxData = combined.map(d => [d.projected, d.max]);
 
