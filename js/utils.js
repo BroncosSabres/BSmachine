@@ -5,13 +5,19 @@
  * Example: "Round6"
  */
 export async function getLatestRoundFolder() {
-    const roundCount = 30; // Check up to 30 rounds
-    for (let i = roundCount; i >= 0; i--) {
-      const res = await fetch(`../data/Round${i}/results.csv`);
-      if (res.ok) return `Round${i}`;
+  try {
+    const res = await fetch('../data/latestRound.json');
+    if (!res.ok) throw new Error('latestRound.json not found');
+    const data = await res.json();
+    if (typeof data.latest === 'number' && data.latest > 0) {
+      return `Round${data.latest}`;
     }
     return null;
+  } catch (e) {
+    console.error('Failed to get latest round:', e);
+    return null;
   }
+}
   
   /**
    * Format a decimal as a percentage string
