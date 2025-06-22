@@ -64,7 +64,7 @@ function parseCSV(csvText) {
   if (countsRowIndex === -1) countsRowIndex = rows.length - 1;
 
   // Team rows are between headers and counts row
-  const teamRows = rows.slice(headerRowCount, countsRowIndex);
+  const teamRows = rows.slice(headerRowCount, countsRowIndex-1);
   const teamNames = teamRows.map(r => r[0]);
   const teamData = teamRows.map(r => r.slice(1).map(x => parseFloat(x) / 100));
   const counts = rows[countsRowIndex].slice(1).map(Number);
