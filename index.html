@@ -54,6 +54,21 @@
         .then(html => {
           document.getElementById("site-header").innerHTML = html;
 
+          // Dynamically inject Buy Me a Coffee widget script
+          const bmcScript = document.createElement('script');
+          bmcScript.type = 'text/javascript';
+          bmcScript.src = 'https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js';
+          bmcScript.setAttribute('data-name', 'bmc-button');
+          bmcScript.setAttribute('data-slug', 'BroncosSabres');
+          bmcScript.setAttribute('data-color', '#FFDD00');
+          bmcScript.setAttribute('data-emoji', '☕');
+          bmcScript.setAttribute('data-font', 'Bree');
+          bmcScript.setAttribute('data-text', 'Buy me a coffee');
+          bmcScript.setAttribute('data-outline-color', '#000000');
+          bmcScript.setAttribute('data-font-color', '#000000');
+          bmcScript.setAttribute('data-coffee-color', '#ffffff');
+          document.getElementById("bmc-button").appendChild(bmcScript); 
+
           // ✅ Hook up hamburger toggle after header is loaded
           const menuToggle = document.getElementById("menu-toggle");
           const mobileMenu = document.getElementById("mobile-menu");
