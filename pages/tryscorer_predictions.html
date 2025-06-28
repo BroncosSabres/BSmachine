@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Tryscorer Predictions | The BS Machine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Custom CSS for Betslip -->
+    <style>
+      .sgm-result {
+        background: #222e38;
+        color: #b8ffcb;
+        border-radius: 14px;
+        padding: 1.15em 1.5em;
+        margin-top: 1em;
+        font-size: 1.17em;
+        box-shadow: 0 2px 12px #1119;
+        min-height: 56px;
+        width: 100%;
+        max-width: 370px;
+      }
+      .sgm-picks-list {
+        margin-bottom: 0.5em;
+      }
+      .sgm-pick {
+        font-weight: 600;
+        color: #b8ffcb;
+        padding-bottom: 0.14em;
+        word-break: break-word;
+      }
+      .sgm-odds-row {
+        margin-top: 0.6em;
+        font-size: 1.14em;
+        font-weight: 700;
+        color: #ffd700;
+        text-align: left;
+        letter-spacing: 0.01em;
+      }
+      .sgm-odds {
+        font-weight: 800;
+        color: #ffd700;
+      }
+      @media (max-width: 700px) {
+        .sgm-result {
+          font-size: 1em;
+          padding: 1em 0.8em;
+          max-width: 100%;
+        }
+        .sgm-pick {
+          font-size: 1em;
+        }
+        .sgm-odds-row {
+          font-size: 1.07em;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-gray-800 text-white min-h-screen">
+    <div id="site-header"></div>
+
+    <main class="w-full max-w-6xl mx-auto px-4 py-8">
+      <h1 class="text-3xl md:text-4xl font-bold mb-4 text-center">Tryscorer Predictions</h1>
+      <p class="mb-8 text-gray-300 text-center">
+        Select a match, pick your tryscorer combo, and see the model's predicted odds!
+      </p>
+      <!-- MATCH SELECTOR -->
+      <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
+        <label for="match-select" class="font-semibold text-base md:text-lg">Select Match:</label>
+        <select id="match-select" class="rounded px-4 py-2 text-gray-900 w-72 max-w-full"></select>
+      </div>
+      <!-- FLEX ROW: Team lists left, betslip right -->
+      <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-8 justify-center items-start max-w-6xl mx-auto">
+        <div id="teams-container" class="flex flex-col md:flex-row gap-8 flex-1"></div>
+        <div id="result" class="sgm-result min-h-[2em] md:ml-6 md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-8"></div>
+      </div>
+    </main>
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          // Insert the Buy Me a Coffee button image after the header loads
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
+                  alt="Buy Me a Coffee" 
+                  style="height: 45px; width: 162px;">
+            </a>
+          `; 
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <script src="../js/tryscorer_predictions.js"></script>
+  </body>
+</html>
