@@ -13,7 +13,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Tryscorer Predictions | The BS Machine</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Custom CSS for Betslip -->
     <style>
       .sgm-result {
         background: #222e38;
@@ -65,7 +64,6 @@
   </head>
   <body class="bg-gray-800 text-white min-h-screen">
     <div id="site-header"></div>
-
     <main class="w-full max-w-6xl mx-auto px-4 py-8">
       <h1 class="text-3xl md:text-4xl font-bold mb-4 text-center">Tryscorer Predictions</h1>
       <p class="mb-8 text-gray-300 text-center">
@@ -82,30 +80,9 @@
         <div id="result" class="sgm-result min-h-[2em] md:ml-6 md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-8"></div>
       </div>
     </main>
-    <script>
-      fetch('../components/header.html')
-        .then(res => res.text())
-        .then(html => {
-          document.getElementById("site-header").innerHTML = html;
+    <!-- No BMC button here! It will be inserted into the header by JS -->
 
-          // Insert the Buy Me a Coffee button image after the header loads
-          document.getElementById("bmc-button").innerHTML = `
-            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-                  alt="Buy Me a Coffee" 
-                  style="height: 45px; width: 162px;">
-            </a>
-          `; 
-
-          const menuToggle = document.getElementById("menu-toggle");
-          const mobileMenu = document.getElementById("mobile-menu");
-          if (menuToggle && mobileMenu) {
-            menuToggle.addEventListener("click", () => {
-              mobileMenu.classList.toggle("hidden");
-            });
-          }
-        });
-    </script>
+    <!-- Your main page JS (handles header and everything else) -->
     <script src="../js/tryscorer_predictions.js"></script>
   </body>
 </html>

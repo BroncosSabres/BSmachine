@@ -1,14 +1,32 @@
 // pages/tryscorer_predictions.js
 
-// Wait for DOM content to load before running code
 document.addEventListener("DOMContentLoaded", function () {
-  // Load header (as per your index.html)
+  // Load header and handle header-dependent logic
   fetch('/components/header.html')
     .then(res => res.text())
     .then(html => {
       document.getElementById('site-header').innerHTML = html;
-      // (Copy any header JS logic you use if needed)
-    });
+
+      // Insert Buy Me a Coffee button (in header!)
+      const bmcDiv = document.getElementById("bmc-button");
+      if (bmcDiv) {
+        bmcDiv.innerHTML = `
+          <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+            <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                 alt="Buy Me a Coffee"
+                 style="height: 45px; width: 162px;">
+          </a>
+        `;
+      }
+      // Hamburger menu logic
+      const menuToggle = document.getElementById("menu-toggle");
+      const mobileMenu = document.getElementById("mobile-menu");
+      if (menuToggle && mobileMenu) {
+        menuToggle.addEventListener("click", () => {
+          mobileMenu.classList.toggle("hidden");
+        });
+      }
+  });
 
   // API Base URL (update to your Render backend URL)
   const API_BASE = 'https://bsmachine-backend.onrender.com/api'; // <-- update this!
@@ -65,45 +83,66 @@ function renderTeams(data) {
     playerInputs[side] = {};
     const teamDiv = document.createElement('div');
     teamDiv.className = "bg-gray-700 rounded-xl p-4 w-full md:w-96 shadow-md";
+
     teamDiv.innerHTML = `
       <div class="font-bold text-xl mb-2 text-center">${teamName}</div>
       <div class="flex flex-col gap-y-2">
         <div class="flex items-center gap-2 font-semibold text-sm text-gray-200">
           <span class="flex-1 text-left">Player</span>
-          <span class="w-16 text-center">N Tries</span>
-          <span class="w-28 text-right text-yellow-400">Anytime</span>
+          <span class="w-24 text-right text-yellow-400">Anytime</span>
+          <span class="w-24 text-center">Tries</span>
         </div>
         ${players.map(p => `
           <div class="flex items-center gap-2">
-            <label class="flex-1 truncate text-left" for="${side}-${p.id}">
+            <label class="flex-1 truncate text-left text-sm md:text-base" for="${side}-${p.id}">
               ${p.name} <span class="text-xs text-gray-400">(${p.position})</span>
             </label>
-            <input id="${side}-${p.id}" type="number" min="0" max="5" value="0"
-              class="w-16 rounded px-2 py-1 text-gray-900" />
-            <span id="anytime-${side}-${p.id}" class="w-28 text-right text-yellow-400 font-semibold"></span>
+            <span id="anytime-${side}-${p.id}" class="w-20 text-right text-yellow-400 font-semibold"></span>
+            <div class="flex items-center gap-1 ml-2">
+              <button type="button"
+                class="sgm-minus-btn w-7 h-7 bg-red-300 hover:bg-red-400 text-black rounded flex items-center justify-center text-lg font-bold"
+                data-side="${side}" data-id="${p.id}" tabindex="0">−</button>
+              <input id="${side}-${p.id}" type="text"
+                value="0"
+                readonly
+                class="w-7 h-7 text-center rounded text-lg bg-gray-200 text-gray-900 font-bold mx-0.5 shadow-inner select-none border-none outline-none pointer-events-none" />
+              <button type="button"
+                class="sgm-plus-btn w-7 h-7 bg-green-300 hover:bg-green-400 text-black rounded flex items-center justify-center text-lg font-bold"
+                data-side="${side}" data-id="${p.id}" tabindex="0">+</button>
+            </div>
           </div>
         `).join('')}
       </div>
     `;
     teamsContainer.appendChild(teamDiv);
 
-    // Attach event listeners for each input
+    // --- Add listeners for +/− buttons ---
     players.forEach(p => {
       const input = teamDiv.querySelector(`#${side}-${p.id}`);
-      input.addEventListener('input', (e) => {
-        playerInputs[side][p.id] = parseInt(e.target.value) || 0;
-        updateProbability(); // Live update
+      playerInputs[side][p.id] = 0;
+
+      // Minus button
+      teamDiv.querySelector(`.sgm-minus-btn[data-side="${side}"][data-id="${p.id}"]`).addEventListener('click', () => {
+        let val = playerInputs[side][p.id] || 0;
+        if (val > 0) val--;
+        playerInputs[side][p.id] = val;
+        input.value = val;
+        updateProbability();
+      });
+
+      // Plus button
+      teamDiv.querySelector(`.sgm-plus-btn[data-side="${side}"][data-id="${p.id}"]`).addEventListener('click', () => {
+        let val = playerInputs[side][p.id] || 0;
+        if (val < 5) val++;
+        playerInputs[side][p.id] = val;
+        input.value = val;
+        updateProbability();
       });
     });
 
     // --- Fetch try probabilities and try distribution, then update "Anytime" column ---
     const matchId = matchSelect.value;
-    const teamId = players[0]?.team_id; // assumes all players for this team have same team_id
-
-    console.log('About to check matchId and teamId for', side);
-    console.log('players:', players);
-    console.log('matchId:', matchId, '| teamId:', teamId);
-
+    const teamId = players[0]?.team_id;
 
     if (matchId && teamId) {
       Promise.all([
@@ -113,7 +152,6 @@ function renderTeams(data) {
         players.forEach((p, i) => {
           const playerProb = tryProbs[p.id];
           if (playerProb !== undefined && tryDist) {
-            // You'll need to define anytimeTryscorerProbability(p, tryDist, 20) elsewhere
             const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
             document.getElementById(`anytime-${side}-${p.id}`).textContent =
               (prob * 100).toFixed(1) + "%";
@@ -121,12 +159,10 @@ function renderTeams(data) {
             document.getElementById(`anytime-${side}-${p.id}`).textContent = "-";
           }
         });
-      }).catch(err => {
+      }).catch(() => {
         players.forEach(p => {
           document.getElementById(`anytime-${side}-${p.id}`).textContent = "-";
         });
-        // Optionally log error
-        // console.error("Failed to load anytime tryscorer data:", err);
       });
     }
   });
