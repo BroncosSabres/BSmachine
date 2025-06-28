@@ -269,7 +269,11 @@ function updateProbability() {
                 `<div class="sgm-picks-list mb-2">
                 ${pickedDisplay.map(n => `<div class="sgm-pick">${n}</div>`).join("")}
                 </div>
-                <div class="sgm-odds-row mt-1">SGM: <span class="sgm-odds">${probPct}% ($${odds})</span></div>`;
+                <div class="sgm-odds-row mt-1">SGM: <span class="sgm-odds">${probPct}% ($${odds})</span></div>
+                <div class="text-xs mt-4 text-gray-300 text-center leading-tight">
+                    If you like this feature, please consider <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" class="text-yellow-300 hover:underline">buying me a coffee</a>.<br>
+                    Just a dollar a month will help pay my server costs.
+                </div>`;
             } else {
             resultDiv.textContent = "Select one or more tryscorers";
             }
