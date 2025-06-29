@@ -99,7 +99,7 @@ document.addEventListener("DOMContentLoaded", function () {
       // Home: wins by >m.5 (margin over m)
       marginSelect.innerHTML += `<option value="over_${-m+1}">${homeTeam} ${m > 0 ? "+" : ""}${m - 0.5}</option>`;
       // Away: wins by <m.5 (margin under m)
-      marginSelect.innerHTML += `<option value="under_${m-1}">${awayTeam} ${m > 0 ? "+" : ""}${m - 0.5}</option>`;
+      marginSelect.innerHTML += `<option value="under_${m}">${awayTeam} ${m > 0 ? "+" : ""}${m - 0.5}</option>`;
     }
     totalSelect.innerHTML = `<option value="">Any Total</option>`;
     for (let t = 0; t <= 80; t++) {
