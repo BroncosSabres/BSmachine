@@ -77,7 +77,25 @@
       <!-- FLEX ROW: Team lists left, betslip right -->
       <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-8 justify-center items-start max-w-6xl mx-auto">
         <div id="teams-container" class="flex flex-col md:flex-row gap-8 flex-1"></div>
-        <div id="result" class="sgm-result min-h-[2em] md:ml-6 md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-8"></div>
+        <div>
+          <!-- Margin/Total Selectors Here -->
+          <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-2">
+            <div class="flex items-center gap-2">
+              <label for="margin-select" class="text-sm font-semibold">Margin:</label>
+              <select id="margin-select" class="rounded px-2 py-1 text-gray-900">
+                <option value="">(Any margin)</option>
+              </select>
+            </div>
+            <div class="flex items-center gap-2">
+              <label for="total-select" class="text-sm font-semibold">Total Points:</label>
+              <select id="total-select" class="rounded px-2 py-1 text-gray-900">
+                <option value="">(Any total)</option>
+              </select>
+            </div>
+          </div>
+          <!-- The result box -->
+          <div id="result" class="sgm-result min-h-[2em] md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-8"></div>
+        </div>
       </div>
     </main>
     <!-- No BMC button here! It will be inserted into the header by JS -->
