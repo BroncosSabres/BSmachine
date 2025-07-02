@@ -71,6 +71,13 @@
       </p>
       <!-- MATCH SELECTOR -->
       <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
+        <label for="competition-toggle" class="font-semibold text-base md:text-lg">Competition:</label>
+        <div id="competition-toggle" class="flex items-center gap-2">
+          <button id="btn-nrl" type="button" class="competition-btn px-4 py-2 rounded bg-yellow-400 text-gray-900 font-bold ring-2 ring-yellow-400">NRL</button>
+          <button id="btn-nrlw" type="button" class="competition-btn px-4 py-2 rounded bg-gray-600 text-gray-200 font-bold ring-2 ring-gray-600">NRLW</button>
+        </div>
+      </div>
+      <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
         <label for="match-select" class="font-semibold text-base md:text-lg">Select Match:</label>
         <select id="match-select" class="rounded px-4 py-2 text-gray-900 w-72 max-w-full"></select>
       </div>
