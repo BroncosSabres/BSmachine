@@ -248,8 +248,8 @@ document.addEventListener("DOMContentLoaded", function () {
   // --- SGM DIST HELPERS ---
   function getSgmDist(matchId, marginType, marginVal, totalType, totalVal) {
     let params = [];
-    if (marginType === "over") params.push(`margin_gte=${marginVal + 1}`);
-    if (marginType === "under") params.push(`margin_lte=${marginVal}`);
+    if (marginType === "over") params.push(`margin_gte=${marginVal}`);
+    if (marginType === "under") params.push(`margin_lte=${marginVal - 1}`);
     if (totalType === "over") params.push(`total_gte=${totalVal}`);
     if (totalType === "under") params.push(`total_lte=${totalVal-1}`);
     const paramString = params.length ? `?${params.join("&")}` : "";
