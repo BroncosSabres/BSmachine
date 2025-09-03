@@ -1,0 +1,8 @@
+{'home_team': 'Broncos', 'away_team': 'Storm', 'home_perc': 0.585321, 'away_perc': 0.41061, 'home_score': 27, 'away_score': 23}
+{'home_team': 'Manly', 'away_team': 'Warriors', 'home_perc': 0.59514, 'away_perc': 0.400571, 'home_score': 23, 'away_score': 19}
+{'home_team': 'Roosters', 'away_team': 'Rabbitohs', 'home_perc': 0.781845, 'away_perc': 0.215663, 'home_score': 35, 'away_score': 20}
+{'home_team': 'Dragons', 'away_team': 'Panthers', 'home_perc': 0.347407, 'away_perc': 0.64897, 'home_score': 18, 'away_score': 25}
+{'home_team': 'Titans', 'away_team': 'Tigers', 'home_perc': 0.437398, 'away_perc': 0.558751, 'home_score': 25, 'away_score': 28}
+{'home_team': 'Bulldogs', 'away_team': 'Sharks', 'home_perc': 0.631045, 'away_perc': 0.36462, 'home_score': 23, 'away_score': 16}
+{'home_team': 'Dolphins', 'away_team': 'Raiders', 'home_perc': 0.284771, 'away_perc': 0.712214, 'home_score': 22, 'away_score': 33}
+{'home_team': 'Eels', 'away_team': 'Knights', 'home_perc': 0.818055, 'away_perc': 0.179749, 'home_score': 33, 'away_score': 15}
