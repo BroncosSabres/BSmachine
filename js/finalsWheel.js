@@ -59,17 +59,28 @@ const yourColourMap = {
     const text = await resp.text();
     const rows = parseCSV(text);
 
-    // Sort teams alphabetically by name
+    // After parsing rows
     rows.sort((a, b) => a.Team.localeCompare(b.Team));
-  
-    const teamNames   = rows.map(r => r.Team);
-    const finalsOdds  = rows.map(r => +r['Top 8']    * 100);
-    const semiOdds    = rows.map(r => +r['Week 2']    * 100);
-    const prelimOdds  = rows.map(r => +r['Week 3']   * 100);
-    const gfOdds      = rows.map(r => +r['Make GF']  * 100);
-    const premierOdds = rows.map(r => +r['Premiers'] * 100);
-  
+
+    // Filter to only teams that have any nonzero odds
+    const filtered = rows.filter(r =>
+        (+r['Top 8']    > 0) ||
+        (+r['Week 2']   > 0) ||
+        (+r['Week 3']   > 0) ||
+        (+r['Make GF']  > 0) ||
+        (+r['Premiers'] > 0)
+    );
+
+    // Now build arrays from filtered
+    const teamNames   = filtered.map(r => r.Team);
+    const finalsOdds  = filtered.map(r => +r['Top 8']    * 100);
+    const semiOdds    = filtered.map(r => +r['Week 2']   * 100);
+    const prelimOdds  = filtered.map(r => +r['Week 3']   * 100);
+    const gfOdds      = filtered.map(r => +r['Make GF']  * 100);
+    const premierOdds = filtered.map(r => +r['Premiers'] * 100);
+
     const teamColours = teamNames.map(name => yourColourMap[name] || '#CCCCCC');
+
     // preload logo images
     const logos = teamNames.map(name => {
         const img = new Image();
