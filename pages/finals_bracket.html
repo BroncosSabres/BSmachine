@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NRL Finals Bracket Picker</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px auto; line-height: 1.45; max-width: 760px; padding: 0 12px; }
+    h1 { margin: 0 0 8px; }
+    .muted { color: #666; font-size: 14px; margin-bottom: 16px; }
+    fieldset { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    legend { padding: 0 8px; font-weight: 600; }
+    label { display: block; font-weight: 600; margin: 10px 0 4px; }
+    select, input[type="text"], input[type="number"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
+    .grid { display: flex; flex-direction: column; gap: 12px; }
+    .col-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .col-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    button { padding: 10px 14px; border: 0; background: #0a7; color: #fff; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .card { background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 12px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .seed { font-size: 12px; color: #666; }
+    .help { font-size: 13px; color: #555; }
+    .error { color: #a00; font-weight: 600; }
+    .ok { color: #0a6; font-weight: 600; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>NRL Finals Bracket Picker</h1>
+
+  <!--
+    ─────────────────────────────────────────────────────────────────────────────
+    CONFIGURATION
+    1) Replace the eight team names below once the finals are set.
+    2) Choose how to submit: (A) Google Apps Script Web App (recommended), or
+       (B) Post to Google Form endpoint (requires mapping entry IDs).
+    3) If you don't set a SUBMIT target, the form will just print JSON for copy.
+    ─────────────────────────────────────────────────────────────────────────────
+  -->
+  <script>
+    // 1) SEEDS → TEAM NAMES (edit these per your finals ladder at Week 1)
+    const SEEDS = {
+      1: "Raiders",
+      2: "Storm",
+      3: "Bulldogs",
+      4: "Broncos",
+      5: "Sharks",
+      6: "Warriors",
+      7: "Panthers",
+      8: "Roosters",
+    };
+
+    // 2) SUBMISSION DESTINATION
+    // Option A: Google Apps Script Web App URL (recommended). Leave empty to skip network submit.
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPXNznP1xOQ_Anvb-q_4UUvBOh2dARuncnF3qjsP-9LVCrZvRw1JcrARdn_ccRH2G2/exec"; 
+
+  </script>
+
+  <form id="bracketForm" class="grid">
+    <fieldset class="col-span-2">
+      <legend>Entrant</legend>
+      <label for="username">Reddit username (no /u/)</label>
+      <input id="username" name="username" type="text" placeholder="e.g., YourHandle for u/YourHandle" required />
+
+      <div class="help">We will only count the <strong>last</strong> submission per username.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Week 1 — Qualifying Finals</legend>
+      <div class="help">Winners go to Prelims; losers get a second chance in Week 2.</div>
+      <label for="M1">QF1 — (1) vs (4)</label>
+      <select id="M1" required></select>
+
+      <label for="M2">QF2 — (2) vs (3)</label>
+      <select id="M2" required></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Week 1 — Elimination Finals</legend>
+      <div class="help">Losers are eliminated.</div>
+      <label for="M3">EF1 — (5) vs (8)</label>
+      <select id="M3" required></select>
+
+      <label for="M4">EF2 — (6) vs (7)</label>
+      <select id="M4" required></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Week 2 — Semi Finals</legend>
+      <div class="help">Each Semi = QF loser vs EF winner. <span class="seed">(SF1: Loser QF1 vs Winner EF2; SF2: Loser QF2 vs Winner EF1)</span></div>
+      <label for="M5">SF1</label>
+      <select id="M5" required></select>
+
+      <label for="M6">SF2</label>
+      <select id="M6" required></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Week 3 — Preliminary Finals</legend>
+      <div class="help"><span class="seed">PF1: Winner QF1 vs Winner SF2; PF2: Winner QF2 vs Winner SF1</span></div>
+      <label for="M7">PF1</label>
+      <select id="M7" required></select>
+
+      <label for="M8">PF2</label>
+      <select id="M8" required></select>
+    </fieldset>
+
+    <fieldset>
+      <legend>Week 4 — Grand Final</legend>
+      <label for="M9">Grand Final winner</label>
+      <select id="M9" required></select>
+
+      <label for="tb">Tiebreaker — Winning Margin in the GF</label>
+      <input id="tb" name="tb" type="number" min="0" max="200" required />
+    </fieldset>
+
+    <div class="col-span-2 row">
+      <button id="submitBtn" type="submit">Submit picks</button>
+      <span id="status" class="help"></span>
+    </div>
+
+    <div id="debug" class="col-span-2 card hidden"></div>
+  </form>
+
+  <script>
+    // ——————————————————————————————————————————————
+    // Bracket logic (AFL/NRL final-eight style mapping)
+    // ——————————————————————————————————————————————
+    const picks = {
+      M1: null, // QF1 winner (1 v 4)
+      M2: null, // QF2 winner (2 v 3)
+      M3: null, // EF1 winner (5 v 8)
+      M4: null, // EF2 winner (6 v 7)
+      M5: null, // SF1 winner (Loser QF1 vs Winner EF2)
+      M6: null, // SF2 winner (Loser QF2 vs Winner EF1)
+      M7: null, // PF1 winner (Winner QF1 vs Winner SF2)
+      M8: null, // PF2 winner (Winner QF2 vs Winner SF1)
+      M9: null, // GF winner (PF1 vs PF2)
+      tb: null, // tiebreaker (GF points)
+    };
+
+    function team(seed) { return `${SEEDS[seed]} (seed ${seed})`; }
+
+    // Initial matchups by seed
+    const M1_OPTS = [1, 4]; // QF1
+    const M2_OPTS = [2, 3]; // QF2
+    const M3_OPTS = [5, 8]; // EF1
+    const M4_OPTS = [6, 7]; // EF2
+
+    // Helpers
+    const sel = id => document.getElementById(id);
+    function makeOptions(selectEl, seedList) {
+      selectEl.innerHTML = '<option value="" disabled selected>Select winner…</option>' +
+        seedList.map(s => `<option value="${s}">${team(s)}</option>`).join("");
+    }
+
+    function loserOf(winnerSeed, opts) {
+      if (!winnerSeed) return null;
+      const [a, b] = opts;
+      return (Number(winnerSeed) === a) ? b : a;
+    }
+
+    function setSelectOptions(selectEl, seedA, seedB) {
+      const list = [seedA, seedB].filter(Boolean);
+      selectEl.innerHTML = '<option value="" disabled selected>Select winner…</option>' +
+        list.map(s => `<option value="${s}">${team(s)}</option>`).join("");
+    }
+
+    function resetDownstream(fields) {
+      for (const f of fields) {
+        picks[f] = null;
+        sel(f).value = "";
+      }
+    }
+
+    // Initialize Week 1 selects
+    makeOptions(sel('M1'), M1_OPTS);
+    makeOptions(sel('M2'), M2_OPTS);
+    makeOptions(sel('M3'), M3_OPTS);
+    makeOptions(sel('M4'), M4_OPTS);
+
+    // Wire Week 1 → compute Semi options
+    sel('M1').addEventListener('change', () => {
+      picks.M1 = Number(sel('M1').value);
+      // Loser QF1 vs Winner EF2 → SF1 options
+      const qf1Loser = loserOf(picks.M1, M1_OPTS);
+      const ef1Winner = picks.M3 ? Number(picks.M3) : null; // unknown until M4 picked
+      setSelectOptions(sel('M5'), qf1Loser, ef1Winner);
+      resetDownstream(['M5','M6','M7','M8','M9']);
+    });
+
+    sel('M2').addEventListener('change', () => {
+      picks.M2 = Number(sel('M2').value);
+      // Loser QF2 vs Winner EF1 → SF2 options
+      const qf2Loser = loserOf(picks.M2, M2_OPTS);
+      const ef2Winner = picks.M4 ? Number(picks.M4) : null;
+      setSelectOptions(sel('M6'), qf2Loser, ef2Winner);
+      resetDownstream(['M6','M7','M8','M9']);
+    });
+
+    sel('M3').addEventListener('change', () => {
+      picks.M3 = Number(sel('M3').value);
+      // updates SF2 options (needs Loser QF2 as well)
+      const qf1Loser = picks.M1 ? loserOf(picks.M1, M1_OPTS) : null;
+      setSelectOptions(sel('M6'), qf1Loser, picks.M3);
+      resetDownstream(['M6','M7','M8','M9']);
+    });
+
+    sel('M4').addEventListener('change', () => {
+      picks.M4 = Number(sel('M4').value);
+      // updates SF1 options (needs Loser QF1 as well)
+      const qf2Loser = picks.M2 ? loserOf(picks.M2, M2_OPTS) : null;
+      setSelectOptions(sel('M5'), qf2Loser, picks.M4);
+      resetDownstream(['M5','M7','M8','M9']);
+    });
+
+    // Semis → Prelims options
+    sel('M5').addEventListener('change', () => {
+      picks.M5 = Number(sel('M5').value);
+      // PF1: Winner QF1 vs Winner SF2 (needs M6)
+      const qf1Winner = picks.M1;
+      const sf1Winner = picks.M5 || null;
+      setSelectOptions(sel('M7'), qf1Winner, sf1Winner);
+      resetDownstream(['M7','M9']);
+    });
+
+    sel('M6').addEventListener('change', () => {
+      picks.M6 = Number(sel('M6').value);
+      // PF2: Winner QF2 vs Winner SF1 (needs M5)
+      const qf2Winner = picks.M2;
+      const sf2Winner = picks.M6 || null;
+      setSelectOptions(sel('M8'), qf2Winner, sf2Winner);
+      // PF1 depends on M6 too
+      const qf1Winner = picks.M1;
+      const sf1Winner = picks.M5 || null;
+      setSelectOptions(sel('M7'), qf1Winner, sf1Winner);
+      resetDownstream(['M8','M9']);
+    });
+
+    // Prelims → GF options
+    sel('M7').addEventListener('change', () => {
+      picks.M7 = Number(sel('M7').value);
+      const pf2Winner = picks.M8 || null;
+      setSelectOptions(sel('M9'), picks.M7, pf2Winner);
+      resetDownstream(['M9']);
+    });
+
+    sel('M8').addEventListener('change', () => {
+      picks.M8 = Number(sel('M8').value);
+      const pf1Winner = picks.M7 || null;
+      setSelectOptions(sel('M9'), pf1Winner, picks.M8);
+      resetDownstream(['M9']);
+    });
+
+    // GF winner
+    sel('M9').addEventListener('change', () => {
+      picks.M9 = Number(sel('M9').value);
+    });
+
+    // Tiebreaker
+    sel('tb').addEventListener('input', () => {
+      picks.tb = Number(sel('tb').value);
+    });
+
+    // ——————————————————————————————————————————————
+    // Submission
+    // ——————————————————————————————————————————————
+    const statusEl = document.getElementById('status');
+    const debugEl = document.getElementById('debug');
+
+    function buildPayload() {
+      const username = document.getElementById('username').value.trim();
+      const payload = {
+        username,
+        picks: {
+          M1: picks.M1, M2: picks.M2, M3: picks.M3, M4: picks.M4,
+          M5: picks.M5, M6: picks.M6, M7: picks.M7, M8: picks.M8, M9: picks.M9,
+        },
+        tb: picks.tb,
+        // Also send resolved team names for convenience
+        resolved: {
+          M1: SEEDS[picks.M1], M2: SEEDS[picks.M2], M3: SEEDS[picks.M3], M4: SEEDS[picks.M4],
+          M5: SEEDS[picks.M5], M6: SEEDS[picks.M6], M7: SEEDS[picks.M7], M8: SEEDS[picks.M8], M9: SEEDS[picks.M9],
+        },
+        seeds: SEEDS,
+        submitted_at: new Date().toISOString(),
+      };
+      return payload;
+    }
+
+    async function submitAppsScript(payload) {
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        mode: 'no-cors', // GAS often used with no-cors; you won't get a readable response, but write succeeds
+      });
+      return res; // likely opaque with no-cors
+    }
+
+    async function submitGoogleForm(payload) {
+      const form = new URLSearchParams();
+      if (!FORM_ENTRY_MAP.username) throw new Error('FORM_ENTRY_MAP.username not set');
+      form.append(FORM_ENTRY_MAP.username, payload.username);
+      if (!FORM_ENTRY_MAP.tiebreaker) throw new Error('FORM_ENTRY_MAP.tiebreaker not set');
+      form.append(FORM_ENTRY_MAP.tiebreaker, String(payload.tb ?? ''));
+      // Map M1..M9
+      for (let i = 1; i <= 9; i++) {
+        const key = `M${i}`;
+        const entry = FORM_ENTRY_MAP[key];
+        if (!entry) throw new Error(`FORM_ENTRY_MAP.${key} not set`);
+        // send team name (human-friendly) or seed; keep it consistent with how you plan to score
+        form.append(entry, SEEDS[payload.picks[key]] || '');
+      }
+      const res = await fetch(GOOGLE_FORM_ACTION, {
+        method: 'POST',
+        body: form,
+        mode: 'no-cors', // Google Forms requires no-cors for anonymous posts
+      });
+      return res;
+    }
+
+    document.getElementById('bracketForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      statusEl.textContent = '';
+      const username = document.getElementById('username').value.trim();
+      if (!username) { statusEl.textContent = 'Please enter a username.'; statusEl.className = 'help error'; return; }
+      for (let i = 1; i <= 9; i++) {
+        if (!picks[`M${i}`]) { statusEl.textContent = `Please pick a winner for M${i}.`; statusEl.className = 'help error'; return; }
+      }
+      if (picks.tb == null || Number.isNaN(picks.tb)) { statusEl.textContent = 'Please enter a tiebreaker.'; statusEl.className = 'help error'; return; }
+
+      const payload = buildPayload();
+
+      // If no endpoints set, just show JSON for manual copy (useful for testing)
+      if (!APPS_SCRIPT_URL && !GOOGLE_FORM_ACTION) {
+        debugEl.classList.remove('hidden');
+        debugEl.textContent = JSON.stringify(payload, null, 2);
+        statusEl.textContent = 'No submit target set. Showing JSON below (copy-paste).';
+        statusEl.className = 'help ok';
+        return;
+      }
+
+      try {
+        document.getElementById('submitBtn').disabled = true;
+        if (APPS_SCRIPT_URL) {
+          await submitAppsScript(payload);
+        } else if (GOOGLE_FORM_ACTION) {
+          await submitGoogleForm(payload);
+        }
+        statusEl.textContent = 'Submitted! Thanks for entering.';
+        statusEl.className = 'help ok';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Submit failed. Please try again later.';
+        statusEl.className = 'help error';
+      } finally {
+        document.getElementById('submitBtn').disabled = false;
+      }
+    });
+  </script>
+
+</body>
+</html>

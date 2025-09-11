@@ -64,11 +64,7 @@ const yourColourMap = {
 
     // Filter to only teams that have any nonzero odds
     const filtered = rows.filter(r =>
-        (+r['Top 8']    > 0) ||
-        (+r['Week 2']   > 0) ||
-        (+r['Week 3']   > 0) ||
-        (+r['Make GF']  > 0) ||
-        (+r['Premiers'] > 0)
+        (+r['Top 8']    > 0)
     );
 
     // Now build arrays from filtered
