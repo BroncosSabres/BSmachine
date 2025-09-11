@@ -93,7 +93,7 @@
 
     <fieldset>
       <legend>Week 2 — Semi Finals</legend>
-      <div class="help">Each Semi = QF loser vs EF winner. <span class="seed">(SF1: Loser QF1 vs Winner EF2; SF2: Loser QF2 vs Winner EF1)</span></div>
+      <div class="help">Each Semi = QF loser vs EF winner. <span class="seed">(SF1: Loser QF1 vs Winner EF1; SF2: Loser QF2 vs Winner EF2)</span></div>
       <label for="M5">SF1</label>
       <select id="M5" required></select>
 
@@ -137,8 +137,8 @@
       M2: null, // QF2 winner (2 v 3)
       M3: null, // EF1 winner (5 v 8)
       M4: null, // EF2 winner (6 v 7)
-      M5: null, // SF1 winner (Loser QF1 vs Winner EF2)
-      M6: null, // SF2 winner (Loser QF2 vs Winner EF1)
+      M5: null, // SF1 winner (Loser QF1 vs Winner EF1)
+      M6: null, // SF2 winner (Loser QF2 vs Winner EF2)
       M7: null, // PF1 winner (Winner QF1 vs Winner SF2)
       M8: null, // PF2 winner (Winner QF2 vs Winner SF1)
       M9: null, // GF winner (PF1 vs PF2)
@@ -179,6 +179,26 @@
       }
     }
 
+    function recomputeSemis() {
+        const qf1Loser = picks.M1 ? loserOf(picks.M1, M1_OPTS) : null;
+        const qf2Loser = picks.M2 ? loserOf(picks.M2, M2_OPTS) : null;
+        const ef1Winner = picks.M3 ? Number(picks.M3) : null;
+        const ef2Winner = picks.M4 ? Number(picks.M4) : null;
+
+        setSelectOptions(sel('M5'), qf1Loser, ef1Winner); // SF1
+        setSelectOptions(sel('M6'), qf2Loser, ef2Winner); // SF2
+    }
+
+    function recomputePrelims() {
+        const qf1Winner = picks.M1;
+        const qf2Winner = picks.M2;
+        const sf1Winner = picks.M5 || null;
+        const sf2Winner = picks.M6 || null;
+
+        setSelectOptions(sel('M7'), qf1Winner, sf2Winner); // PF1
+        setSelectOptions(sel('M8'), qf2Winner, sf1Winner); // PF2
+    }
+
     // Initialize Week 1 selects
     makeOptions(sel('M1'), M1_OPTS);
     makeOptions(sel('M2'), M2_OPTS);
@@ -188,59 +208,43 @@
     // Wire Week 1 → compute Semi options
     sel('M1').addEventListener('change', () => {
       picks.M1 = Number(sel('M1').value);
-      // Loser QF1 vs Winner EF2 → SF1 options
-      const qf1Loser = loserOf(picks.M1, M1_OPTS);
-      const ef1Winner = picks.M3 ? Number(picks.M3) : null; // unknown until M4 picked
-      setSelectOptions(sel('M5'), qf1Loser, ef1Winner);
+      recomputeSemis();
       resetDownstream(['M5','M6','M7','M8','M9']);
+      recomputePrelims();
     });
 
     sel('M2').addEventListener('change', () => {
       picks.M2 = Number(sel('M2').value);
-      // Loser QF2 vs Winner EF1 → SF2 options
-      const qf2Loser = loserOf(picks.M2, M2_OPTS);
-      const ef2Winner = picks.M4 ? Number(picks.M4) : null;
-      setSelectOptions(sel('M6'), qf2Loser, ef2Winner);
-      resetDownstream(['M6','M7','M8','M9']);
+      recomputeSemis();
+      resetDownstream(['M5','M6','M7','M8','M9']);
+      recomputePrelims();
     });
 
     sel('M3').addEventListener('change', () => {
       picks.M3 = Number(sel('M3').value);
-      // updates SF2 options (needs Loser QF2 as well)
-      const qf1Loser = picks.M1 ? loserOf(picks.M1, M1_OPTS) : null;
-      setSelectOptions(sel('M6'), qf1Loser, picks.M3);
-      resetDownstream(['M6','M7','M8','M9']);
+      recomputeSemis();
+      resetDownstream(['M5','M6','M7','M8','M9']);
+      recomputePrelims();
     });
 
     sel('M4').addEventListener('change', () => {
       picks.M4 = Number(sel('M4').value);
-      // updates SF1 options (needs Loser QF1 as well)
-      const qf2Loser = picks.M2 ? loserOf(picks.M2, M2_OPTS) : null;
-      setSelectOptions(sel('M5'), qf2Loser, picks.M4);
-      resetDownstream(['M5','M7','M8','M9']);
+      recomputeSemis();
+      resetDownstream(['M5','M6','M7','M8','M9']);
+      recomputePrelims();
     });
 
     // Semis → Prelims options
     sel('M5').addEventListener('change', () => {
       picks.M5 = Number(sel('M5').value);
-      // PF1: Winner QF1 vs Winner SF2 (needs M6)
-      const qf1Winner = picks.M1;
-      const sf1Winner = picks.M5 || null;
-      setSelectOptions(sel('M7'), qf1Winner, sf1Winner);
-      resetDownstream(['M7','M9']);
+      recomputePrelims();
+      resetDownstream(['M8','M9']);
     });
 
     sel('M6').addEventListener('change', () => {
       picks.M6 = Number(sel('M6').value);
-      // PF2: Winner QF2 vs Winner SF1 (needs M5)
-      const qf2Winner = picks.M2;
-      const sf2Winner = picks.M6 || null;
-      setSelectOptions(sel('M8'), qf2Winner, sf2Winner);
-      // PF1 depends on M6 too
-      const qf1Winner = picks.M1;
-      const sf1Winner = picks.M5 || null;
-      setSelectOptions(sel('M7'), qf1Winner, sf1Winner);
-      resetDownstream(['M8','M9']);
+      recomputePrelims();
+      resetDownstream(['M7','M9']);
     });
 
     // Prelims → GF options
