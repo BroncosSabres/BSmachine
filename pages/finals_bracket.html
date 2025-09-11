@@ -24,11 +24,12 @@
     .error { color: #a00; font-weight: 600; }
     .ok { color: #0a6; font-weight: 600; }
     .hidden { display: none; }
+    .countdown { font-size: 14px; color: #444; margin: 8px 0 16px; }
+    .locknote { color: #a00; font-weight: 600; }
   </style>
 </head>
 <body>
   <h1>NRL Finals Bracket Picker</h1>
-
   <!--
     ─────────────────────────────────────────────────────────────────────────────
     CONFIGURATION
@@ -38,6 +39,8 @@
     3) If you don't set a SUBMIT target, the form will just print JSON for copy.
     ─────────────────────────────────────────────────────────────────────────────
   -->
+    <p id="deadlineNote" class="countdown"></p>
+
   <script>
     // 1) SEEDS → TEAM NAMES (edit these per your finals ladder at Week 1)
     const SEEDS = {
@@ -54,6 +57,8 @@
     // 2) SUBMISSION DESTINATION
     // Option A: Google Apps Script Web App URL (recommended). Leave empty to skip network submit.
     const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPXNznP1xOQ_Anvb-q_4UUvBOh2dARuncnF3qjsP-9LVCrZvRw1JcrARdn_ccRH2G2/exec"; 
+    // Auto-lock deadline: 12 Sep 2025 7:50 pm AEST (UTC+10)
+    const DEADLINE_UTC = new Date("2025-09-12T09:50:00Z");
 
   </script>
 
@@ -269,6 +274,48 @@
     const statusEl = document.getElementById('status');
     const debugEl = document.getElementById('debug');
 
+    // ----- Auto-lock helpers -----
+    const bracketForm  = document.getElementById('bracketForm');
+    const submitBtn    = document.getElementById('submitBtn');
+    const deadlineNote = document.getElementById('deadlineNote');
+
+    function fmtSydney(dt) {
+    return new Intl.DateTimeFormat('en-AU', {
+        timeZone: 'Australia/Sydney',
+        weekday: 'short', year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+    }).format(dt);
+    }
+
+    function setLocked(locked) {
+    submitBtn.disabled = locked;
+    Array.from(bracketForm.querySelectorAll('input, select')).forEach(el => el.disabled = locked);
+    if (locked) {
+        deadlineNote.textContent = 'Submissions are closed (locked at 7:50 pm AEST, 12 Sep 2025).';
+        deadlineNote.className = 'locknote';
+    }
+    }
+
+    function tickLock() {
+    const now = new Date();
+    const locked = now >= DEADLINE_UTC;
+    if (!locked) {
+        const ms   = DEADLINE_UTC - now;
+        const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+        const hours = Math.max(0, Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
+        const mins = Math.max(0, Math.floor((ms % (1000 * 60 * 60 )) / (1000 * 60)));
+        const secs = Math.max(0, Math.floor((ms % 60000) / 1000));
+        deadlineNote.textContent =
+        `Entries close at ${fmtSydney(DEADLINE_UTC)} AEST. Time remaining: ${days}d ${hours}h ${mins}m ${secs}s`;
+        deadlineNote.className = 'countdown';
+    }
+    setLocked(locked);
+    }
+
+    // Start
+    tickLock();
+    setInterval(tickLock, 1000);
+
     function buildPayload() {
       const username = document.getElementById('username').value.trim();
       const payload = {
@@ -323,6 +370,11 @@
 
     document.getElementById('bracketForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (new Date() >= DEADLINE_UTC) {
+        statusEl.textContent = 'Submissions are closed.';
+        statusEl.className = 'help locknote';
+        return;
+        }
       statusEl.textContent = '';
       const username = document.getElementById('username').value.trim();
       if (!username) { statusEl.textContent = 'Please enter a username.'; statusEl.className = 'help error'; return; }
