@@ -1,0 +1,2 @@
+{'home_team': 'Raiders', 'away_team': 'Sharks', 'home_perc': 0.433342, 'away_perc': 0.562721, 'home_score': 21, 'away_score': 25}
+{'home_team': 'Bulldogs', 'away_team': 'Panthers', 'home_perc': 0.423565, 'away_perc': 0.571835, 'home_score': 15, 'away_score': 19}
