@@ -9,7 +9,7 @@ export async function getLatestRoundFolder() {
     const res = await fetch('../data/latestRound.json');
     if (!res.ok) throw new Error('latestRound.json not found');
     const data = await res.json();
-    if (typeof data.latest === 'number' && data.latest > 0) {
+    if (typeof data.latest === 'number' && data.latest >= 0) {
       return `Round${data.latest}`;
     }
     return null;
