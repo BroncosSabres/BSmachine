@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const totalSelect = document.getElementById('total-select');
   const btnNrl = document.getElementById('btn-nrl');
   const btnNrlw = document.getElementById('btn-nrlw');
+  const downloadCsvBtn = document.getElementById('download-tryscorer-csv');
 
   // --- COMPETITION TOGGLE LOGIC ---
   let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
@@ -75,6 +76,22 @@ document.addEventListener("DOMContentLoaded", function () {
   let matchList = [];
   let selectedMatch = null;
   let playerInputs = {}; // { home: {player_id: n}, away: {player_id: n} }
+  let tryscorerDataCache = {
+    home: null,
+    away: null
+  };
+
+  // --- CACHE HELPER FUNCTION ---
+  function resetTryscorerCache() {
+    tryscorerDataCache = {
+      home: null,
+      away: null
+    };
+
+    if (downloadCsvBtn) {
+      downloadCsvBtn.disabled = true;
+    }
+  }
 
   // --- FIXED LINES ---
   function populateFixedLines(homeTeam = "Home", awayTeam = "Away") {
@@ -109,6 +126,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
         selectedMatch = null;
         playerInputs = {};
+        resetTryscorerCache();
         populateFixedLines();
       });
   }
@@ -122,6 +140,8 @@ document.addEventListener("DOMContentLoaded", function () {
       resultDiv.textContent = '';
       populateFixedLines();
       selectedMatch = null;
+      playerInputs = {};
+      resetTryscorerCache();
       return;
     }
     teamsContainer.innerHTML = '<div class="w-full text-center py-8">Loading team lists...</div>';
@@ -130,6 +150,7 @@ document.addEventListener("DOMContentLoaded", function () {
       .then(data => {
         selectedMatch = data;
         playerInputs = {};
+        resetTryscorerCache();
         renderTeams(data);
         populateFixedLines(data.home_team, data.away_team);
         updateProbability(); // Reset result on match change
@@ -139,6 +160,34 @@ document.addEventListener("DOMContentLoaded", function () {
   // --- MARGIN/TOTAL SELECT CHANGES ---
   marginSelect.addEventListener('change', updateProbability);
   totalSelect.addEventListener('change', updateProbability);
+
+  // -- Download CSV Listeners
+  if (downloadCsvBtn) {
+    downloadCsvBtn.addEventListener('click', function () {
+      if (!selectedMatch || !matchSelect.value) {
+        alert('Please select a match first.');
+        return;
+      }
+
+      if (!tryscorerDataCache.home || !tryscorerDataCache.away) {
+        alert('Tryscorer data is still loading. Please wait a moment and try again.');
+        return;
+      }
+
+      const rows = buildTryscorerRowsFromCache();
+      if (!rows.length) {
+        alert('No tryscorer data available to export.');
+        return;
+      }
+
+      const safeHome = (selectedMatch.home_team || 'home').replace(/[^a-z0-9]+/gi, '_');
+      const safeAway = (selectedMatch.away_team || 'away').replace(/[^a-z0-9]+/gi, '_');
+      const filename = `tryscorer_probs_${safeHome}_vs_${safeAway}.csv`;
+
+      const csv = rowsToCsv(rows);
+      downloadTextFile(csv, filename);
+    });
+  }
 
   // --- RENDER TEAMS ---
   function renderTeams(data) {
@@ -209,8 +258,20 @@ document.addEventListener("DOMContentLoaded", function () {
           fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(res => res.json()),
           fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(res => res.json())
         ]).then(([tryProbs, tryDist]) => {
-          players.forEach((p, i) => {
-            const playerProb = tryProbs[p.id] || tryProbs[String(p.id)];
+          tryscorerDataCache[side] = {
+            teamName,
+            teamId,
+            players,
+            tryProbs,
+            tryDist
+          };
+
+          if (downloadCsvBtn && tryscorerDataCache.home && tryscorerDataCache.away) {
+            downloadCsvBtn.disabled = false;
+          }
+
+          players.forEach((p) => {
+            const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
             if (playerProb !== undefined && tryDist) {
               const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
               document.getElementById(`anytime-${side}-${p.id}`).textContent =
@@ -220,6 +281,8 @@ document.addEventListener("DOMContentLoaded", function () {
             }
           });
         }).catch(() => {
+          tryscorerDataCache[side] = null;
+
           players.forEach(p => {
             document.getElementById(`anytime-${side}-${p.id}`).textContent = "-";
           });
@@ -243,6 +306,94 @@ document.addEventListener("DOMContentLoaded", function () {
       prob += pn * (1 - Math.pow(1 - p, n));
     }
     return prob;
+  }
+
+// --- CSV Populating Helper Functions
+
+  function csvEscape(value) {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (str.includes('"') || str.includes(',') || str.includes('\n')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  }
+
+  function downloadTextFile(content, filename, mimeType = 'text/csv;charset=utf-8;') {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    URL.revokeObjectURL(url);
+  }
+
+  function buildTryscorerRowsFromCache() {
+    const rows = [];
+
+    ['home', 'away'].forEach((side) => {
+      const cached = tryscorerDataCache[side];
+      if (!cached) return;
+
+      const { teamName, players, tryProbs, tryDist } = cached;
+
+      players.forEach((player) => {
+        const perTryProb = tryProbs[player.id] ?? tryProbs[String(player.id)];
+        const anytimeProb =
+          perTryProb !== undefined && tryDist
+            ? anytimeTryscorerProbability(perTryProb, tryDist, 20)
+            : null;
+
+        rows.push({
+          team: teamName,
+          side,
+          player_id: player.id,
+          player_name: player.name,
+          position: player.position,
+          per_try_prob: perTryProb,
+          anytime_prob: anytimeProb
+        });
+      });
+    });
+
+    return rows;
+  }
+
+  function rowsToCsv(rows) {
+    const headers = [
+      'team',
+      'side',
+      'player_id',
+      'player_name',
+      'position',
+      'per_try_prob',
+      'per_try_prob_pct',
+      'anytime_prob',
+      'anytime_prob_pct'
+    ];
+
+    const lines = [headers.join(',')];
+
+    rows.forEach((row) => {
+      lines.push([
+        csvEscape(row.team),
+        csvEscape(row.side),
+        csvEscape(row.player_id),
+        csvEscape(row.player_name),
+        csvEscape(row.position),
+        csvEscape(row.per_try_prob ?? ''),
+        csvEscape(row.per_try_prob != null ? (row.per_try_prob * 100).toFixed(2) : ''),
+        csvEscape(row.anytime_prob ?? ''),
+        csvEscape(row.anytime_prob != null ? (row.anytime_prob * 100).toFixed(2) : '')
+      ].join(','));
+    });
+
+    return lines.join('\n');
   }
 
   // --- SGM DIST HELPERS ---

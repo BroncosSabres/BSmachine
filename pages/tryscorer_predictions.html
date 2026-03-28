@@ -80,6 +80,14 @@
       <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
         <label for="match-select" class="font-semibold text-base md:text-lg">Select Match:</label>
         <select id="match-select" class="rounded px-4 py-2 text-gray-900 w-72 max-w-full"></select>
+        <button
+          id="download-tryscorer-csv"
+          type="button"
+          class="px-4 py-2 rounded bg-yellow-400 text-gray-900 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+        >
+          Download CSV
+        </button>
       </div>
       <!-- FLEX ROW: Team lists left, betslip right -->
       <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-8 justify-center items-start max-w-6xl mx-auto">
