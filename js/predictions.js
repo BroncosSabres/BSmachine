@@ -100,57 +100,88 @@ function createMatchCard(data) {
   const card = document.createElement("div");
   card.className = "match-card";
 
-  card.innerHTML = `
-    <div class="flex items-center justify-between gap-4">
+  const bar = `
+    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
+      <div class="prob-bar-home" style="width:${homePercDisplay}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
+      <div class="prob-bar-away" style="width:${awayPercDisplay}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
+    </div>`;
 
-      <!-- Home team -->
+  card.innerHTML = `
+
+    <!-- DESKTOP layout (md+) -->
+    <div class="hidden md:flex items-center justify-between gap-4">
       <div class="flex-1 flex items-center gap-3 min-w-0">
         <img src="${logoUrl(home_team)}" alt="${home_team} logo"
-             class="w-12 h-12 object-contain shrink-0"
-             onerror="this.style.display='none'">
+             class="w-12 h-12 object-contain shrink-0" onerror="this.style.display='none'">
         <div class="min-w-0">
           <div class="text-base font-semibold leading-tight ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
           <div class="text-xs text-gray-500 mt-0.5">Home</div>
         </div>
       </div>
-
-      <!-- Centre: probability + bar + score -->
       <div class="flex flex-col items-center gap-1.5 w-64">
-        <!-- Win % numbers -->
         <div class="flex items-center justify-between w-full text-sm font-bold">
           <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
           <span class="text-gray-600 text-xs font-normal px-2">vs</span>
           <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
         </div>
-        <!-- Split probability bar -->
-        <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
-          <div class="prob-bar-home" style="width:${homePercDisplay}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
-          <div class="prob-bar-away" style="width:${awayPercDisplay}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
-        </div>
-        <!-- Expected score -->
-        <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">
-          ${home_score} – ${away_score}
-        </div>
+        ${bar}
+        <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>
       </div>
-
-      <!-- Away team -->
       <div class="flex-1 flex items-center justify-end gap-3 min-w-0">
         <div class="min-w-0 text-right">
           <div class="text-base font-semibold leading-tight ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
           <div class="text-xs text-gray-500 mt-0.5">Away</div>
         </div>
         <img src="${logoUrl(away_team)}" alt="${away_team} logo"
-             class="w-12 h-12 object-contain shrink-0"
-             onerror="this.style.display='none'">
+             class="w-12 h-12 object-contain shrink-0" onerror="this.style.display='none'">
       </div>
-
     </div>
 
-    <!-- Footer row -->
-    <div class="mt-3 pt-3 border-t border-gray-700 flex items-center justify-between text-xs text-gray-500">
-      <span>${homeWin ? home_team : away_team} favoured</span>
-      <span class="js-tryscorer-btn">${tryscorerButtonDisabled()}</span>
-      <span>Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
+    <!-- MOBILE layout (<md) -->
+    <div class="flex flex-col gap-2 md:hidden">
+      <!-- Teams side by side -->
+      <div class="flex items-center justify-between gap-2">
+        <!-- Home -->
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <img src="${logoUrl(home_team)}" alt="${home_team} logo"
+               class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+          <div class="min-w-0">
+            <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
+            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span></div>
+          </div>
+        </div>
+        <!-- Score -->
+        <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
+        <!-- Away -->
+        <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
+          <div class="min-w-0 text-right">
+            <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
+            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span></div>
+          </div>
+          <img src="${logoUrl(away_team)}" alt="${away_team} logo"
+               class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+        </div>
+      </div>
+      <!-- Bar -->
+      ${bar}
+    </div>
+
+    <!-- Footer row (shared) -->
+    <div class="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
+      <!-- Desktop footer: single row -->
+      <div class="hidden md:flex items-center justify-between">
+        <span>${homeWin ? home_team : away_team} favoured</span>
+        <span class="js-tryscorer-btn">${tryscorerButtonDisabled()}</span>
+        <span>Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
+      </div>
+      <!-- Mobile footer: two rows -->
+      <div class="flex flex-col gap-2 md:hidden">
+        <div class="flex items-center justify-between">
+          <span>${homeWin ? home_team : away_team} favoured</span>
+          <span>Total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
+        </div>
+        <div class="js-tryscorer-btn flex justify-center"></div>
+      </div>
     </div>
   `;
 
@@ -181,10 +212,11 @@ async function loadPredictions() {
 
         // Async: update button once we know if team lists are available
         checkTryscorerAvailable(data.home_team, data.away_team).then(({ available, matchId }) => {
-          const slot = card.querySelector('.js-tryscorer-btn');
-          if (slot) slot.innerHTML = available
-            ? tryscorerButtonEnabled(matchId)
-            : tryscorerButtonDisabled();
+          card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
+            slot.innerHTML = available
+              ? tryscorerButtonEnabled(matchId)
+              : tryscorerButtonDisabled();
+          });
         });
       } catch (err) {
         console.error(`Error parsing line ${idx}:`, line, err);
