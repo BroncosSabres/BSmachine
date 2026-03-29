@@ -4,156 +4,146 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>NRL Finals Bracket Picker</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px auto; line-height: 1.45; max-width: 760px; padding: 0 12px; }
-    h1 { margin: 0 0 8px; }
-    .muted { color: #666; font-size: 14px; margin-bottom: 16px; }
-    fieldset { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-    legend { padding: 0 8px; font-weight: 600; }
-    label { display: block; font-weight: 600; margin: 10px 0 4px; }
-    select, input[type="text"], input[type="number"] { width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 15px; }
-    .grid { display: flex; flex-direction: column; gap: 12px; }
-    .col-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .col-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    button { padding: 10px 14px; border: 0; background: #0a7; color: #fff; border-radius: 10px; font-weight: 700; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .card { background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 12px; }
-    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .seed { font-size: 12px; color: #666; }
-    .help { font-size: 13px; color: #555; }
-    .error { color: #a00; font-weight: 600; }
-    .ok { color: #0a6; font-weight: 600; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; line-height: 1.5; }
+    fieldset { border: 1px solid #374151; border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    legend { padding: 0 0.5rem; font-weight: 600; color: #e5e7eb; }
+    label { display: block; font-weight: 600; margin: 0.75rem 0 0.25rem; color: #d1d5db; font-size: 0.875rem; }
+    select, input[type="text"], input[type="number"] {
+      width: 100%; padding: 0.5rem 0.75rem;
+      background-color: #374151; border: 1px solid #4b5563; border-radius: 8px;
+      font-size: 0.9375rem; color: #f9fafb; outline: none;
+    }
+    select:focus, input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.3); }
+    .grid { display: flex; flex-direction: column; gap: 1rem; }
+    button[type="submit"] {
+      padding: 0.625rem 1.25rem; border: 0; background: #16a34a; color: #fff;
+      border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 0.9375rem;
+      transition: background 0.15s;
+    }
+    button[type="submit"]:hover { background: #15803d; }
+    button[type="submit"]:disabled { opacity: 0.5; cursor: not-allowed; }
+    .help { font-size: 0.8125rem; color: #9ca3af; }
+    .seed { font-size: 0.75rem; color: #6b7280; }
+    .error { color: #f87171; font-weight: 600; }
+    .ok { color: #4ade80; font-weight: 600; }
     .hidden { display: none; }
-    .countdown { font-size: 14px; color: #444; margin: 8px 0 16px; }
-    .locknote { color: #a00; font-weight: 600; }
+    .countdown { font-size: 0.875rem; color: #9ca3af; margin: 0.5rem 0 1rem; }
+    .locknote { color: #f87171; font-weight: 600; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .debug-card {
+      background: #1f2937; border: 1px solid #374151; border-radius: 12px;
+      padding: 1rem; font-size: 0.8125rem; color: #9ca3af;
+      white-space: pre-wrap; word-break: break-all;
+    }
   </style>
 </head>
-<body>
-  <h1>NRL Finals Bracket Picker</h1>
-  <!--
-    ─────────────────────────────────────────────────────────────────────────────
-    CONFIGURATION
-    1) Replace the eight team names below once the finals are set.
-    2) Choose how to submit: (A) Google Apps Script Web App (recommended), or
-       (B) Post to Google Form endpoint (requires mapping entry IDs).
-    3) If you don't set a SUBMIT target, the form will just print JSON for copy.
-    ─────────────────────────────────────────────────────────────────────────────
-  -->
+<body class="bg-gray-900 text-white">
+  <div id="site-header"></div>
+
+  <main class="max-w-2xl mx-auto px-4 py-10">
+    <h1 class="text-3xl font-bold mb-1">NRL Finals Bracket Picker</h1>
     <p id="deadlineNote" class="countdown"></p>
 
-  <script>
-    // 1) SEEDS → TEAM NAMES (edit these per your finals ladder at Week 1)
-    const SEEDS = {
-      1: "Raiders",
-      2: "Storm",
-      3: "Bulldogs",
-      4: "Broncos",
-      5: "Sharks",
-      6: "Warriors",
-      7: "Panthers",
-      8: "Roosters",
-    };
+    <script>
+      // 1) SEEDS → TEAM NAMES (edit these per your finals ladder at Week 1)
+      const SEEDS = {
+        1: "Raiders",
+        2: "Storm",
+        3: "Bulldogs",
+        4: "Broncos",
+        5: "Sharks",
+        6: "Warriors",
+        7: "Panthers",
+        8: "Roosters",
+      };
 
-    // 2) SUBMISSION DESTINATION
-    // Option A: Google Apps Script Web App URL (recommended). Leave empty to skip network submit.
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPXNznP1xOQ_Anvb-q_4UUvBOh2dARuncnF3qjsP-9LVCrZvRw1JcrARdn_ccRH2G2/exec"; 
-    // Auto-lock deadline: 12 Sep 2025 7:50 pm AEST (UTC+10)
-    const DEADLINE_UTC = new Date("2025-09-12T09:50:00Z");
+      // 2) SUBMISSION DESTINATION
+      const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPXNznP1xOQ_Anvb-q_4UUvBOh2dARuncnF3qjsP-9LVCrZvRw1JcrARdn_ccRH2G2/exec";
+      // Auto-lock deadline: 12 Sep 2025 7:50 pm AEST (UTC+10)
+      const DEADLINE_UTC = new Date("2025-09-12T09:50:00Z");
+    </script>
 
-  </script>
+    <form id="bracketForm" class="grid">
+      <fieldset>
+        <legend>Entrant</legend>
+        <label for="username">Reddit username (no /u/)</label>
+        <input id="username" name="username" type="text" placeholder="e.g., YourHandle for u/YourHandle" required />
+        <div class="help" style="margin-top:0.375rem;">We will only count the <strong>last</strong> submission per username.</div>
+      </fieldset>
 
-  <form id="bracketForm" class="grid">
-    <fieldset class="col-span-2">
-      <legend>Entrant</legend>
-      <label for="username">Reddit username (no /u/)</label>
-      <input id="username" name="username" type="text" placeholder="e.g., YourHandle for u/YourHandle" required />
+      <fieldset>
+        <legend>Week 1 — Qualifying Finals</legend>
+        <div class="help">Winners go to Prelims; losers get a second chance in Week 2.</div>
+        <label for="M1">QF1 — (1) vs (4)</label>
+        <select id="M1" required></select>
+        <label for="M2">QF2 — (2) vs (3)</label>
+        <select id="M2" required></select>
+      </fieldset>
 
-      <div class="help">We will only count the <strong>last</strong> submission per username.</div>
-    </fieldset>
+      <fieldset>
+        <legend>Week 1 — Elimination Finals</legend>
+        <div class="help">Losers are eliminated.</div>
+        <label for="M3">EF1 — (5) vs (8)</label>
+        <select id="M3" required></select>
+        <label for="M4">EF2 — (6) vs (7)</label>
+        <select id="M4" required></select>
+      </fieldset>
 
-    <fieldset>
-      <legend>Week 1 — Qualifying Finals</legend>
-      <div class="help">Winners go to Prelims; losers get a second chance in Week 2.</div>
-      <label for="M1">QF1 — (1) vs (4)</label>
-      <select id="M1" required></select>
+      <fieldset>
+        <legend>Week 2 — Semi Finals</legend>
+        <div class="help">Each Semi = QF loser vs EF winner. <span class="seed">(SF1: Loser QF1 vs Winner EF1; SF2: Loser QF2 vs Winner EF2)</span></div>
+        <label for="M5">SF1</label>
+        <select id="M5" required></select>
+        <label for="M6">SF2</label>
+        <select id="M6" required></select>
+      </fieldset>
 
-      <label for="M2">QF2 — (2) vs (3)</label>
-      <select id="M2" required></select>
-    </fieldset>
+      <fieldset>
+        <legend>Week 3 — Preliminary Finals</legend>
+        <div class="help"><span class="seed">PF1: Winner QF1 vs Winner SF2; PF2: Winner QF2 vs Winner SF1</span></div>
+        <label for="M7">PF1</label>
+        <select id="M7" required></select>
+        <label for="M8">PF2</label>
+        <select id="M8" required></select>
+      </fieldset>
 
-    <fieldset>
-      <legend>Week 1 — Elimination Finals</legend>
-      <div class="help">Losers are eliminated.</div>
-      <label for="M3">EF1 — (5) vs (8)</label>
-      <select id="M3" required></select>
+      <fieldset>
+        <legend>Week 4 — Grand Final</legend>
+        <label for="M9">Grand Final winner</label>
+        <select id="M9" required></select>
+        <label for="tb">Tiebreaker — Winning Margin in the GF</label>
+        <input id="tb" name="tb" type="number" min="0" max="200" required />
+      </fieldset>
 
-      <label for="M4">EF2 — (6) vs (7)</label>
-      <select id="M4" required></select>
-    </fieldset>
+      <div class="row">
+        <button id="submitBtn" type="submit">Submit picks</button>
+        <span id="status" class="help"></span>
+      </div>
 
-    <fieldset>
-      <legend>Week 2 — Semi Finals</legend>
-      <div class="help">Each Semi = QF loser vs EF winner. <span class="seed">(SF1: Loser QF1 vs Winner EF1; SF2: Loser QF2 vs Winner EF2)</span></div>
-      <label for="M5">SF1</label>
-      <select id="M5" required></select>
-
-      <label for="M6">SF2</label>
-      <select id="M6" required></select>
-    </fieldset>
-
-    <fieldset>
-      <legend>Week 3 — Preliminary Finals</legend>
-      <div class="help"><span class="seed">PF1: Winner QF1 vs Winner SF2; PF2: Winner QF2 vs Winner SF1</span></div>
-      <label for="M7">PF1</label>
-      <select id="M7" required></select>
-
-      <label for="M8">PF2</label>
-      <select id="M8" required></select>
-    </fieldset>
-
-    <fieldset>
-      <legend>Week 4 — Grand Final</legend>
-      <label for="M9">Grand Final winner</label>
-      <select id="M9" required></select>
-
-      <label for="tb">Tiebreaker — Winning Margin in the GF</label>
-      <input id="tb" name="tb" type="number" min="0" max="200" required />
-    </fieldset>
-
-    <div class="col-span-2 row">
-      <button id="submitBtn" type="submit">Submit picks</button>
-      <span id="status" class="help"></span>
-    </div>
-
-    <div id="debug" class="col-span-2 card hidden"></div>
-  </form>
+      <div id="debug" class="debug-card hidden"></div>
+    </form>
+  </main>
 
   <script>
     // ——————————————————————————————————————————————
     // Bracket logic (AFL/NRL final-eight style mapping)
     // ——————————————————————————————————————————————
     const picks = {
-      M1: null, // QF1 winner (1 v 4)
-      M2: null, // QF2 winner (2 v 3)
-      M3: null, // EF1 winner (5 v 8)
-      M4: null, // EF2 winner (6 v 7)
-      M5: null, // SF1 winner (Loser QF1 vs Winner EF1)
-      M6: null, // SF2 winner (Loser QF2 vs Winner EF2)
-      M7: null, // PF1 winner (Winner QF1 vs Winner SF2)
-      M8: null, // PF2 winner (Winner QF2 vs Winner SF1)
-      M9: null, // GF winner (PF1 vs PF2)
-      tb: null, // tiebreaker (GF points)
+      M1: null, M2: null, M3: null, M4: null,
+      M5: null, M6: null, M7: null, M8: null, M9: null,
+      tb: null,
     };
 
     function team(seed) { return `${SEEDS[seed]} (seed ${seed})`; }
 
-    // Initial matchups by seed
-    const M1_OPTS = [1, 4]; // QF1
-    const M2_OPTS = [2, 3]; // QF2
-    const M3_OPTS = [5, 8]; // EF1
-    const M4_OPTS = [6, 7]; // EF2
+    const M1_OPTS = [1, 4];
+    const M2_OPTS = [2, 3];
+    const M3_OPTS = [5, 8];
+    const M4_OPTS = [6, 7];
 
-    // Helpers
     const sel = id => document.getElementById(id);
     function makeOptions(selectEl, seedList) {
       selectEl.innerHTML = '<option value="" disabled selected>Select winner…</option>' +
@@ -180,205 +170,108 @@
     }
 
     function recomputeSemis() {
-        const qf1Loser = picks.M1 ? loserOf(picks.M1, M1_OPTS) : null;
-        const qf2Loser = picks.M2 ? loserOf(picks.M2, M2_OPTS) : null;
-        const ef1Winner = picks.M3 ? Number(picks.M3) : null;
-        const ef2Winner = picks.M4 ? Number(picks.M4) : null;
-
-        setSelectOptions(sel('M5'), qf1Loser, ef1Winner); // SF1
-        setSelectOptions(sel('M6'), qf2Loser, ef2Winner); // SF2
+      const qf1Loser = picks.M1 ? loserOf(picks.M1, M1_OPTS) : null;
+      const qf2Loser = picks.M2 ? loserOf(picks.M2, M2_OPTS) : null;
+      const ef1Winner = picks.M3 ? Number(picks.M3) : null;
+      const ef2Winner = picks.M4 ? Number(picks.M4) : null;
+      setSelectOptions(sel('M5'), qf1Loser, ef1Winner);
+      setSelectOptions(sel('M6'), qf2Loser, ef2Winner);
     }
 
     function recomputePrelims() {
-        const qf1Winner = picks.M1;
-        const qf2Winner = picks.M2;
-        const sf1Winner = picks.M5 || null;
-        const sf2Winner = picks.M6 || null;
-
-        setSelectOptions(sel('M7'), qf1Winner, sf2Winner); // PF1
-        setSelectOptions(sel('M8'), qf2Winner, sf1Winner); // PF2
+      const qf1Winner = picks.M1;
+      const qf2Winner = picks.M2;
+      const sf1Winner = picks.M5 || null;
+      const sf2Winner = picks.M6 || null;
+      setSelectOptions(sel('M7'), qf1Winner, sf2Winner);
+      setSelectOptions(sel('M8'), qf2Winner, sf1Winner);
     }
 
-    // Initialize Week 1 selects
     makeOptions(sel('M1'), M1_OPTS);
     makeOptions(sel('M2'), M2_OPTS);
     makeOptions(sel('M3'), M3_OPTS);
     makeOptions(sel('M4'), M4_OPTS);
 
-    // Wire Week 1 → compute Semi options
-    sel('M1').addEventListener('change', () => {
-      picks.M1 = Number(sel('M1').value);
-      recomputeSemis();
-      resetDownstream(['M5','M6','M7','M8','M9']);
-      recomputePrelims();
-    });
-
-    sel('M2').addEventListener('change', () => {
-      picks.M2 = Number(sel('M2').value);
-      recomputeSemis();
-      resetDownstream(['M5','M6','M7','M8','M9']);
-      recomputePrelims();
-    });
-
-    sel('M3').addEventListener('change', () => {
-      picks.M3 = Number(sel('M3').value);
-      recomputeSemis();
-      resetDownstream(['M5','M6','M7','M8','M9']);
-      recomputePrelims();
-    });
-
-    sel('M4').addEventListener('change', () => {
-      picks.M4 = Number(sel('M4').value);
-      recomputeSemis();
-      resetDownstream(['M5','M6','M7','M8','M9']);
-      recomputePrelims();
-    });
-
-    // Semis → Prelims options
-    sel('M5').addEventListener('change', () => {
-      picks.M5 = Number(sel('M5').value);
-      recomputePrelims();
-      resetDownstream(['M8','M9']);
-    });
-
-    sel('M6').addEventListener('change', () => {
-      picks.M6 = Number(sel('M6').value);
-      recomputePrelims();
-      resetDownstream(['M7','M9']);
-    });
-
-    // Prelims → GF options
-    sel('M7').addEventListener('change', () => {
-      picks.M7 = Number(sel('M7').value);
-      const pf2Winner = picks.M8 || null;
-      setSelectOptions(sel('M9'), picks.M7, pf2Winner);
-      resetDownstream(['M9']);
-    });
-
-    sel('M8').addEventListener('change', () => {
-      picks.M8 = Number(sel('M8').value);
-      const pf1Winner = picks.M7 || null;
-      setSelectOptions(sel('M9'), pf1Winner, picks.M8);
-      resetDownstream(['M9']);
-    });
-
-    // GF winner
-    sel('M9').addEventListener('change', () => {
-      picks.M9 = Number(sel('M9').value);
-    });
-
-    // Tiebreaker
-    sel('tb').addEventListener('input', () => {
-      picks.tb = Number(sel('tb').value);
-    });
+    sel('M1').addEventListener('change', () => { picks.M1 = Number(sel('M1').value); recomputeSemis(); resetDownstream(['M5','M6','M7','M8','M9']); recomputePrelims(); });
+    sel('M2').addEventListener('change', () => { picks.M2 = Number(sel('M2').value); recomputeSemis(); resetDownstream(['M5','M6','M7','M8','M9']); recomputePrelims(); });
+    sel('M3').addEventListener('change', () => { picks.M3 = Number(sel('M3').value); recomputeSemis(); resetDownstream(['M5','M6','M7','M8','M9']); recomputePrelims(); });
+    sel('M4').addEventListener('change', () => { picks.M4 = Number(sel('M4').value); recomputeSemis(); resetDownstream(['M5','M6','M7','M8','M9']); recomputePrelims(); });
+    sel('M5').addEventListener('change', () => { picks.M5 = Number(sel('M5').value); recomputePrelims(); resetDownstream(['M8','M9']); });
+    sel('M6').addEventListener('change', () => { picks.M6 = Number(sel('M6').value); recomputePrelims(); resetDownstream(['M7','M9']); });
+    sel('M7').addEventListener('change', () => { picks.M7 = Number(sel('M7').value); const pf2Winner = picks.M8 || null; setSelectOptions(sel('M9'), picks.M7, pf2Winner); resetDownstream(['M9']); });
+    sel('M8').addEventListener('change', () => { picks.M8 = Number(sel('M8').value); const pf1Winner = picks.M7 || null; setSelectOptions(sel('M9'), pf1Winner, picks.M8); resetDownstream(['M9']); });
+    sel('M9').addEventListener('change', () => { picks.M9 = Number(sel('M9').value); });
+    sel('tb').addEventListener('input', () => { picks.tb = Number(sel('tb').value); });
 
     // ——————————————————————————————————————————————
     // Submission
     // ——————————————————————————————————————————————
     const statusEl = document.getElementById('status');
     const debugEl = document.getElementById('debug');
-
-    // ----- Auto-lock helpers -----
-    const bracketForm  = document.getElementById('bracketForm');
-    const submitBtn    = document.getElementById('submitBtn');
+    const bracketForm = document.getElementById('bracketForm');
+    const submitBtn = document.getElementById('submitBtn');
     const deadlineNote = document.getElementById('deadlineNote');
 
     function fmtSydney(dt) {
-    return new Intl.DateTimeFormat('en-AU', {
+      return new Intl.DateTimeFormat('en-AU', {
         timeZone: 'Australia/Sydney',
         weekday: 'short', year: 'numeric', month: 'short', day: '2-digit',
         hour: '2-digit', minute: '2-digit'
-    }).format(dt);
+      }).format(dt);
     }
 
     function setLocked(locked) {
-    submitBtn.disabled = locked;
-    Array.from(bracketForm.querySelectorAll('input, select')).forEach(el => el.disabled = locked);
-    if (locked) {
+      submitBtn.disabled = locked;
+      Array.from(bracketForm.querySelectorAll('input, select')).forEach(el => el.disabled = locked);
+      if (locked) {
         deadlineNote.textContent = 'Submissions are closed (locked at 7:50 pm AEST, 12 Sep 2025).';
         deadlineNote.className = 'locknote';
-    }
+      }
     }
 
     function tickLock() {
-    const now = new Date();
-    const locked = now >= DEADLINE_UTC;
-    if (!locked) {
+      const now = new Date();
+      const locked = now >= DEADLINE_UTC;
+      if (!locked) {
         const ms   = DEADLINE_UTC - now;
         const days = Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
         const hours = Math.max(0, Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)));
-        const mins = Math.max(0, Math.floor((ms % (1000 * 60 * 60 )) / (1000 * 60)));
+        const mins = Math.max(0, Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60)));
         const secs = Math.max(0, Math.floor((ms % 60000) / 1000));
         deadlineNote.textContent =
-        `Entries close at ${fmtSydney(DEADLINE_UTC)} AEST. Time remaining: ${days}d ${hours}h ${mins}m ${secs}s`;
+          `Entries close at ${fmtSydney(DEADLINE_UTC)} AEST. Time remaining: ${days}d ${hours}h ${mins}m ${secs}s`;
         deadlineNote.className = 'countdown';
-    }
-    setLocked(locked);
+      }
+      setLocked(locked);
     }
 
-    // Start
     tickLock();
     setInterval(tickLock, 1000);
 
     function buildPayload() {
       const username = document.getElementById('username').value.trim();
-      const payload = {
+      return {
         username,
-        picks: {
-          M1: picks.M1, M2: picks.M2, M3: picks.M3, M4: picks.M4,
-          M5: picks.M5, M6: picks.M6, M7: picks.M7, M8: picks.M8, M9: picks.M9,
-        },
+        picks: { M1: picks.M1, M2: picks.M2, M3: picks.M3, M4: picks.M4, M5: picks.M5, M6: picks.M6, M7: picks.M7, M8: picks.M8, M9: picks.M9 },
         tb: picks.tb,
-        // Also send resolved team names for convenience
-        resolved: {
-          M1: SEEDS[picks.M1], M2: SEEDS[picks.M2], M3: SEEDS[picks.M3], M4: SEEDS[picks.M4],
-          M5: SEEDS[picks.M5], M6: SEEDS[picks.M6], M7: SEEDS[picks.M7], M8: SEEDS[picks.M8], M9: SEEDS[picks.M9],
-        },
+        resolved: { M1: SEEDS[picks.M1], M2: SEEDS[picks.M2], M3: SEEDS[picks.M3], M4: SEEDS[picks.M4], M5: SEEDS[picks.M5], M6: SEEDS[picks.M6], M7: SEEDS[picks.M7], M8: SEEDS[picks.M8], M9: SEEDS[picks.M9] },
         seeds: SEEDS,
         submitted_at: new Date().toISOString(),
       };
-      return payload;
     }
 
     async function submitAppsScript(payload) {
-      const res = await fetch(APPS_SCRIPT_URL, {
+      return fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        mode: 'no-cors', // GAS often used with no-cors; you won't get a readable response, but write succeeds
+        mode: 'no-cors',
       });
-      return res; // likely opaque with no-cors
-    }
-
-    async function submitGoogleForm(payload) {
-      const form = new URLSearchParams();
-      if (!FORM_ENTRY_MAP.username) throw new Error('FORM_ENTRY_MAP.username not set');
-      form.append(FORM_ENTRY_MAP.username, payload.username);
-      if (!FORM_ENTRY_MAP.tiebreaker) throw new Error('FORM_ENTRY_MAP.tiebreaker not set');
-      form.append(FORM_ENTRY_MAP.tiebreaker, String(payload.tb ?? ''));
-      // Map M1..M9
-      for (let i = 1; i <= 9; i++) {
-        const key = `M${i}`;
-        const entry = FORM_ENTRY_MAP[key];
-        if (!entry) throw new Error(`FORM_ENTRY_MAP.${key} not set`);
-        // send team name (human-friendly) or seed; keep it consistent with how you plan to score
-        form.append(entry, SEEDS[payload.picks[key]] || '');
-      }
-      const res = await fetch(GOOGLE_FORM_ACTION, {
-        method: 'POST',
-        body: form,
-        mode: 'no-cors', // Google Forms requires no-cors for anonymous posts
-      });
-      return res;
     }
 
     document.getElementById('bracketForm').addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (new Date() >= DEADLINE_UTC) {
-        statusEl.textContent = 'Submissions are closed.';
-        statusEl.className = 'help locknote';
-        return;
-        }
+      if (new Date() >= DEADLINE_UTC) { statusEl.textContent = 'Submissions are closed.'; statusEl.className = 'help locknote'; return; }
       statusEl.textContent = '';
       const username = document.getElementById('username').value.trim();
       if (!username) { statusEl.textContent = 'Please enter a username.'; statusEl.className = 'help error'; return; }
@@ -389,8 +282,7 @@
 
       const payload = buildPayload();
 
-      // If no endpoints set, just show JSON for manual copy (useful for testing)
-      if (!APPS_SCRIPT_URL && !GOOGLE_FORM_ACTION) {
+      if (!APPS_SCRIPT_URL) {
         debugEl.classList.remove('hidden');
         debugEl.textContent = JSON.stringify(payload, null, 2);
         statusEl.textContent = 'No submit target set. Showing JSON below (copy-paste).';
@@ -400,11 +292,7 @@
 
       try {
         document.getElementById('submitBtn').disabled = true;
-        if (APPS_SCRIPT_URL) {
-          await submitAppsScript(payload);
-        } else if (GOOGLE_FORM_ACTION) {
-          await submitGoogleForm(payload);
-        }
+        await submitAppsScript(payload);
         statusEl.textContent = 'Submitted! Thanks for entering.';
         statusEl.className = 'help ok';
       } catch (err) {
@@ -417,5 +305,28 @@
     });
   </script>
 
+  <script>
+    fetch('../components/header.html')
+      .then(res => res.text())
+      .then(html => {
+        document.getElementById("site-header").innerHTML = html;
+
+        document.getElementById("bmc-button").innerHTML = `
+          <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+            <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                 alt="Buy Me a Coffee"
+                 style="height: 40px; width: 145px;">
+          </a>
+        `;
+
+        const menuToggle = document.getElementById("menu-toggle");
+        const mobileMenu = document.getElementById("mobile-menu");
+        if (menuToggle && mobileMenu) {
+          menuToggle.addEventListener("click", () => {
+            mobileMenu.classList.toggle("hidden");
+          });
+        }
+      });
+  </script>
 </body>
 </html>

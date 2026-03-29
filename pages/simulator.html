@@ -7,77 +7,75 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NRL Impact Simulator</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-gray-800 text-white">
+  <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
     <main class="max-w-7xl mx-auto px-4 py-8 min-h-screen overflow-auto">
-  <h2 class="text-4xl font-bold mb-8">Result Simulator</h2>
-  <div class="flex flex-col lg:flex-row gap-4 items-start lg:h-[calc(100vh-200px)]">
-    <!-- Match Selection Area -->
-    <div class="w-full lg:w-2/12">
-      <h3 class="text-2xl font-semibold mb-4">Select Match Outcomes</h3>
-      <div id="selection-chance" class="mb-4 text-sm text-gray-300 font-medium">
-        <!-- JS populates this -->
-      </div>
-      <form id="simulation-form" class="space-y-2 text-sm">
-        <!-- Match selection radio buttons will be injected here -->
-      </form>
-    </div>
+      <h1 class="text-4xl font-bold mb-8">Result Simulator</h1>
 
-    <!-- Bar Chart Area -->
-    <div class="w-full lg:w-10/12 h-full">
-      <h3 class="text-2xl font-semibold mb-4">Simulated Outcome Probabilities</h3>
-      <div class="mb-4">
-        <label for="impact-select" class="block text-sm font-medium mb-1">Select Outcome</label>
-        <select id="impact-select" class="p-2 border rounded bg-gray-900 text-white">
-          <option>Top 8</option>
-          <option>Top 4</option>
-          <option>Minor Premiership</option>
-          <option>Wooden Spoon</option>
-        </select>
+      <div class="flex flex-col lg:flex-row gap-6 items-start">
+
+        <!-- Match Selection Area -->
+        <div class="card w-full lg:w-64 shrink-0">
+          <h2 class="text-lg font-semibold mb-3 text-gray-100">Select Match Outcomes</h2>
+          <div id="selection-chance" class="mb-4 text-sm text-gray-400 font-medium"></div>
+          <form id="simulation-form" class="space-y-2 text-sm">
+            <!-- Match selection radio buttons will be injected here -->
+          </form>
+        </div>
+
+        <!-- Bar Chart Area -->
+        <div class="card flex-1 min-w-0">
+          <h2 class="text-lg font-semibold mb-3 text-gray-100">Simulated Outcome Probabilities</h2>
+          <div class="mb-4">
+            <label for="impact-select" class="block text-sm font-medium text-gray-400 mb-2">Select Outcome</label>
+            <select id="impact-select" class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Top 8</option>
+              <option>Top 4</option>
+              <option>Minor Premiership</option>
+              <option>Wooden Spoon</option>
+            </select>
+          </div>
+          <canvas id="impactChart" class="w-full"></canvas>
+        </div>
+
       </div>
-      <canvas id="impactChart" class="w-full h-full"></canvas>
-    </div>
-  </div>
-      </section>
     </main>
 
     <script type="module" src="../js/impact-simulator.js"></script>
-  <script>
-  fetch('../components/header.html')
-    .then(res => res.text())
-    .then(html => {
-      document.getElementById("site-header").innerHTML = html;
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
 
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
 
-      // Insert the Buy Me a Coffee button image after the header loads
-      document.getElementById("bmc-button").innerHTML = `
-        <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-          <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-              alt="Buy Me a Coffee" 
-              style="height: 45px; width: 162px;">
-        </a>
-      `; 
-
-      const menuToggle = document.getElementById("menu-toggle");
-      const mobileMenu = document.getElementById("mobile-menu");
-      if (menuToggle && mobileMenu) {
-        menuToggle.addEventListener("click", () => {
-          mobileMenu.classList.toggle("hidden");
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
         });
-      }
-    });
-</script>
-</body>
+    </script>
+  </body>
 </html>

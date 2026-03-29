@@ -7,49 +7,49 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Season Tracker</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-gray-800 text-white">
+  <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
     <main class="max-w-6xl mx-auto px-6 py-10">
-      <h1 class="text-4xl font-bold mb-6">Season Tracker</h1>
-      <p class="text-gray-300 mb-10">
+      <h1 class="text-4xl font-bold mb-3">Season Tracker</h1>
+      <p class="text-gray-400 mb-10">
         Explore how each NRL team's performance rating and finals probabilities evolve throughout the season.
         Hover over any point to view match context and results.
       </p>
 
-      <section class="mb-12">
-        <h2 class="text-2xl font-semibold mb-4">Rating Progression</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Rating Progression</h2>
         <canvas id="ratingChart" class="w-full h-96"></canvas>
-      </section>
+      </div>
 
-      <section class="mb-12">
-        <h2 class="text-2xl font-semibold mb-4">Top 8 Probability</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Top 8 Probability</h2>
         <canvas id="top8Chart" class="w-full h-96"></canvas>
-      </section>
+      </div>
 
-      <section class="mb-12">
-        <h2 class="text-2xl font-semibold mb-4">Top 4 Probability</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Top 4 Probability</h2>
         <canvas id="top4Chart" class="w-full h-96"></canvas>
-      </section>
+      </div>
 
-      <section class="mb-12">
-        <h2 class="text-2xl font-semibold mb-4">Minor Premiership Probability</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Minor Premiership Probability</h2>
         <canvas id="minorChart" class="w-full h-96"></canvas>
-      </section>
+      </div>
 
-      <section class="mb-12">
-        <h2 class="text-2xl font-semibold mb-4">Wooden Spoon Probability</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Wooden Spoon Probability</h2>
         <canvas id="spoonChart" class="w-full h-96"></canvas>
-      </section>
+      </div>
     </main>
 
     <script>
@@ -58,14 +58,13 @@
         .then(html => {
           document.getElementById("site-header").innerHTML = html;
 
-          // Insert the Buy Me a Coffee button image after the header loads
           document.getElementById("bmc-button").innerHTML = `
             <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-                  alt="Buy Me a Coffee" 
-                  style="height: 45px; width: 162px;">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
             </a>
-          `; 
+          `;
 
           const menuToggle = document.getElementById("menu-toggle");
           const mobileMenu = document.getElementById("mobile-menu");

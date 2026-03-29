@@ -7,68 +7,74 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NRL Match Predictions</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-  </head>
-  <body class="bg-gray-800 text-white">
-    <div id="site-header"></div>
-<script>
-  fetch('../components/header.html')
-    .then(res => res.text())
-    .then(html => {
-      document.getElementById("site-header").innerHTML = html;
-
-      // Insert the Buy Me a Coffee button image after the header loads
-      document.getElementById("bmc-button").innerHTML = `
-        <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-          <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-              alt="Buy Me a Coffee" 
-              style="height: 45px; width: 162px;">
-        </a>
-      `; 
-
-
-      const menuToggle = document.getElementById("menu-toggle");
-      const mobileMenu = document.getElementById("mobile-menu");
-      if (menuToggle && mobileMenu) {
-        menuToggle.addEventListener("click", () => {
-          mobileMenu.classList.toggle("hidden");
-        });
+    <style>
+      .prob-bar-home,
+      .prob-bar-away {
+        transition: width 0.4s ease, height 0.4s ease;
+        align-self: center;
       }
-    });
-</script>
+      .prob-bar-home {
+        border-radius: 4px 0 0 4px;
+      }
+      .prob-bar-away {
+        border-radius: 0 4px 4px 0;
+      }
+      .match-card {
+        background-color: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        transition: border-color 0.15s ease;
+      }
+      .match-card:hover {
+        border-color: #4b5563;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
 
-    <main class="max-w-7xl mx-auto px-4 py-8">
-      <h2 class="text-4xl font-bold mb-8">NRL Round Predictions</h2>
+    <main class="max-w-3xl mx-auto px-4 py-8">
+      <h1 class="text-4xl font-bold mb-2">Round Predictions</h1>
+      <p class="text-gray-400 mb-8 text-sm">Win probabilities and expected scores from the BS Machine model.</p>
 
-      <!-- Match Predictions Table -->
-      <section class="mb-10">
-        <h3 class="text-2xl font-semibold mb-4">Upcoming Matches</h3>
-        <div class="overflow-x-auto">
-          <table class="min-w-full bg-gray-900 border" id="predictions-table">
-            <thead>
-                <tr>
-                  <th class="px-4 py-2 border">Home</th>
-                  <th class="px-4 py-2 border">Away</th>
-                  <th class="px-4 py-2 border">Predicted Winner</th>
-                  <th class="px-4 py-2 border">Win Probability</th>
-                  <th class="px-4 py-2 border">Expected Score</th>
-                  <th class="px-4 py-2 border">Expected Total Points</th>
-                </tr>
-              </thead>              
-            <tbody></tbody>
-          </table>
-        </div>
-      </section>
+      <div id="predictions-container" class="flex flex-col gap-4">
+        <!-- Cards injected by JS -->
+      </div>
     </main>
 
     <script type="module" src="../js/predictions.js"></script>
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
   </body>
 </html>

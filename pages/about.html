@@ -7,55 +7,56 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>About the BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-gray-800 text-white">
+  <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-4xl mx-auto px-6 py-10">
-      <h1 class="text-4xl font-bold mb-6">About the BS Machine</h1>
+    <main class="max-w-3xl mx-auto px-6 py-10">
+      <h1 class="text-4xl font-bold mb-8">About the BS Machine</h1>
 
-      <section class="mb-8">
-        <h2 class="text-2xl font-semibold mb-2">What is this site?</h2>
-        <p class="text-gray-300">
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-2 text-gray-100">What is this site?</h2>
+        <p class="text-gray-400 leading-relaxed">
           The BS Machine is a data-driven platform for analysing NRL team performance, projecting outcomes, and visualising each team's season trajectory.
         </p>
-      </section>
+      </div>
 
-      <section class="mb-8">
-        <h2 class="text-2xl font-semibold mb-2">How does it work?</h2>
-        <p class="text-gray-300">
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-2 text-gray-100">How does it work?</h2>
+        <p class="text-gray-400 leading-relaxed">
           The model uses a Bayesian approach to predict the expected score for each match based on the offensive and defensive ratings of the teams involved. After each round, the predicted result is compared to the actual outcome, and the ratings are updated accordingly. This update reflects both offensive and defensive performance, allowing the model to understand not just how strong a team is overall, but whether that strength comes from attack, defence, or both. The result is a dynamic rating system that captures team performance above or below average, split into offensive, defensive, and total rating components.
         </p>
-      </section>
+      </div>
 
-      <section class="mb-8">
-        <h2 class="text-2xl font-semibold mb-2">What data do you use?</h2>
-        <p class="text-gray-300">
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-2 text-gray-100">What data do you use?</h2>
+        <p class="text-gray-400 leading-relaxed">
           Data includes past match results, scoring margins, and season fixtures. No proprietary data is used — everything is derived from publicly available match results and team performance stats.
         </p>
-      </section>
+      </div>
 
-      <section class="mb-8">
-        <h2 class="text-2xl font-semibold mb-2">Limitations</h2>
-        <p class="text-gray-300">
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-2 text-gray-100">Limitations</h2>
+        <p class="text-gray-400 leading-relaxed">
           The model doesn't currently explicitly account for injuries, team announcements, or mid-season coaching changes. While accurate in trends, it's not meant to replace expert judgment.
         </p>
-      </section>
+      </div>
 
-      <section>
-        <h2 class="text-2xl font-semibold mb-2">Contact</h2>
-        <p class="text-gray-300">
-          This project is maintained by BroncosSabres. For questions or suggestions, reach out via Reddit at u/BroncosSabres or via email at <a href="mailto:broncossabres@gmail.com" class="underline text-blue-400 hover:text-blue-200">broncossabres@gmail.com</a>.
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-2 text-gray-100">Contact</h2>
+        <p class="text-gray-400 leading-relaxed">
+          This project is maintained by BroncosSabres. For questions or suggestions, reach out via Reddit at u/BroncosSabres or via email at
+          <a href="mailto:broncossabres@gmail.com" class="text-blue-400 hover:text-blue-300 transition-colors">broncossabres@gmail.com</a>.
         </p>
-      </section>
+      </div>
     </main>
 
     <script>
@@ -64,14 +65,13 @@
         .then(html => {
           document.getElementById("site-header").innerHTML = html;
 
-          // Insert the Buy Me a Coffee button image after the header loads
           document.getElementById("bmc-button").innerHTML = `
             <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-                  alt="Buy Me a Coffee" 
-                  style="height: 45px; width: 162px;">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
             </a>
-          `; 
+          `;
 
           const menuToggle = document.getElementById("menu-toggle");
           const mobileMenu = document.getElementById("mobile-menu");

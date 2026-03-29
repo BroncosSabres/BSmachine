@@ -12,110 +12,70 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>Tryscorer Predictions | The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      .sgm-result {
-        background: #222e38;
-        color: #b8ffcb;
-        border-radius: 14px;
-        padding: 1.15em 1.5em;
-        margin-top: 1em;
-        font-size: 1.17em;
-        box-shadow: 0 2px 12px #1119;
-        min-height: 56px;
-        width: 100%;
-        max-width: 370px;
-      }
-      .sgm-picks-list {
-        margin-bottom: 0.5em;
-      }
-      .sgm-pick {
-        font-weight: 600;
-        color: #b8ffcb;
-        padding-bottom: 0.14em;
-        word-break: break-word;
-      }
-      .sgm-odds-row {
-        margin-top: 0.6em;
-        font-size: 1.14em;
-        font-weight: 700;
-        color: #ffd700;
-        text-align: left;
-        letter-spacing: 0.01em;
-      }
-      .sgm-odds {
-        font-weight: 800;
-        color: #ffd700;
-      }
-      @media (max-width: 700px) {
-        .sgm-result {
-          font-size: 1em;
-          padding: 1em 0.8em;
-          max-width: 100%;
-        }
-        .sgm-pick {
-          font-size: 1em;
-        }
-        .sgm-odds-row {
-          font-size: 1.07em;
-        }
-      }
-    </style>
   </head>
-  <body class="bg-gray-800 text-white min-h-screen">
+  <body class="bg-gray-900 text-white min-h-screen">
     <div id="site-header"></div>
+
     <main class="w-full max-w-6xl mx-auto px-4 py-8">
-      <h1 class="text-3xl md:text-4xl font-bold mb-4 text-center">Tryscorer Predictions</h1>
-      <p class="mb-8 text-gray-300 text-center">
+      <h1 class="text-3xl md:text-4xl font-bold mb-3 text-center">Tryscorer Predictions</h1>
+      <p class="mb-8 text-gray-400 text-center">
         Select a match, pick your tryscorer combo, and see the model's predicted odds!
       </p>
+
       <!-- MATCH SELECTOR -->
-      <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
-        <label for="competition-toggle" class="font-semibold text-base md:text-lg">Competition:</label>
-        <div id="competition-toggle" class="flex items-center gap-2">
-          <button id="btn-nrl" type="button" class="competition-btn px-4 py-2 rounded bg-yellow-400 text-gray-900 font-bold ring-2 ring-yellow-400">NRL</button>
-          <button id="btn-nrlw" type="button" class="competition-btn px-4 py-2 rounded bg-gray-600 text-gray-200 font-bold ring-2 ring-gray-600">NRLW</button>
+      <div class="card">
+        <div class="flex flex-col md:flex-row items-center gap-4 justify-center flex-wrap">
+          <div class="flex items-center gap-2">
+            <label class="font-semibold text-sm text-gray-300">Competition:</label>
+            <div id="competition-toggle" class="flex items-center gap-2">
+              <button id="btn-nrl" type="button"
+                      class="competition-btn px-4 py-2 rounded-lg bg-amber-400 text-gray-900 font-bold ring-2 ring-amber-400 text-sm">NRL</button>
+              <button id="btn-nrlw" type="button"
+                      class="competition-btn px-4 py-2 rounded-lg bg-gray-700 text-gray-300 font-bold ring-2 ring-gray-600 text-sm">NRLW</button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap justify-center">
+            <label for="match-select" class="font-semibold text-sm text-gray-300">Select Match:</label>
+            <select id="match-select"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm w-72 max-w-full focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+            <button id="download-tryscorer-csv" type="button"
+                    class="px-4 py-2 rounded-lg bg-amber-400 text-gray-900 font-bold disabled:opacity-40 disabled:cursor-not-allowed text-sm"
+                    disabled>
+              Download CSV
+            </button>
+          </div>
         </div>
       </div>
-      <div class="mb-6 flex flex-col md:flex-row items-center gap-4 justify-center">
-        <label for="match-select" class="font-semibold text-base md:text-lg">Select Match:</label>
-        <select id="match-select" class="rounded px-4 py-2 text-gray-900 w-72 max-w-full"></select>
-        <button
-          id="download-tryscorer-csv"
-          type="button"
-          class="px-4 py-2 rounded bg-yellow-400 text-gray-900 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled
-        >
-          Download CSV
-        </button>
-      </div>
+
       <!-- FLEX ROW: Team lists left, betslip right -->
-      <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-8 justify-center items-start max-w-6xl mx-auto">
+      <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-8 justify-center items-start">
         <div id="teams-container" class="flex flex-col md:flex-row gap-8 flex-1"></div>
-        <div>
-          <!-- Margin/Total Selectors Here -->
-          <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-2">
+        <div class="shrink-0">
+          <!-- Margin/Total Selectors -->
+          <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
             <div class="flex items-center gap-2">
-              <label for="margin-select" class="text-sm font-semibold">Margin:</label>
-              <select id="margin-select" class="rounded px-2 py-1 text-gray-900">
+              <label for="margin-select" class="text-sm font-semibold text-gray-300 w-24">Margin:</label>
+              <select id="margin-select"
+                      class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">(Any margin)</option>
               </select>
             </div>
             <div class="flex items-center gap-2">
-              <label for="total-select" class="text-sm font-semibold">Total Points:</label>
-              <select id="total-select" class="rounded px-2 py-1 text-gray-900">
+              <label for="total-select" class="text-sm font-semibold text-gray-300 w-24">Total Points:</label>
+              <select id="total-select"
+                      class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">(Any total)</option>
               </select>
             </div>
           </div>
           <!-- The result box -->
-          <div id="result" class="sgm-result min-h-[2em] md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-8"></div>
+          <div id="result" class="sgm-result min-h-[2em] md:w-80 w-full mt-6 md:mt-0 md:sticky md:top-20"></div>
         </div>
       </div>
     </main>
-    <!-- No BMC button here! It will be inserted into the header by JS -->
 
-    <!-- Your main page JS (handles header and everything else) -->
     <script src="../js/tryscorer_predictions.js"></script>
   </body>
 </html>

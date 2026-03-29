@@ -7,47 +7,140 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NRL Predictions Dashboard</title>
+    <title>The BS Machine — NRL Predictions</title>
+    <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
   </head>
-  <body class="bg-gray-800 text-white">
+  <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-screen-xl mx-auto px-4 py-12 text-center md:text-center">
-      <h1 class="text-4xl font-bold mb-4">The BS Machine<br>NRL Power Rankings and Predictions</h1>
-      <p class="text-lg text-gray-300 mb-8">
-        A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact in the NRL.
-      </p>
+    <main class="max-w-screen-xl mx-auto px-4 py-10">
 
-      <!-- Layout: Links on left, chart on right -->
-      <div class="flex flex-col md:flex-row items-start md:items-center justify-center gap-8">
-        <!-- Left: Page Links -->
-        <div class="flex flex-col gap-4 w-full md:w-1/6 items-center md:items-start">
-          <a href="pages/about.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">About the Power Rankings</a>
-          <a href="pages/rankings.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">View Rankings</a>
-          <a href="pages/matchups.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Match Predictions</a>
-          <a href="pages/simulator.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Round Simulator</a>
-          <a href="pages/tracker.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Track the 2026 Season</a>
-          <a href="pages/magic_numbers.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Magic Numbers in 2026</a>
-          <a href="pages/tryscorer_predictions.html" class="w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 text-sm md:px-6 md:py-3 md:text-base rounded">Tryscorer Predictions</a>
+      <!-- Hero -->
+      <div class="mb-8 text-center">
+        <h1 class="text-4xl font-bold mb-3">NRL Power Rankings &amp; Predictions</h1>
+        <p class="text-gray-400 text-lg max-w-2xl mx-auto">
+          A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact.
+        </p>
+      </div>
+
+      <!-- Round snapshot + Finals Wheel -->
+      <div class="flex flex-col lg:flex-row gap-6 items-start">
+
+        <!-- Snapshot sidebar -->
+        <div class="w-full lg:w-72 shrink-0 flex flex-col gap-4">
+
+          <!-- Round badge -->
+          <div class="card flex items-center justify-between">
+            <div>
+              <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Current data</div>
+              <div id="round-badge" class="text-2xl font-bold text-white">—</div>
+            </div>
+            <a href="pages/rankings.html"
+               class="text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium">
+              View Rankings →
+            </a>
+          </div>
+
+          <!-- Who's Hot -->
+          <div class="card border-l-4 border-green-500">
+            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🔥 Who's Hot</div>
+            <div id="snap-hot-list"></div>
+          </div>
+
+          <!-- Who's Not -->
+          <div class="card border-l-4 border-red-500">
+            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">❄️ Who's Not</div>
+            <div id="snap-cold-list"></div>
+          </div>
+
+          <!-- Finals buckets -->
+          <div class="card">
+            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Finals Picture</div>
+            <div class="flex flex-col gap-3">
+
+              <div class="snap-bucket">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-2 h-2 rounded-full bg-green-400 shrink-0"></span>
+                  <span class="text-xs font-semibold text-green-400">Clinched</span>
+                  <span class="text-xs text-gray-600">— 100%</span>
+                </div>
+                <div id="bucket-clinched" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
+              </div>
+
+              <div class="snap-bucket">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-2 h-2 rounded-full bg-blue-400 shrink-0"></span>
+                  <span class="text-xs font-semibold text-blue-400">On the Cusp</span>
+                  <span class="text-xs text-gray-600">— &gt;80%</span>
+                </div>
+                <div id="bucket-cusp" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
+              </div>
+
+              <div class="snap-bucket">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-2 h-2 rounded-full bg-yellow-400 shrink-0"></span>
+                  <span class="text-xs font-semibold text-yellow-400">In the Hunt</span>
+                  <span class="text-xs text-gray-600">— 20–80%</span>
+                </div>
+                <div id="bucket-hunt" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
+              </div>
+
+              <div class="snap-bucket">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-2 h-2 rounded-full bg-orange-400 shrink-0"></span>
+                  <span class="text-xs font-semibold text-orange-400">Unlikely</span>
+                  <span class="text-xs text-gray-600">— &lt;20%</span>
+                </div>
+                <div id="bucket-unlikely" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
+              </div>
+
+              <div class="snap-bucket">
+                <div class="flex items-center gap-1.5 mb-1">
+                  <span class="w-2 h-2 rounded-full bg-gray-500 shrink-0"></span>
+                  <span class="text-xs font-semibold text-gray-500">Faded</span>
+                  <span class="text-xs text-gray-600">— 0%</span>
+                </div>
+                <div id="bucket-faded" class="text-xs text-gray-500 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- Quick links -->
+          <div class="card">
+            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Explore</div>
+            <div class="flex flex-col gap-1.5">
+              <a href="pages/matchups.html"              class="site-nav-link block !px-0 text-sm">Match Predictions →</a>
+              <a href="pages/simulator.html"             class="site-nav-link block !px-0 text-sm">Round Simulator →</a>
+              <a href="pages/tracker.html"               class="site-nav-link block !px-0 text-sm">Season Tracker →</a>
+              <a href="pages/magic_numbers.html"         class="site-nav-link block !px-0 text-sm">Magic Numbers →</a>
+              <a href="pages/tryscorer_predictions.html" class="site-nav-link block !px-0 text-sm">Tryscorer Predictions →</a>
+            </div>
+          </div>
+
         </div>
-        <!-- Right: Doughnut Chart -->
-        <div class="w-full md:w-5/6">
+
+        <!-- Finals Wheel -->
+        <div class="w-full min-w-0 flex-1">
           <div style="position:relative; width:100%; max-width:1000px; margin:auto;">
             <canvas id="finalsWheel" style="width:100%; height:auto;"></canvas>
             <img id="trophy" src="./assets/trophy.png" style="display:none">
           </div>
         </div>
+
       </div>
+    </main>
 
     <script type="module" src="./js/finalsWheel.js"></script>
+    <script type="module" src="./js/homepage.js"></script>
 
     <script>
       fetch('components/header.html')
@@ -55,16 +148,14 @@
         .then(html => {
           document.getElementById("site-header").innerHTML = html;
 
-          // Insert the Buy Me a Coffee button image after the header loads
           document.getElementById("bmc-button").innerHTML = `
             <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-                  alt="Buy Me a Coffee" 
-                  style="height: 45px; width: 162px;">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
             </a>
-          `; 
+          `;
 
-          // ✅ Hook up hamburger toggle after header is loaded
           const menuToggle = document.getElementById("menu-toggle");
           const mobileMenu = document.getElementById("mobile-menu");
           if (menuToggle && mobileMenu) {

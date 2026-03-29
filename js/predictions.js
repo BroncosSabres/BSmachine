@@ -1,23 +1,170 @@
 // predictions.js
-import { getLatestRoundFolder, formatPercent } from './utils.js';
+import { getLatestRoundFolder } from './utils.js';
 
-const tableBody = document.querySelector("#predictions-table tbody");
+const container = document.getElementById("predictions-container");
 
-function getPredictedWinner(home, away, homePerc, awayPerc) {
-  if (homePerc > awayPerc) return home;
-  else if (awayPerc > homePerc) return away;
-  return "Even";
+const teamColors = {
+  "Broncos":   "#760135",
+  "Raiders":   "#32CD32",
+  "Bulldogs":  "#00539F",
+  "Sharks":    "#00A9D8",
+  "Dolphins":  "#E0121A",
+  "Titans":    "#009DDC",
+  "Manly":     "#6F163D",
+  "Storm":     "#632390",
+  "Knights":   "#EE3524",
+  "Cowboys":   "#002B5C",
+  "Eels":      "#006EB5",
+  "Panthers":  "#000000",
+  "Rabbitohs": "#025D17",
+  "Dragons":   "#E2231B",
+  "Roosters":  "#E82C2E",
+  "Warriors":  "#231F20",
+  "Tigers":    "#F57600",
+};
+
+function teamColor(name) {
+  return teamColors[name] ?? "#6b7280";
+}
+
+function logoUrl(teamName) {
+  return `../logos/${teamName.toLowerCase()}.svg`;
+}
+
+const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
+
+// Fuzzy match: short names ("Roosters") vs API full names ("Sydney Roosters")
+function teamsMatch(shortName, fullName) {
+  const s = shortName.toLowerCase();
+  const f = fullName.toLowerCase();
+  return f.includes(s) || s.includes(f);
+}
+
+// Fetch the match list once and cache it
+let tryscorerMatchCache = null;
+async function getTryscorerMatches() {
+  if (tryscorerMatchCache) return tryscorerMatchCache;
+  try {
+    const res = await fetch(`${TRYSCORER_API}/current_round_matches/nrl`);
+    tryscorerMatchCache = await res.json();
+  } catch {
+    tryscorerMatchCache = [];
+  }
+  return tryscorerMatchCache;
+}
+
+async function checkTryscorerAvailable(homeTeam, awayTeam) {
+  const matches = await getTryscorerMatches();
+  const match = matches.find(m =>
+    teamsMatch(homeTeam, m.home_team) && teamsMatch(awayTeam, m.away_team)
+  );
+  if (!match) return { available: false, matchId: null };
+  try {
+    const res = await fetch(`${TRYSCORER_API}/match_team_lists/${match.match_id}/nrl`);
+    const data = await res.json();
+    // Available if either team has at least one player listed
+    const hasPlayers = data?.home_players?.length > 0 || data?.away_players?.length > 0;
+    return { available: hasPlayers, matchId: match.match_id };
+  } catch {
+    return { available: false, matchId: null };
+  }
+}
+
+function tryscorerButtonDisabled() {
+  return `<span title="Team lists not yet available"
+               class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-800 border border-gray-700 text-xs font-medium text-gray-600 cursor-not-allowed select-none">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+            Tryscorer Predictions
+          </span>`;
+}
+
+function tryscorerButtonEnabled(matchId) {
+  const url = `tryscorer_predictions.html?match_id=${matchId}`;
+  return `<a href="${url}"
+             class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 hover:border-gray-500 text-xs font-medium text-gray-200 transition-colors">
+            <svg class="w-3.5 h-3.5 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+            Tryscorer Predictions
+          </a>`;
+}
+
+function createMatchCard(data) {
+  const { home_team, away_team, home_score, away_score, home_perc, away_perc } = data;
+
+  const homeWin = home_perc >= away_perc;
+  const homePercDisplay = Math.round(home_perc * 100);
+  const awayPercDisplay = Math.round(away_perc * 100);
+  const expectedTotal = home_score + away_score;
+  const homeColor = teamColor(home_team);
+  const awayColor = teamColor(away_team);
+
+  const card = document.createElement("div");
+  card.className = "match-card";
+
+  card.innerHTML = `
+    <div class="flex items-center justify-between gap-4">
+
+      <!-- Home team -->
+      <div class="flex-1 flex items-center gap-3 min-w-0">
+        <img src="${logoUrl(home_team)}" alt="${home_team} logo"
+             class="w-12 h-12 object-contain shrink-0"
+             onerror="this.style.display='none'">
+        <div class="min-w-0">
+          <div class="text-base font-semibold leading-tight ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
+          <div class="text-xs text-gray-500 mt-0.5">Home</div>
+        </div>
+      </div>
+
+      <!-- Centre: probability + bar + score -->
+      <div class="flex flex-col items-center gap-1.5 w-64">
+        <!-- Win % numbers -->
+        <div class="flex items-center justify-between w-full text-sm font-bold">
+          <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
+          <span class="text-gray-600 text-xs font-normal px-2">vs</span>
+          <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
+        </div>
+        <!-- Split probability bar -->
+        <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
+          <div class="prob-bar-home" style="width:${homePercDisplay}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
+          <div class="prob-bar-away" style="width:${awayPercDisplay}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
+        </div>
+        <!-- Expected score -->
+        <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">
+          ${home_score} – ${away_score}
+        </div>
+      </div>
+
+      <!-- Away team -->
+      <div class="flex-1 flex items-center justify-end gap-3 min-w-0">
+        <div class="min-w-0 text-right">
+          <div class="text-base font-semibold leading-tight ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
+          <div class="text-xs text-gray-500 mt-0.5">Away</div>
+        </div>
+        <img src="${logoUrl(away_team)}" alt="${away_team} logo"
+             class="w-12 h-12 object-contain shrink-0"
+             onerror="this.style.display='none'">
+      </div>
+
+    </div>
+
+    <!-- Footer row -->
+    <div class="mt-3 pt-3 border-t border-gray-700 flex items-center justify-between text-xs text-gray-500">
+      <span>${homeWin ? home_team : away_team} favoured</span>
+      <span class="js-tryscorer-btn">${tryscorerButtonDisabled()}</span>
+      <span>Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
+    </div>
+  `;
+
+  return card;
 }
 
 async function loadPredictions() {
   const roundFolder = await getLatestRoundFolder();
   if (!roundFolder) {
-    console.warn("No valid round folder found.");
+    container.innerHTML = `<p class="text-gray-400">No predictions available yet.</p>`;
     return;
   }
 
   const predictionsPath = `../data/${roundFolder}/Predictions.txt`;
-  console.log("Fetching predictions from:", predictionsPath);
 
   try {
     const response = await fetch(predictionsPath);
@@ -25,38 +172,27 @@ async function loadPredictions() {
 
     const text = await response.text();
     const lines = text.trim().split("\n");
-    console.log(`Loaded ${lines.length} prediction lines.`);
 
     lines.forEach((line, idx) => {
       try {
-        const jsonLine = line.replace(/'/g, '"');
-        const data = JSON.parse(jsonLine);
-        const {
-          home_team, away_team, home_score, away_score,
-          home_perc, away_perc
-        } = data;
+        const data = JSON.parse(line.replace(/'/g, '"'));
+        const card = createMatchCard(data);
+        container.appendChild(card);
 
-        const predictedWinner = getPredictedWinner(home_team, away_team, home_perc, away_perc);
-        const winProb = predictedWinner === home_team ? home_perc : away_perc;
-        const expectedScore = `${home_score}-${away_score}`;
-        const expectedTotal = home_score + away_score;
-
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="border px-4 py-2">${home_team}</td>
-          <td class="border px-4 py-2">${away_team}</td>
-          <td class="border px-4 py-2">${predictedWinner}</td>
-          <td class="border px-4 py-2">${formatPercent(winProb)}</td>
-          <td class="border px-4 py-2">${expectedScore}</td>
-          <td class="border px-4 py-2">${expectedTotal}</td>
-        `;
-        tableBody.appendChild(tr);
+        // Async: update button once we know if team lists are available
+        checkTryscorerAvailable(data.home_team, data.away_team).then(({ available, matchId }) => {
+          const slot = card.querySelector('.js-tryscorer-btn');
+          if (slot) slot.innerHTML = available
+            ? tryscorerButtonEnabled(matchId)
+            : tryscorerButtonDisabled();
+        });
       } catch (err) {
         console.error(`Error parsing line ${idx}:`, line, err);
       }
     });
   } catch (err) {
     console.error("Failed to load predictions:", err);
+    container.innerHTML = `<p class="text-gray-400">Predictions unavailable — check back after the next round update.</p>`;
   }
 }
 

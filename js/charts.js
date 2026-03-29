@@ -18,26 +18,42 @@ const typeMap = {
   "Wooden Spoon": "Spoon"
 };
 
+const darkThemeScales = {
+  x: {
+    ticks: { color: "#9ca3af" },
+    grid:  { color: "rgba(255,255,255,0.06)" },
+    title: { color: "#9ca3af" },
+    border: { color: "rgba(255,255,255,0.1)" },
+  },
+  y: {
+    ticks: { color: "#9ca3af" },
+    grid:  { color: "rgba(255,255,255,0.06)" },
+    title: { color: "#9ca3af" },
+    border: { color: "rgba(255,255,255,0.1)" },
+  }
+};
+
 export function updateChart(data, category, prevData = {}) {
   const label = typeMap[category];
   const filteredTeams = data.filter(r => r["Team"] && parseFloat(r[label]) > 0);
 
-  const baseValues = [], topValues = [], baseColors = [], topColors = [], labels = [], totalValues = [], deltaValues = [];
+  const baseValues = [], topValues = [], baseColors = [], topColors = [],
+        labels = [], totalValues = [], deltaValues = [];
 
   filteredTeams.forEach(team => {
     const teamName = team["Team"];
-    const current = parseFloat(team[label]) * 100;
+    const current  = parseFloat(team[label]) * 100;
     const previous = prevData[teamName] ? parseFloat(prevData[teamName][label]) * 100 : null;
-    const delta = previous !== null ? current - previous : 0;
-
-    const base = previous !== null ? Math.min(current, previous) : 0;
-    const top = previous !== null ? Math.abs(delta) : current;
-    const gain = delta >= 0;
+    const delta    = previous !== null ? current - previous : 0;
+    const base     = previous !== null ? Math.min(current, previous) : 0;
+    const top      = previous !== null ? Math.abs(delta) : current;
+    const gain     = delta >= 0;
 
     baseValues.push(base);
     topValues.push(top);
-    baseColors.push("#2563EB");
-    topColors.push(gain ? "#16a34a" : "rgba(220, 38, 38, 0.2)");
+    baseColors.push("rgba(96,165,250,0.85)");           // blue-400
+    topColors.push(gain ? "rgba(74,222,128,0.85)"       // green-400
+                        : "rgba(248,113,113,0.5)");     // red-400 dimmed
     labels.push(teamName);
     totalValues.push(current.toFixed(2));
     deltaValues.push(delta.toFixed(1));
@@ -48,47 +64,38 @@ export function updateChart(data, category, prevData = {}) {
   chartInstance = new Chart(chartCanvas, {
     type: "bar",
     data: {
-      labels: labels,
+      labels,
       datasets: [
-        {
-          label: `${category} Base`,
-          data: baseValues,
-          backgroundColor: baseColors
-        },
-        {
-          label: `${category} Change`,
-          data: topValues,
-          backgroundColor: topColors
-        }
+        { label: `${category} Base`,   data: baseValues, backgroundColor: baseColors },
+        { label: `${category} Change`, data: topValues,  backgroundColor: topColors  }
       ]
     },
     options: {
       responsive: true,
       plugins: {
+        legend: { labels: { color: "#9ca3af" } },
         tooltip: {
           callbacks: {
-            label: function (context) {
-              const teamIndex = context.dataIndex;
-              const datasetIndex = context.datasetIndex;
-              if (datasetIndex === 0) {
-                return `${labels[teamIndex]}: ${totalValues[teamIndex]}%`;
-              } else {
-                const delta = parseFloat(deltaValues[teamIndex]);
-                const symbol = delta > 0 ? "+" : "";
-                return `${labels[teamIndex]}: ${symbol}${delta}%`;
-              }
+            label(context) {
+              const i = context.dataIndex;
+              if (context.datasetIndex === 0) return `${labels[i]}: ${totalValues[i]}%`;
+              const d = parseFloat(deltaValues[i]);
+              return `Change: ${d > 0 ? "+" : ""}${d}%`;
             }
           }
         }
       },
       scales: {
         y: {
+          ...darkThemeScales.y,
           beginAtZero: true,
-          title: { display: true, text: "%" },
-          stacked: true
+          stacked: true,
+          title: { display: true, text: "%", color: "#9ca3af" }
         },
         x: {
-          stacked: true
+          ...darkThemeScales.x,
+          stacked: true,
+          ticks: { color: "#e5e7eb", font: { size: 11 } }
         }
       }
     }
@@ -96,13 +103,17 @@ export function updateChart(data, category, prevData = {}) {
 }
 
 export async function updateScatter(data) {
-  const points = data.filter(r => r["Team"] && r["Offensive Rating"] && r["Defensive Rating"]).map(team => ({
-    x: parseFloat(team["Defensive Rating"]),
-    y: parseFloat(team["Offensive Rating"]),
-    label: team["Team"]
-  }));
+  const points = data
+    .filter(r => r["Team"] && r["Offensive Rating"] && r["Defensive Rating"])
+    .map(team => ({
+      x: parseFloat(team["Defensive Rating"]),
+      y: parseFloat(team["Offensive Rating"]),
+      label: team["Team"]
+    }));
 
-  const maxVal = Math.ceil(Math.max(...points.map(p => Math.abs(p.x)).concat(points.map(p => Math.abs(p.y)))));
+  const maxVal = Math.ceil(
+    Math.max(...points.map(p => Math.abs(p.x)), ...points.map(p => Math.abs(p.y)))
+  );
 
   if (scatterInstance) scatterInstance.destroy();
 
@@ -115,10 +126,8 @@ export async function updateScatter(data) {
         const { ctx } = chart;
         chart.data.datasets[0].data.forEach((point, index) => {
           const meta = chart.getDatasetMeta(0).data[index];
-          const img = teamLogos[point.label];
-          if (img && meta) {
-            ctx.drawImage(img, meta.x - 12, meta.y - 12, 24, 24);
-          }
+          const img  = teamLogos[point.label];
+          if (img && meta) ctx.drawImage(img, meta.x - 14, meta.y - 14, 28, 28);
         });
       }
     }],
@@ -133,21 +142,23 @@ export async function updateScatter(data) {
     },
     options: {
       aspectRatio: 1,
-      backgroundColor: '#000000',
       plugins: {
+        legend: { labels: { color: "#9ca3af" } },
         tooltip: {
           callbacks: {
-            label: context => `${context.raw.label}: Off ${context.raw.y.toFixed(2)}, Def ${context.raw.x.toFixed(2)}`
+            label: ctx => `${ctx.raw.label}: Off ${ctx.raw.y.toFixed(2)}, Def ${ctx.raw.x.toFixed(2)}`
           }
         }
       },
       scales: {
         x: {
-          title: { display: true, text: "Defensive Rating" },
+          ...darkThemeScales.x,
+          title: { display: true, text: "Defensive Rating (higher = better defence)", color: "#9ca3af" },
           min: -maxVal, max: maxVal
         },
         y: {
-          title: { display: true, text: "Offensive Rating" },
+          ...darkThemeScales.y,
+          title: { display: true, text: "Offensive Rating (higher = better attack)", color: "#9ca3af" },
           min: -maxVal, max: maxVal
         }
       }

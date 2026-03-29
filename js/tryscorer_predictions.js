@@ -112,7 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
     matchSelect.innerHTML = `<option value="">Loading...</option>`;
     teamsContainer.innerHTML = '';
     resultDiv.textContent = '';
-    fetch(`${API_BASE}/current_round_matches/${competition}`)
+    return fetch(`${API_BASE}/current_round_matches/${competition}`)
       .then(res => res.json())
       .then(matches => {
         matchList = matches;
@@ -130,7 +130,34 @@ document.addEventListener("DOMContentLoaded", function () {
         populateFixedLines();
       });
   }
-  fetchMatchesAndPopulate();
+  fetchMatchesAndPopulate().then(() => {
+    const params = new URLSearchParams(window.location.search);
+    let option = null;
+
+    const matchId = params.get('match_id');
+    if (matchId) {
+      option = matchSelect.querySelector(`option[value="${matchId}"]`);
+    }
+
+    // Fallback: match by home/away team name substrings in the option text
+    if (!option) {
+      const home = params.get('home');
+      const away = params.get('away');
+      if (home && away) {
+        const h = home.toLowerCase();
+        const a = away.toLowerCase();
+        option = Array.from(matchSelect.options).find(o => {
+          const t = o.textContent.toLowerCase();
+          return t.includes(h) && t.includes(a);
+        });
+      }
+    }
+
+    if (option) {
+      matchSelect.value = option.value;
+      matchSelect.dispatchEvent(new Event('change'));
+    }
+  });
 
   // --- WHEN MATCH CHANGES ---
   matchSelect.addEventListener('change', function () {

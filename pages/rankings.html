@@ -7,72 +7,76 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-T09VHK1QDP');
     </script>
-    
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NRL Power Rankings</title>
+    <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="bg-gray-800 text-white">
-  <div id="site-header"></div>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
     <main class="max-w-7xl mx-auto px-4 py-8">
-      <h1 class="text-4xl font-bold mb-8">NRL Power Rankings</h1>
+      <div class="flex items-baseline gap-4 mb-8">
+        <h1 class="text-4xl font-bold">NRL Power Rankings</h1>
+        <span id="round-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
+      </div>
 
       <!-- Rankings Table -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Power Rankings</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Power Rankings</h2>
         <div class="overflow-x-auto">
-          <table class="min-w-full bg-gray-900 border" id="rankings-table">
+          <table class="data-table" id="rankings-table">
             <thead>
               <tr>
-                <th class="px-4 py-2 border">Rank</th>
-                <th class="px-4 py-2 border">Team</th>
-                <th class="px-4 py-2 border">Rating</th>
-                <th class="px-4 py-2 border">Form</th>
-                <th class="px-4 py-2 border">Top 8</th>
-                <th class="px-4 py-2 border">Top 4</th>
-                <th class="px-4 py-2 border">Minor Premiership</th>
-                <th class="px-4 py-2 border">Premiers</th>
-                <th class="px-4 py-2 border">Wooden Spoon</th>
+                <th>Rank</th>
+                <th>Team</th>
+                <th>Rating</th>
+                <th>Form</th>
+                <th>Top 8</th>
+                <th>Top 4</th>
+                <th>Minor Premiership</th>
+                <th>Premiers</th>
+                <th>Wooden Spoon</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
-      </section>
+      </div>
 
       <!-- Projected Ladder Table -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Projected Ladder</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Projected Ladder</h2>
         <div class="overflow-x-auto">
-          <table class="min-w-full bg-gray-900 border" id="ladder-table">
+          <table class="data-table" id="ladder-table">
             <thead>
               <tr>
-                <th class="px-4 py-2 border">Rank</th>
-                <th class="px-4 py-2 border">Team</th>
-                <th class="px-4 py-2 border">Wins</th>
-                <th class="px-4 py-2 border">Losses</th>
-                <th class="px-4 py-2 border">PD</th>
-                <th class="px-4 py-2 border">For</th>
-                <th class="px-4 py-2 border">Against</th>
+                <th>Rank</th>
+                <th>Team</th>
+                <th>Wins</th>
+                <th>Losses</th>
+                <th>PD</th>
+                <th>For</th>
+                <th>Against</th>
               </tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
-      </section>
+      </div>
 
       <!-- Finals Probability Chart -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Finals Probability</h2>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Finals Probability</h2>
         <div class="mb-4">
-          <label for="chart-select" class="block text-sm font-medium mb-1">Select Metric</label>
-          <select id="chart-select" class="p-2 border rounded bg-gray-900 text-white">
+          <label for="chart-select" class="block text-sm font-medium text-gray-400 mb-2">Select Metric</label>
+          <select id="chart-select" class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option>Top 8</option>
             <option>Top 4</option>
             <option>Minor Premiership</option>
@@ -81,40 +85,38 @@
           </select>
         </div>
         <canvas id="finalsChart"></canvas>
-      </section>
+      </div>
 
       <!-- Scatterplot -->
-      <section class="mb-10">
-        <h2 class="text-2xl font-semibold mb-4">Offensive vs Defensive Ratings</h2>
-        <canvas id="ratingsScatter" class="bg-gray-800"$1></canvas>
-      </section>
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Offensive vs Defensive Ratings</h2>
+        <canvas id="ratingsScatter"></canvas>
+      </div>
     </main>
 
     <script type="module" src="../js/main.js"></script>
-  <script>
-  fetch('../components/header.html')
-    .then(res => res.text())
-    .then(html => {
-      document.getElementById("site-header").innerHTML = html;
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
 
-      // Insert the Buy Me a Coffee button image after the header loads
-      document.getElementById("bmc-button").innerHTML = `
-        <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-          <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" 
-              alt="Buy Me a Coffee" 
-              style="height: 45px; width: 162px;">
-        </a>
-      `; 
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
 
-
-      const menuToggle = document.getElementById("menu-toggle");
-      const mobileMenu = document.getElementById("mobile-menu");
-      if (menuToggle && mobileMenu) {
-        menuToggle.addEventListener("click", () => {
-          mobileMenu.classList.toggle("hidden");
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
         });
-      }
-    });
-</script>
-</body>
+    </script>
+  </body>
 </html>
