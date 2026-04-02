@@ -37,21 +37,24 @@ document.addEventListener("DOMContentLoaded", function () {
   const btnNrl = document.getElementById('btn-nrl');
   const btnNrlw = document.getElementById('btn-nrlw');
   const downloadCsvBtn = document.getElementById('download-tryscorer-csv');
+  const resetAllBtn = document.getElementById('reset-all-btn');
+  const homeWinBtn = document.getElementById('home-win-btn');
+  const awayWinBtn = document.getElementById('away-win-btn');
 
   // --- COMPETITION TOGGLE LOGIC ---
   let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
 
   function updateCompetitionButtons() {
     if (competition === 'nrl') {
-      btnNrl.classList.add('bg-yellow-400', 'text-gray-900', 'ring-yellow-400');
-      btnNrl.classList.remove('bg-gray-600', 'text-gray-200', 'ring-gray-600');
-      btnNrlw.classList.remove('bg-yellow-400', 'text-gray-900', 'ring-yellow-400');
-      btnNrlw.classList.add('bg-gray-600', 'text-gray-200', 'ring-gray-600');
+      btnNrl.classList.add('bg-amber-400', 'text-gray-900');
+      btnNrl.classList.remove('text-gray-400');
+      btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
+      btnNrlw.classList.add('text-gray-400');
     } else {
-      btnNrlw.classList.add('bg-yellow-400', 'text-gray-900', 'ring-yellow-400');
-      btnNrlw.classList.remove('bg-gray-600', 'text-gray-200', 'ring-gray-600');
-      btnNrl.classList.remove('bg-yellow-400', 'text-gray-900', 'ring-yellow-400');
-      btnNrl.classList.add('bg-gray-600', 'text-gray-200', 'ring-gray-600');
+      btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
+      btnNrlw.classList.remove('text-gray-400');
+      btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
+      btnNrl.classList.add('text-gray-400');
     }
   }
   btnNrl.addEventListener('click', function () {
@@ -88,9 +91,10 @@ document.addEventListener("DOMContentLoaded", function () {
       away: null
     };
 
-    if (downloadCsvBtn) {
-      downloadCsvBtn.disabled = true;
-    }
+    if (downloadCsvBtn) downloadCsvBtn.disabled = true;
+    if (resetAllBtn) resetAllBtn.disabled = true;
+    if (homeWinBtn) { homeWinBtn.disabled = true; homeWinBtn.textContent = 'Home'; }
+    if (awayWinBtn) { awayWinBtn.disabled = true; awayWinBtn.textContent = 'Away'; }
   }
 
   // --- FIXED LINES ---
@@ -180,9 +184,51 @@ document.addEventListener("DOMContentLoaded", function () {
         resetTryscorerCache();
         renderTeams(data);
         populateFixedLines(data.home_team, data.away_team);
-        updateProbability(); // Reset result on match change
+        if (resetAllBtn) resetAllBtn.disabled = false;
+        if (homeWinBtn) { homeWinBtn.textContent = data.home_team; homeWinBtn.disabled = false; }
+        if (awayWinBtn) { awayWinBtn.textContent = data.away_team; awayWinBtn.disabled = false; }
+        updateProbability();
       });
   });
+
+  // --- TEAM WIN BUTTONS ---
+  // Home wins = "HomeTeam -0.5" = over_1 in margin select (m=0 loop iteration)
+  // Away wins = "AwayTeam -0.5" = under_0 in margin select (m=0 loop iteration)
+  if (homeWinBtn) {
+    homeWinBtn.addEventListener('click', () => {
+      marginSelect.value = 'over_1';
+      marginSelect.dispatchEvent(new Event('change'));
+    });
+  }
+  if (awayWinBtn) {
+    awayWinBtn.addEventListener('click', () => {
+      marginSelect.value = 'under_0';
+      marginSelect.dispatchEvent(new Event('change'));
+    });
+  }
+
+  // --- RESET ALL ---
+  if (resetAllBtn) {
+    resetAllBtn.addEventListener('click', () => {
+      // Reset all player try counts
+      ['home', 'away'].forEach(side => {
+        Object.keys(playerInputs[side] || {}).forEach(id => {
+          playerInputs[side][id] = 0;
+          const countEl = document.getElementById(`${side}-${id}`);
+          if (countEl) countEl.textContent = '0';
+          const row = teamsContainer.querySelector(`.player-row[data-side="${side}"][data-id="${id}"]`);
+          if (row) row.classList.remove('bg-gray-700/40');
+          // Find the parent team card to update button states
+          const btn = teamsContainer.querySelector(`.sgm-minus-btn[data-side="${side}"][data-id="${id}"]`);
+          if (btn) setButtonStates(btn.closest('.bg-gray-800'), side, id, 0);
+        });
+      });
+      // Reset margin and total selects
+      marginSelect.value = '';
+      totalSelect.value = '';
+      updateProbability();
+    });
+  }
 
   // --- MARGIN/TOTAL SELECT CHANGES ---
   marginSelect.addEventListener('change', updateProbability);
@@ -216,39 +262,91 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  // --- RENDER TEAMS ---
+  // --- BUTTON STATE HELPER ---
+  function setButtonStates(teamDiv, side, id, val) {
+    const base = 'w-6 h-6 border rounded flex items-center justify-center text-sm font-bold transition-colors';
+    const minusBtn = teamDiv.querySelector(`.sgm-minus-btn[data-side="${side}"][data-id="${id}"]`);
+    const plusBtn  = teamDiv.querySelector(`.sgm-plus-btn[data-side="${side}"][data-id="${id}"]`);
+    if (minusBtn) {
+      minusBtn.className = val > 0
+        ? `sgm-minus-btn ${base} border-red-500 text-red-400 hover:bg-red-500/20`
+        : `sgm-minus-btn ${base} border-gray-700 text-gray-600`;
+    }
+    if (plusBtn) {
+      plusBtn.className = val >= 5
+        ? `sgm-plus-btn ${base} border-gray-700 text-gray-600`
+        : val > 0
+          ? `sgm-plus-btn ${base} border-green-500 text-green-400 hover:bg-green-500/20`
+          : `sgm-plus-btn ${base} border-gray-600 text-gray-400 hover:border-green-400 hover:text-green-400`;
+    }
+  }
+
+  // --- HELPERS ---
+  function teamLogoSlug(name) {
+    const n = (name || '').toLowerCase();
+    if (n.includes('broncos'))   return 'broncos';
+    if (n.includes('bulldogs'))  return 'bulldogs';
+    if (n.includes('cowboys'))   return 'cowboys';
+    if (n.includes('dolphins'))  return 'dolphins';
+    if (n.includes('dragons'))   return 'dragons';
+    if (n.includes('eels'))      return 'eels';
+    if (n.includes('knights'))   return 'knights';
+    if (n.includes('sea eagles') || n.includes('manly')) return 'manly';
+    if (n.includes('panthers'))  return 'panthers';
+    if (n.includes('rabbitohs')) return 'rabbitohs';
+    if (n.includes('raiders'))   return 'raiders';
+    if (n.includes('roosters'))  return 'roosters';
+    if (n.includes('sharks'))    return 'sharks';
+    if (n.includes('storm'))     return 'storm';
+    if (n.includes('tigers'))    return 'tigers';
+    if (n.includes('titans'))    return 'titans';
+    if (n.includes('warriors'))  return 'warriors';
+    return null;
+  }
+
+// --- RENDER TEAMS ---
   function renderTeams(data) {
     teamsContainer.innerHTML = '';
     ['home', 'away'].forEach(side => {
       const teamName = data[`${side}_team`];
       const players = data[`${side}_players`];
       playerInputs[side] = {};
+
+      const slug = teamLogoSlug(teamName);
+      const logoHtml = slug
+        ? `<img src="../logos/${slug}.svg" class="w-8 h-8 object-contain shrink-0" alt="">`
+        : '';
+
       const teamDiv = document.createElement('div');
-      teamDiv.className = "bg-gray-700 rounded-xl p-4 w-full md:w-96 shadow-md";
+      teamDiv.className = 'bg-gray-800 border border-gray-700 rounded-xl p-4 w-full md:w-96 shadow-md';
       teamDiv.innerHTML = `
-        <div class="font-bold text-xl mb-2 text-center">${teamName}</div>
-        <div class="flex flex-col gap-y-2">
-          <div class="flex items-center gap-2 font-semibold text-sm text-gray-200">
-            <span class="flex-1 text-left">Player</span>
-            <span class="w-24 text-right text-yellow-400">Anytime</span>
-            <span class="w-24 text-center">Tries</span>
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            ${logoHtml}
+            <span class="font-bold text-base">${teamName}</span>
           </div>
+          <button type="button" class="clear-team-btn text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 px-2 py-1 rounded transition-colors">Clear</button>
+        </div>
+        <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 px-1">
+          <span class="flex-1">Player</span>
+          <span class="w-14 text-right">Anytime</span>
+          <span class="w-20 text-center">Tries</span>
+        </div>
+        <div class="flex flex-col divide-y divide-gray-700/50">
           ${players.map(p => `
-            <div class="flex items-center gap-2">
-              <label class="flex-1 truncate text-left text-sm md:text-base" for="${side}-${p.id}">
-                ${p.name} <span class="text-xs text-gray-400">(${p.position})</span>
-              </label>
-              <span id="anytime-${side}-${p.id}" class="w-20 text-right text-yellow-400 font-semibold"></span>
-              <div class="flex items-center gap-1 ml-2">
+            <div class="flex items-center gap-2 py-2 px-1 player-row" data-side="${side}" data-id="${p.id}">
+              <div class="flex-1 min-w-0">
+                <span class="text-sm">${p.name}</span>
+                <span class="text-xs text-gray-500 ml-1">(${p.position})</span>
+              </div>
+              <span id="anytime-${side}-${p.id}" class="w-14 text-right text-xs font-semibold text-gray-600">·</span>
+              <div class="flex items-center gap-1">
                 <button type="button"
-                  class="sgm-minus-btn w-7 h-7 bg-red-300 hover:bg-red-400 text-black rounded flex items-center justify-center text-lg font-bold"
+                  class="sgm-minus-btn w-6 h-6 border border-gray-700 text-gray-600 rounded flex items-center justify-center text-sm font-bold transition-colors"
                   data-side="${side}" data-id="${p.id}" tabindex="0">−</button>
-                <input id="${side}-${p.id}" type="text"
-                  value="0"
-                  readonly
-                  class="w-7 h-7 text-center rounded text-lg bg-gray-200 text-gray-900 font-bold mx-0.5 shadow-inner select-none border-none outline-none pointer-events-none" />
+                <span id="${side}-${p.id}" class="w-6 text-center text-sm font-bold text-white select-none">0</span>
                 <button type="button"
-                  class="sgm-plus-btn w-7 h-7 bg-green-300 hover:bg-green-400 text-black rounded flex items-center justify-center text-lg font-bold"
+                  class="sgm-plus-btn w-6 h-6 border border-gray-600 text-gray-400 hover:border-green-400 hover:text-green-400 rounded flex items-center justify-center text-sm font-bold transition-colors"
                   data-side="${side}" data-id="${p.id}" tabindex="0">+</button>
               </div>
             </div>
@@ -257,22 +355,40 @@ document.addEventListener("DOMContentLoaded", function () {
       `;
       teamsContainer.appendChild(teamDiv);
 
+      // --- Clear button ---
+      teamDiv.querySelector('.clear-team-btn').addEventListener('click', () => {
+        players.forEach(p => {
+          playerInputs[side][p.id] = 0;
+          const countEl = teamDiv.querySelector(`#${side}-${p.id}`);
+          if (countEl) countEl.textContent = '0';
+          const row = teamDiv.querySelector(`.player-row[data-side="${side}"][data-id="${p.id}"]`);
+          if (row) row.classList.remove('bg-gray-700/40');
+          setButtonStates(teamDiv, side, p.id, 0);
+        });
+        updateProbability();
+      });
+
       // --- Add +/− listeners ---
       players.forEach(p => {
-        const input = teamDiv.querySelector(`#${side}-${p.id}`);
+        const countEl = teamDiv.querySelector(`#${side}-${p.id}`);
+        const row = teamDiv.querySelector(`.player-row[data-side="${side}"][data-id="${p.id}"]`);
         playerInputs[side][p.id] = 0;
         teamDiv.querySelector(`.sgm-minus-btn[data-side="${side}"][data-id="${p.id}"]`).addEventListener('click', () => {
           let val = playerInputs[side][p.id] || 0;
           if (val > 0) val--;
           playerInputs[side][p.id] = val;
-          input.value = val;
+          countEl.textContent = val;
+          if (row) row.classList.toggle('bg-gray-700/40', val > 0);
+          setButtonStates(teamDiv, side, p.id, val);
           updateProbability();
         });
         teamDiv.querySelector(`.sgm-plus-btn[data-side="${side}"][data-id="${p.id}"]`).addEventListener('click', () => {
           let val = playerInputs[side][p.id] || 0;
           if (val < 5) val++;
           playerInputs[side][p.id] = val;
-          input.value = val;
+          countEl.textContent = val;
+          if (row) row.classList.toggle('bg-gray-700/40', val > 0);
+          setButtonStates(teamDiv, side, p.id, val);
           updateProbability();
         });
       });
@@ -285,33 +401,30 @@ document.addEventListener("DOMContentLoaded", function () {
           fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(res => res.json()),
           fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(res => res.json())
         ]).then(([tryProbs, tryDist]) => {
-          tryscorerDataCache[side] = {
-            teamName,
-            teamId,
-            players,
-            tryProbs,
-            tryDist
-          };
+          tryscorerDataCache[side] = { teamName, teamId, players, tryProbs, tryDist };
 
           if (downloadCsvBtn && tryscorerDataCache.home && tryscorerDataCache.away) {
             downloadCsvBtn.disabled = false;
           }
 
           players.forEach((p) => {
+            const el = document.getElementById(`anytime-${side}-${p.id}`);
+            if (!el) return;
             const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
             if (playerProb !== undefined && tryDist) {
               const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-              document.getElementById(`anytime-${side}-${p.id}`).textContent =
-                (prob * 100).toFixed(1) + "%";
+              el.textContent = (prob * 100).toFixed(1) + '%';
+              el.className = 'w-14 text-right text-xs font-semibold text-gray-300';
             } else {
-              document.getElementById(`anytime-${side}-${p.id}`).textContent = "-";
+              el.textContent = '–';
+              el.className = 'w-14 text-right text-xs font-semibold text-gray-500';
             }
           });
         }).catch(() => {
           tryscorerDataCache[side] = null;
-
           players.forEach(p => {
-            document.getElementById(`anytime-${side}-${p.id}`).textContent = "-";
+            const el = document.getElementById(`anytime-${side}-${p.id}`);
+            if (el) { el.textContent = '–'; el.className = 'w-14 text-right text-xs font-semibold text-gray-500'; }
           });
         });
       }
