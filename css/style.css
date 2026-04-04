@@ -118,6 +118,10 @@
 }
 
 @media (max-width: 767px) {
+  .sgm-result.betslip-open {
+    max-height: 65vh;
+    overflow-y: auto;
+  }
   .sgm-result {
     position: fixed;
     bottom: 0;
