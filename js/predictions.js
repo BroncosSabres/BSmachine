@@ -91,8 +91,12 @@ function createMatchCard(data) {
   const { home_team, away_team, home_score, away_score, home_perc, away_perc } = data;
 
   const homeWin = home_perc >= away_perc;
-  const homePercDisplay = Math.round(home_perc * 100);
-  const awayPercDisplay = Math.round(away_perc * 100);
+  const homePercValue = home_perc * 100;
+  const awayPercValue = away_perc * 100;
+  const homePercDisplay = homePercValue.toFixed(1);
+  const awayPercDisplay = awayPercValue.toFixed(1);
+  const homeFairOdds = (1 / home_perc).toFixed(2);
+  const awayFairOdds = (1 / away_perc).toFixed(2);
   const expectedTotal = home_score + away_score;
   const homeColor = teamColor(home_team);
   const awayColor = teamColor(away_team);
@@ -102,8 +106,8 @@ function createMatchCard(data) {
 
   const bar = `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
-      <div class="prob-bar-home" style="width:${homePercDisplay}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
-      <div class="prob-bar-away" style="width:${awayPercDisplay}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
+      <div class="prob-bar-home" style="width:${homePercValue}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
+      <div class="prob-bar-away" style="width:${awayPercValue}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
     </div>`;
 
   card.innerHTML = `
@@ -120,9 +124,15 @@ function createMatchCard(data) {
       </div>
       <div class="flex flex-col items-center gap-1.5 w-64">
         <div class="flex items-center justify-between w-full text-sm font-bold">
-          <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
+          <div class="flex flex-col items-start">
+            <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
+            <span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>
+          </div>
           <span class="text-gray-600 text-xs font-normal px-2">vs</span>
-          <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
+          <div class="flex flex-col items-end">
+            <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
+            <span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>
+          </div>
         </div>
         ${bar}
         <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>
@@ -147,7 +157,7 @@ function createMatchCard(data) {
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
           <div class="min-w-0">
             <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
-            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span></div>
+            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span> · <span class="text-gray-500">$${homeFairOdds}</span></div>
           </div>
         </div>
         <!-- Score -->
@@ -156,7 +166,7 @@ function createMatchCard(data) {
         <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
           <div class="min-w-0 text-right">
             <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
-            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span></div>
+            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span> · <span class="text-gray-500">$${awayFairOdds}</span></div>
           </div>
           <img src="${logoUrl(away_team)}" alt="${away_team} logo"
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
