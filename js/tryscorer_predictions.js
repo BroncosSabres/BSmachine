@@ -599,21 +599,23 @@ document.addEventListener("DOMContentLoaded", function () {
     // Tryscorer picks (± margin/total)
     const sidePromises = ['home', 'away'].map(side => {
       const picked = pickedBySide[side];
-      if (!picked.length) return Promise.resolve({ side, prob: 1 });
+      if (!picked.length) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
 
       const players = data[`${side}_players`] || [];
       const teamId  = players[0]?.team_id;
-      if (!teamId) return Promise.resolve({ side, prob: 1 });
+      if (!teamId) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
 
       return Promise.all([
         fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
         getSgmDist(matchId, margin_type, margin_val, total_type, total_val)
       ]).then(([tryProbs, sgmDist]) => {
-        if (!sgmDist || !sgmDist[side + "_try_dist"]) return { side, prob: 0 };
-        const tryDist  = sgmDist[side + "_try_dist"];
-        const sgmProb  = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
+        if (!sgmDist || !sgmDist[side + "_try_dist"]) return { side, prob: 0, indivProbs: [], lineProb: null };
+        const tryDist     = sgmDist[side + "_try_dist"];
+        const sgmProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
         const tryProbsArr = picked.map(p => tryProbs[p.id] ?? tryProbs[String(p.id)]);
         const minTriesArr = picked.map(p => p.n);
+        const indivProbs  = tryProbsArr.map(p => p != null ? anytimeTryscorerProbability(p, tryDist, 20) : null);
+        const lineProb    = hasMarginOrTotal ? sgmProb : null;
 
         return fetch(`${API_BASE}/sgm_probability`, {
           method: "POST",
@@ -621,18 +623,22 @@ document.addEventListener("DOMContentLoaded", function () {
           body: JSON.stringify({ try_dist: tryDist, player_probs: tryProbsArr, min_tries: minTriesArr })
         })
           .then(r => r.json())
-          .then(d => ({ side, prob: (d.probability ?? 1) * sgmProb }))
-          .catch(() => ({ side, prob: 1 }));
-      }).catch(() => ({ side, prob: 1 }));
+          .then(d => ({ side, prob: (d.probability ?? 1) * sgmProb, indivProbs, lineProb }))
+          .catch(() => ({ side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }));
+      }).catch(() => ({ side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }));
     });
 
-    return Promise.all(sidePromises).then(results => {
-      const combined = results.reduce((acc, r) => acc * r.prob, 1);
+    return Promise.all(sidePromises).then(sideResults => {
+      const combined = sideResults.reduce((acc, r) => acc * r.prob, 1);
       const allPicks = [];
       ['home', 'away'].forEach(side => {
-        pickedBySide[side].forEach(p => allPicks.push({ name: p.name, n: p.n }));
+        const sr = sideResults.find(r => r.side === side);
+        pickedBySide[side].forEach((p, i) => {
+          allPicks.push({ name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
+        });
       });
-      return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal };
+      const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
+      return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb };
     });
   }
 
@@ -697,27 +703,42 @@ document.addEventListener("DOMContentLoaded", function () {
           </div>`;
       }
 
-      const pickLines = r.picks.map(p =>
-        `<div class="flex items-center gap-1.5 py-0.5">
-           <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 mt-0.5"></span>
-           <span class="text-sm text-white">${p.name}${p.n > 1 ? ` <span class="text-xs text-gray-400">(${p.n} tries)</span>` : ''}</span>
-         </div>`
-      ).join('');
+      const pickLines = r.picks.map(p => {
+        const indivPct  = p.indivProb != null ? `${(p.indivProb * 100).toFixed(1)}%` : null;
+        const indivOdds = p.indivProb != null ? `$${(1 / p.indivProb).toFixed(2)}` : null;
+        const triesLabel = p.n > 1 ? ` <span class="text-xs text-gray-400">(${p.n} tries)</span>` : '';
+        return `
+          <div class="flex items-center justify-between gap-2 py-0.5">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 mt-0.5"></span>
+              <span class="text-sm text-white truncate">${p.name}${triesLabel}</span>
+            </div>
+            ${indivPct ? `<div class="text-right shrink-0">
+              <div class="text-sm font-semibold text-gray-300">${indivPct}</div>
+              <div class="text-xs text-gray-500">${indivOdds}</div>
+            </div>` : ''}
+          </div>`;
+      }).join('');
 
+      const linePct  = r.lineProb ? `${(r.lineProb * 100).toFixed(1)}%` : null;
+      const lineOdds = r.lineProb ? `$${(1 / r.lineProb).toFixed(2)}` : null;
       const lineHtml = r.hasMarginOrTotal
-        ? `<div class="flex items-center gap-1.5 py-0.5">
-             <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-0.5"></span>
-             <span class="text-sm text-gray-400 italic">${r.lineLabel}</span>
+        ? `<div class="flex items-start justify-between gap-2 py-0.5">
+             <div class="flex items-start gap-1.5 min-w-0">
+               <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></span>
+               <span class="text-sm text-gray-400 italic">${r.lineLabel}</span>
+             </div>
+             ${linePct ? `<div class="text-right shrink-0">
+               <div class="text-sm font-semibold text-gray-300">${linePct}</div>
+               <div class="text-xs text-gray-500">${lineOdds}</div>
+             </div>` : ''}
            </div>` : '';
 
       return `
         <div class="py-2.5 border-b border-gray-700/40 last:border-b-0">
           <div class="text-xs font-semibold text-gray-400 truncate mb-1.5">${r.matchLabel}</div>
-          ${pickLines}
           ${lineHtml}
-          <div class="flex items-center justify-end mt-1.5">
-            <span class="text-sm font-bold text-amber-400">${gameOdds} <span class="text-xs font-normal text-gray-500">${gamePct}</span></span>
-          </div>
+          ${pickLines}
         </div>`;
     }).join('');
 
@@ -729,8 +750,8 @@ document.addEventListener("DOMContentLoaded", function () {
         <div class="flex items-center justify-between">
           <span class="text-sm font-semibold text-gray-300">${finalLabel}</span>
           <div class="text-right">
-            <div class="text-2xl font-extrabold text-amber-400">$${combinedOdds}</div>
-            <div class="text-xs text-gray-500">${combinedPct}%</div>
+            <div class="text-2xl font-extrabold text-amber-400">${combinedPct}%</div>
+            <div class="text-xs text-gray-500">$${combinedOdds}</div>
           </div>
         </div>
       </div>` : '';

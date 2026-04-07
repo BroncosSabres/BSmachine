@@ -33,6 +33,10 @@ function logoUrl(teamName) {
 
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
 
+// --- TIP STATE ---
+const tips = {}; // { matchKey: { team, perc } }
+let betslipExpanded = false;
+
 // Fuzzy match: short names ("Roosters") vs API full names ("Sydney Roosters")
 function teamsMatch(shortName, fullName) {
   const s = shortName.toLowerCase();
@@ -89,6 +93,7 @@ function tryscorerButtonEnabled(matchId) {
 
 function createMatchCard(data) {
   const { home_team, away_team, home_score, away_score, home_perc, away_perc } = data;
+  const matchKey = `${home_team}_v_${away_team}`;
 
   const homeWin = home_perc >= away_perc;
   const homePercValue = home_perc * 100;
@@ -114,7 +119,8 @@ function createMatchCard(data) {
 
     <!-- DESKTOP layout (md+) -->
     <div class="hidden md:flex items-center justify-between gap-4">
-      <div class="flex-1 flex items-center gap-3 min-w-0">
+      <div class="team-tip-area flex-1 flex items-center gap-3 min-w-0 p-2 -m-2"
+           data-match-key="${matchKey}" data-team-name="${home_team}">
         <img src="${logoUrl(home_team)}" alt="${home_team} logo"
              class="w-12 h-12 object-contain shrink-0" onerror="this.style.display='none'">
         <div class="min-w-0">
@@ -137,7 +143,8 @@ function createMatchCard(data) {
         ${bar}
         <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>
       </div>
-      <div class="flex-1 flex items-center justify-end gap-3 min-w-0">
+      <div class="team-tip-area flex-1 flex items-center justify-end gap-3 min-w-0 p-2 -m-2"
+           data-match-key="${matchKey}" data-team-name="${away_team}">
         <div class="min-w-0 text-right">
           <div class="text-base font-semibold leading-tight ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
           <div class="text-xs text-gray-500 mt-0.5">Away</div>
@@ -152,7 +159,8 @@ function createMatchCard(data) {
       <!-- Teams side by side -->
       <div class="flex items-center justify-between gap-2">
         <!-- Home -->
-        <div class="flex items-center gap-2 flex-1 min-w-0">
+        <div class="team-tip-area flex items-center gap-2 flex-1 min-w-0 p-1 -m-1"
+             data-match-key="${matchKey}" data-team-name="${home_team}">
           <img src="${logoUrl(home_team)}" alt="${home_team} logo"
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
           <div class="min-w-0">
@@ -163,7 +171,8 @@ function createMatchCard(data) {
         <!-- Score -->
         <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
         <!-- Away -->
-        <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
+        <div class="team-tip-area flex items-center gap-2 flex-1 min-w-0 justify-end p-1 -m-1"
+             data-match-key="${matchKey}" data-team-name="${away_team}">
           <div class="min-w-0 text-right">
             <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
             <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span> · <span class="text-gray-500">$${awayFairOdds}</span></div>
@@ -195,7 +204,103 @@ function createMatchCard(data) {
     </div>
   `;
 
+  card.querySelectorAll('.team-tip-area').forEach(area => {
+    area.addEventListener('click', () => {
+      handleTip(matchKey, area.dataset.teamName, area.dataset.teamName === home_team ? home_perc : away_perc);
+    });
+  });
+
   return card;
+}
+
+function handleTip(matchKey, team, perc) {
+  if (tips[matchKey]?.team === team) {
+    delete tips[matchKey];
+  } else {
+    tips[matchKey] = { team, perc };
+  }
+  updateTipAreas(matchKey);
+  renderBetslip();
+}
+
+function updateTipAreas(matchKey) {
+  const selected = tips[matchKey]?.team;
+  document.querySelectorAll(`.team-tip-area[data-match-key="${matchKey}"]`).forEach(area => {
+    area.classList.toggle('tip-area-selected', selected === area.dataset.teamName);
+  });
+}
+
+function renderBetslip() {
+  const betslip = document.getElementById('betslip');
+  const selections = Object.values(tips);
+
+  if (selections.length === 0) {
+    betslip.classList.remove('betslip-open');
+    betslipExpanded = false;
+    betslip.innerHTML = `
+      <div class="flex items-center justify-between md:cursor-default select-none">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Tips</span>
+        <span class="text-xs text-gray-600 md:hidden">tap a team ↑</span>
+      </div>
+      <div class="hidden md:block mt-2 text-sm text-gray-600">Tap a team to start tipping</div>
+    `;
+    return;
+  }
+
+  const combinedProb = selections.reduce((acc, s) => acc * s.perc, 1);
+  const combinedOdds = (1 / combinedProb).toFixed(2);
+  const combinedPercDisplay = (combinedProb * 100).toFixed(1);
+  const legLabel = selections.length === 1 ? 'Single' : `${selections.length}-leg multi`;
+
+  const legsHtml = selections.map(s => `
+    <div class="sgm-pick flex items-center justify-between">
+      <span>${s.team}</span>
+      <div class="text-right">
+        <div class="font-bold text-white">${(s.perc * 100).toFixed(1)}%</div>
+        <div class="text-xs text-gray-500">$${(1 / s.perc).toFixed(2)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  betslip.innerHTML = `
+    <div id="betslip-toggle" class="flex items-center justify-between md:cursor-default select-none">
+      <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Tips</span>
+      <div class="flex items-center gap-2 md:hidden">
+        <span class="text-base font-bold text-amber-400">${combinedPercDisplay}%</span>
+        <span id="betslip-chevron" class="text-gray-400 text-xs">${betslipExpanded ? '▼' : '▲'}</span>
+      </div>
+    </div>
+    <div id="betslip-body" class="${betslipExpanded ? '' : 'hidden'} md:block mt-1">
+      <div class="sgm-picks-list">${legsHtml}</div>
+      <div class="sgm-odds-row flex justify-between items-center">
+        <span class="text-sm font-semibold text-gray-300">${legLabel}</span>
+        <div class="text-right">
+          <div class="font-bold text-amber-400">${combinedPercDisplay}%</div>
+          <div class="text-xs text-gray-500">$${combinedOdds}</div>
+        </div>
+      </div>
+      <button id="clear-tips-btn" class="mt-3 w-full px-3 py-1.5 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 text-sm hover:border-red-500 hover:text-red-400 transition-colors">
+        ↺ Clear Tips
+      </button>
+    </div>
+  `;
+
+  betslip.querySelector('#betslip-toggle').addEventListener('click', () => {
+    if (window.innerWidth >= 768) return;
+    betslipExpanded = !betslipExpanded;
+    betslip.classList.toggle('betslip-open', betslipExpanded);
+    betslip.querySelector('#betslip-body').classList.toggle('hidden', !betslipExpanded);
+    betslip.querySelector('#betslip-chevron').textContent = betslipExpanded ? '▼' : '▲';
+  });
+
+  betslip.querySelector('#clear-tips-btn').addEventListener('click', () => {
+    Object.keys(tips).forEach(k => delete tips[k]);
+    document.querySelectorAll('.team-tip-area').forEach(area => {
+      area.classList.remove('tip-area-selected');
+    });
+    betslipExpanded = false;
+    renderBetslip();
+  });
 }
 
 async function loadPredictions() {
@@ -239,3 +344,4 @@ async function loadPredictions() {
 }
 
 loadPredictions();
+renderBetslip();
