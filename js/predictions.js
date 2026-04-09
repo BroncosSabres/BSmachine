@@ -36,8 +36,30 @@ function teamColor(name) {
   return teamColors[name] ?? "#6b7280";
 }
 
+function teamSlug(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('broncos'))              return 'broncos';
+  if (n.includes('bulldogs'))             return 'bulldogs';
+  if (n.includes('cowboys'))              return 'cowboys';
+  if (n.includes('dolphins'))             return 'dolphins';
+  if (n.includes('dragons'))              return 'dragons';
+  if (n.includes('eels') || n.includes('parramatta')) return 'eels';
+  if (n.includes('knights'))              return 'knights';
+  if (n.includes('sea eagles') || n.includes('manly')) return 'manly';
+  if (n.includes('panthers'))             return 'panthers';
+  if (n.includes('rabbitohs'))            return 'rabbitohs';
+  if (n.includes('raiders'))              return 'raiders';
+  if (n.includes('roosters'))             return 'roosters';
+  if (n.includes('sharks'))               return 'sharks';
+  if (n.includes('storm'))                return 'storm';
+  if (n.includes('tigers'))               return 'tigers';
+  if (n.includes('titans'))               return 'titans';
+  if (n.includes('warriors'))             return 'warriors';
+  return n.replace(/\s+/g, '_');
+}
+
 function logoUrl(teamName) {
-  return `../logos/${teamName.toLowerCase()}.svg`;
+  return `../logos/${teamSlug(teamName)}.svg`;
 }
 
 // --- ROUND NAVIGATION ---
@@ -187,7 +209,20 @@ async function buildSeasonRanking() {
       .filter(m => typeof m.home_score === 'number' && typeof m.away_score === 'number' && m.home_score !== m.away_score)
       .map(async m => {
         const prob = await fetchResultLineProb(m.match_id, m.home_score, m.away_score);
-        return prob !== null ? { match_id: m.match_id, prob } : null;
+        if (prob === null) return null;
+        const margin    = m.home_score - m.away_score;
+        const winner    = margin > 0 ? m.home_team : m.away_team;
+        const winMargin = Math.abs(margin);
+        return {
+          match_id:   m.match_id,
+          prob,
+          home_team:  m.home_team,
+          away_team:  m.away_team,
+          home_score: m.home_score,
+          away_score: m.away_score,
+          round:      m.round_number ?? (latestRound + 1), // DB returns round_number; current round fallback
+          lineLabel:  `${winner} -${winMargin - 1}.5`,
+        };
       })
   );
 
@@ -269,21 +304,20 @@ async function updateLiveScoreOverlays(predictions) {
       else                    probColor = 'text-rose-400';
     }
 
-    const stateBadge = `<span class="text-xs font-semibold uppercase tracking-wider text-gray-500">Result</span>`;
-
-    const scoreDisplay = `<span class="font-mono font-bold text-white">${homeScore}–${awayScore}</span>`;
-
     slot.innerHTML = `
       <div class="mt-3 rounded-lg overflow-hidden" style="border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.03);">
         <div class="px-3 pt-2.5 pb-2">
           <div class="flex items-center justify-between gap-3 mb-2">
-            <div class="flex items-center gap-2 min-w-0">
-              ${stateBadge}
-              <span class="text-gray-600">·</span>
-              ${scoreDisplay}
-              <span class="text-gray-600">·</span>
+            <!-- Left: result info stacked -->
+            <div class="flex flex-col gap-0.5 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold uppercase tracking-wider text-gray-500">Result</span>
+                <span class="text-gray-600">·</span>
+                <span class="font-mono font-bold text-white">${homeScore}–${awayScore}</span>
+              </div>
               <span class="text-sm font-semibold text-white truncate">${lineLabel}</span>
             </div>
+            <!-- Right: likelihood + probability -->
             ${probPct !== null ? `
             <div class="shrink-0 flex items-center gap-3">
               <span class="js-season-rank text-right"></span>
@@ -313,7 +347,7 @@ async function updateLiveScoreOverlays(predictions) {
       const total = ranking.length;
       const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
       const rankEl = card?.querySelector('.js-season-rank');
-      if (rankEl) rankEl.innerHTML = `<div class="text-gray-500 text-xs uppercase tracking-wider leading-none mb-0.5">Likeliness</div><div class="text-gray-300 text-sm font-semibold leading-none">${total - rank + 1}/${total}</div>`;
+      if (rankEl) rankEl.innerHTML = `<div class="text-gray-500 text-xs uppercase tracking-wider leading-none mb-0.5">Likelihood</div><div class="text-gray-300 text-sm font-semibold leading-none">${total - rank + 1}/${total}</div>`;
     });
   });
 }
@@ -536,6 +570,213 @@ function renderBetslip() {
   });
 }
 
+// --- PREDICTION TRACKER ---
+
+async function fetchPredictionsForRound(folderNum) {
+  try {
+    const res = await fetch(`../data/Round${folderNum}/Predictions.txt`);
+    if (!res.ok) return [];
+    const text = await res.text();
+    return text.trim().split('\n').map(l => JSON.parse(l.replace(/'/g, '"')));
+  } catch { return []; }
+}
+
+const TRACKER_BUCKETS = ['0–10%','10–20%','20–30%','30–40%','40–50%','50–60%','60–70%','70–80%','80–90%','90–100%'];
+let trackerEntries = null; // raw entries: { roundFolder, prob, won, predictedTotal, actualTotal }
+let trackerFilter  = 'season'; // 'season' | 'last10' | 'last5'
+
+async function buildTrackerEntries() {
+  if (trackerEntries) return trackerEntries;
+
+  const roundNums = [];
+  for (let r = MIN_ROUND; r <= latestRound; r++) roundNums.push(r);
+
+  const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
+
+  const allEntries = [];
+
+  await Promise.all(roundNums.map(async r => {
+    const preds = await fetchPredictionsForRound(r);
+    let results;
+    if (r === latestRound) {
+      results = currentMatches.map(m => {
+        const lv = liveResults.find(l => teamsMatch(m.home_team, l.home) && teamsMatch(m.away_team, l.away));
+        return lv ? { ...m, home_score: lv.home_score, away_score: lv.away_score } : m;
+      });
+    } else {
+      results = await getRoundMatches(r + 1);
+    }
+
+    for (const pred of preds) {
+      const result = results.find(m =>
+        teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
+      );
+      if (!result) continue;
+      const hs = result.home_score, as = result.away_score;
+      if (typeof hs !== 'number' || typeof as !== 'number') continue;
+
+      const homeWon = hs > as, awayWon = as > hs;
+
+      // Two data points per match — one for each team's predicted probability
+      allEntries.push({ roundFolder: r, prob: pred.home_perc, won: homeWon, predictedTotal: pred.home_score + pred.away_score, actualTotal: hs + as });
+      allEntries.push({ roundFolder: r, prob: pred.away_perc, won: awayWon, predictedTotal: null, actualTotal: null }); // totals only counted once (home entry)
+    }
+  }));
+
+  trackerEntries = allEntries;
+  return trackerEntries;
+}
+
+function applyTrackerFilter(entries) {
+  if (trackerFilter === 'season') return entries;
+  const n = trackerFilter === 'last5' ? 5 : 10;
+  const minFolder = latestRound - n + 1;
+  return entries.filter(e => e.roundFolder >= minFolder);
+}
+
+function bucketEntries(entries) {
+  const buckets = {};
+  TRACKER_BUCKETS.forEach(b => { buckets[b] = { wins: 0, total: 0 }; });
+  let sumPredicted = 0, sumActual = 0, totalGames = 0;
+
+  for (const e of entries) {
+    const pct = e.prob * 100;
+    const idx = Math.min(Math.floor(pct / 10), 9);
+    const key = TRACKER_BUCKETS[idx];
+    buckets[key].total++;
+    if (e.won) buckets[key].wins++;
+
+    if (e.predictedTotal !== null) {
+      sumPredicted += e.predictedTotal;
+      sumActual    += e.actualTotal;
+      totalGames++;
+    }
+  }
+
+  return { buckets, avgPredicted: totalGames ? sumPredicted / totalGames : null, avgActual: totalGames ? sumActual / totalGames : null, totalGames };
+}
+
+function renderTracker() {
+  const el = document.getElementById('prediction-tracker');
+  if (!el || !trackerEntries) return;
+
+  const filtered = applyTrackerFilter(trackerEntries);
+  const { buckets, avgPredicted, avgActual, totalGames } = bucketEntries(filtered);
+
+  const filterBtns = ['season','last10','last5'].map(f => {
+    const label = f === 'season' ? 'Season' : f === 'last10' ? 'Last 10 Rds' : 'Last 5 Rds';
+    const active = trackerFilter === f;
+    return `<button data-filter="${f}"
+      class="tracker-filter-btn px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+             ${active ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'}">${label}</button>`;
+  }).join('');
+
+  const rowsHtml = TRACKER_BUCKETS.map(key => {
+    const { wins, total } = buckets[key];
+    if (total === 0) return '';
+    const pct      = (wins / total) * 100;
+    const midpoint = parseInt(key); // e.g. "60–70%" → 60, midpoint = 65
+    const midPct   = midpoint + 5;
+    // Green if outperforming implied, red if underperforming
+    const barColor = pct >= midPct ? '#22c55e' : pct >= midPct - 15 ? '#f59e0b' : '#f43f5e';
+    return `
+      <div class="flex items-center gap-2 text-xs">
+        <span class="text-gray-500 w-14 shrink-0">${key}</span>
+        <div class="flex-1 rounded-full overflow-hidden" style="height:5px; background:rgba(255,255,255,0.07);">
+          <div style="width:${pct.toFixed(0)}%; height:100%; background:${barColor}; border-radius:9999px; transition:width 0.5s ease;"></div>
+        </div>
+        <span class="text-gray-400 w-20 text-right shrink-0">${wins}/${total} <span class="text-gray-600">(${pct.toFixed(0)}%)</span></span>
+      </div>`;
+  }).join('');
+
+  const totalHtml = avgPredicted !== null ? `
+    <div class="mt-3 pt-3 border-t border-gray-700/50 grid grid-cols-2 gap-2 text-center">
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Avg Predicted</div>
+        <div class="text-sm font-bold text-white">${avgPredicted.toFixed(1)} <span class="text-xs font-normal text-gray-500">pts</span></div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wider mb-0.5">Avg Actual</div>
+        <div class="text-sm font-bold text-white">${avgActual.toFixed(1)} <span class="text-xs font-normal text-gray-500">pts</span></div>
+      </div>
+    </div>` : '';
+
+  el.innerHTML = `
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Prediction Tracker</span>
+        <div class="flex items-center gap-1">${filterBtns}</div>
+      </div>
+      <div class="text-xs text-gray-600 mb-2.5">Win rate by predicted probability (${totalGames} games)</div>
+      <div class="flex flex-col gap-1.5">${rowsHtml}</div>
+      ${totalHtml}
+    </div>
+  `;
+
+  el.querySelectorAll('.tracker-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      trackerFilter = btn.dataset.filter;
+      renderTracker();
+    });
+  });
+}
+
+function renderLeastLikely(ranking) {
+  const el = document.getElementById('least-likely');
+  if (!el) return;
+  const top5 = ranking.slice(0, 5);
+
+  const cardsHtml = top5.map((e, i) => {
+    const probPct = (e.prob * 100).toFixed(1);
+    const hColor  = teamColor(e.home_team);
+    const aColor  = teamColor(e.away_team);
+    const homeWon = e.home_score > e.away_score;
+    const winnerColor = homeWon ? hColor : aColor;
+
+    const bar = `
+      <div class="flex w-full items-center mt-2" style="border:1px solid rgba(255,255,255,0.15); border-radius:4px; overflow:hidden; height:6px;">
+        <div style="width:${homeWon ? 100 : 0}%; background:${hColor}; height:100%; opacity:${homeWon ? '1' : '0.3'}"></div>
+        <div style="width:${homeWon ? 0 : 100}%; background:${aColor}; height:100%; opacity:${homeWon ? '0.3' : '1'}"></div>
+      </div>`;
+
+    return `
+      <div class="match-card">
+        <div class="text-xs font-semibold text-gray-400 mb-2">Round ${e.round}</div>
+        <div class="flex items-center justify-between gap-3">
+          <!-- Logos + score -->
+          <div class="flex items-center gap-2 flex-1 min-w-0">
+            <img src="${logoUrl(e.home_team)}" class="w-9 h-9 object-contain shrink-0 ${homeWon ? '' : 'opacity-40'}" onerror="this.style.display='none'" title="${e.home_team}">
+            <span class="font-mono font-bold text-white text-lg shrink-0">${e.home_score}–${e.away_score}</span>
+            <img src="${logoUrl(e.away_team)}" class="w-9 h-9 object-contain shrink-0 ${!homeWon ? '' : 'opacity-40'}" onerror="this.style.display='none'" title="${e.away_team}">
+          </div>
+          <!-- Probability — key stat -->
+          <div class="shrink-0 text-right">
+            <div class="text-2xl font-bold text-rose-400 leading-none">${probPct}%</div>
+            <div class="text-xs text-gray-500 mt-0.5">$${(1 / e.prob).toFixed(2)}</div>
+          </div>
+        </div>
+        ${bar}
+        <div class="mt-2 text-xs text-gray-500 truncate">${e.lineLabel}</div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="flex flex-col gap-3">
+      <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1">Biggest Upsets</div>
+      ${cardsHtml}
+    </div>
+  `;
+}
+
+async function loadTracker() {
+  const el = document.getElementById('prediction-tracker');
+  if (el) el.innerHTML = `<div class="bg-gray-800 border border-gray-700 rounded-xl p-4 text-xs text-gray-500 animate-pulse">Loading tracker...</div>`;
+  await buildTrackerEntries();
+  renderTracker();
+  // Season ranking powers both the per-card likelihood badges and the surprises widget
+  buildSeasonRanking().then(ranking => renderLeastLikely(ranking));
+}
+
 // --- LOAD ROUND ---
 async function loadRound() {
   container.innerHTML = '<p class="text-gray-500 text-sm animate-pulse">Loading...</p>';
@@ -606,6 +847,7 @@ async function init() {
   renderRoundNav();
   renderBetslip();
   loadRound();
+  loadTracker();
 }
 
 init();

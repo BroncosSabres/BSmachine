@@ -57,7 +57,7 @@
   <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-5xl mx-auto px-4 py-8 pb-28 md:pb-8">
+    <main class="max-w-5xl mx-auto px-4 py-8 pb-28">
       <h1 class="text-4xl font-bold mb-2">Round Predictions</h1>
       <p class="text-gray-400 mb-6 text-sm">Win probabilities and expected scores from the BS Machine model.</p>
 
@@ -67,8 +67,12 @@
         <div id="predictions-container" class="flex flex-col gap-4 flex-1 min-w-0">
           <!-- Cards injected by JS -->
         </div>
-        <div id="betslip" class="sgm-result md:w-72 md:sticky md:top-20"></div>
+        <div class="md:w-72 flex flex-col gap-4">
+          <div id="prediction-tracker"></div>
+          <div id="least-likely"></div>
+        </div>
       </div>
+      <div id="betslip" class="sgm-result"></div>
     </main>
 
     <script type="module" src="../js/predictions.js"></script>

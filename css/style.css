@@ -81,15 +81,26 @@
 .sgm-result {
   background-color: #1f2937;
   color: #bbf7d0;
-  border: 1px solid #374151;
-  border-radius: 12px;
-  padding: 1.15em 1.5em;
-  margin-top: 1em;
-  font-size: 1.05em;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
-  min-height: 56px;
-  width: 100%;
-  max-width: 370px;
+  border: 1px solid #4b5563;
+  border-bottom: none;
+  border-left: none;
+  border-right: none;
+  border-top: 1px solid #4b5563;
+  border-radius: 0;
+  padding: 0.75em 1em max(0.75em, env(safe-area-inset-bottom)) 1em;
+  font-size: 0.95em;
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+  min-height: 0;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+}
+
+.sgm-result.betslip-open {
+  max-height: 65vh;
+  overflow-y: auto;
 }
 
 .sgm-picks-list {
@@ -101,11 +112,12 @@
   color: #bbf7d0;
   padding-bottom: 0.14em;
   word-break: break-word;
+  font-size: 1em;
 }
 
 .sgm-odds-row {
   margin-top: 0.6em;
-  font-size: 1.1em;
+  font-size: 1.07em;
   font-weight: 700;
   color: #fbbf24;
   text-align: left;
@@ -117,33 +129,20 @@
   color: #fbbf24;
 }
 
-@media (max-width: 767px) {
-  .sgm-result.betslip-open {
-    max-height: 65vh;
-    overflow-y: auto;
-  }
+/* Desktop: anchor to bottom-right, not full-width */
+@media (min-width: 768px) {
   .sgm-result {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 50;
-    border-radius: 0;
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
-    border-top: 1px solid #4b5563;
-    max-width: 100%;
-    margin: 0;
-    font-size: 0.95em;
-    padding: 0.75em 1em max(0.75em, env(safe-area-inset-bottom)) 1em;
-    min-height: 0;
-    box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+    left: auto;
+    right: 1.5rem;
+    bottom: 1.5rem;
+    width: 300px;
+    border: 1px solid #4b5563;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    font-size: 1.05em;
+    padding: 1.15em 1.5em;
   }
-  .sgm-pick {
-    font-size: 1em;
-  }
-  .sgm-odds-row {
-    font-size: 1.07em;
+  .sgm-result.betslip-open {
+    max-height: 70vh;
   }
 }
