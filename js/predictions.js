@@ -2,6 +2,15 @@
 import { getLatestRoundFolder } from './utils.js';
 
 const container = document.getElementById("predictions-container");
+const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
+const MIN_ROUND = 0; // folder Round0 = Round 1 predictions
+
+// --- STATE ---
+let latestRound = 0;
+let currentRound = 0;
+const tips = {};
+let betslipExpanded = false;
+let tryscorerMatchCache = null;
 
 const teamColors = {
   "Broncos":   "#760135",
@@ -31,12 +40,32 @@ function logoUrl(teamName) {
   return `../logos/${teamName.toLowerCase()}.svg`;
 }
 
-const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
+// --- ROUND NAVIGATION ---
+function renderRoundNav() {
+  const nav = document.getElementById('round-nav');
+  if (!nav || latestRound === 0) return;
 
-// --- TIP STATE ---
-const tips = {}; // { matchKey: { team, perc } }
-let betslipExpanded = false;
+  const options = [];
+  for (let r = latestRound; r >= MIN_ROUND; r--) {
+    const displayRound = r + 1;
+    const label = r === latestRound ? `Round ${displayRound} (Current)` : `Round ${displayRound}`;
+    options.push(`<option value="${r}" ${r === currentRound ? 'selected' : ''}>${label}</option>`);
+  }
 
+  nav.innerHTML = `
+    <select id="round-select"
+      class="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-gray-500 cursor-pointer">
+      ${options.join('')}
+    </select>
+  `;
+
+  nav.querySelector('#round-select').addEventListener('change', function () {
+    currentRound = Number(this.value);
+    loadRound();
+  });
+}
+
+// --- TRYSCORER MATCH CACHE ---
 // Fuzzy match: short names ("Roosters") vs API full names ("Sydney Roosters")
 function teamsMatch(shortName, fullName) {
   const s = shortName.toLowerCase();
@@ -44,8 +73,6 @@ function teamsMatch(shortName, fullName) {
   return f.includes(s) || s.includes(f);
 }
 
-// Fetch the match list once and cache it
-let tryscorerMatchCache = null;
 async function getTryscorerMatches() {
   if (tryscorerMatchCache) return tryscorerMatchCache;
   try {
@@ -66,7 +93,6 @@ async function checkTryscorerAvailable(homeTeam, awayTeam) {
   try {
     const res = await fetch(`${TRYSCORER_API}/match_team_lists/${match.match_id}/nrl`);
     const data = await res.json();
-    // Available if either team has at least one player listed
     const hasPlayers = data?.home_players?.length > 0 || data?.away_players?.length > 0;
     return { available: hasPlayers, matchId: match.match_id };
   } catch {
@@ -91,23 +117,226 @@ function tryscorerButtonEnabled(matchId) {
           </a>`;
 }
 
+// --- LIVE SCORE / RESULT LINE PROBABILITY ---
+
+const BACKEND_BASE = 'https://bsmachine-backend.onrender.com';
+let liveResultsCache = null;
+
+async function getLiveResults() {
+  if (liveResultsCache) return liveResultsCache;
+  try {
+    const res = await fetch(`${BACKEND_BASE}/latest-results`);
+    liveResultsCache = await res.json();
+  } catch {
+    liveResultsCache = [];
+  }
+  return liveResultsCache;
+}
+
+const lineProbCache = {};
+
+async function fetchResultLineProb(matchId, homeScore, awayScore) {
+  const margin = homeScore - awayScore;
+  if (margin === 0) return null;
+
+  const cacheKey = `${matchId}_${margin}`;
+  if (cacheKey in lineProbCache) return lineProbCache[cacheKey];
+
+  const params = margin > 0 ? `?margin_gte=${margin}` : `?margin_lte=${margin}`;
+
+  try {
+    const res = await fetch(`${TRYSCORER_API}/match_sgm_bins_range/${matchId}${params}`);
+    const data = await res.json();
+    const prob = typeof data.prob === 'number' ? data.prob : null;
+    lineProbCache[cacheKey] = prob;
+    return prob;
+  } catch {
+    lineProbCache[cacheKey] = null;
+    return null;
+  }
+}
+
+// Build a season-wide ranked list of all result probabilities (least likely first)
+let seasonRankingCache = null;
+
+async function buildSeasonRanking() {
+  if (seasonRankingCache) return seasonRankingCache;
+
+  // Fetch all rounds' match data in parallel
+  const roundFetches = [];
+  for (let r = MIN_ROUND; r <= latestRound; r++) {
+    if (r === latestRound) {
+      roundFetches.push(
+        Promise.all([getLiveResults(), getTryscorerMatches()]).then(([live, curr]) =>
+          curr.map(m => {
+            const l = live.find(lv => teamsMatch(m.home_team, lv.home) && teamsMatch(m.away_team, lv.away));
+            return l ? { ...m, home_score: l.home_score, away_score: l.away_score } : m;
+          })
+        )
+      );
+    } else {
+      roundFetches.push(getRoundMatches(r + 1));
+    }
+  }
+
+  const allMatches = (await Promise.all(roundFetches)).flat();
+
+  // Compute probabilities for all completed matches in parallel (cache means no double-fetch)
+  const entries = await Promise.all(
+    allMatches
+      .filter(m => typeof m.home_score === 'number' && typeof m.away_score === 'number' && m.home_score !== m.away_score)
+      .map(async m => {
+        const prob = await fetchResultLineProb(m.match_id, m.home_score, m.away_score);
+        return prob !== null ? { match_id: m.match_id, prob } : null;
+      })
+  );
+
+  seasonRankingCache = entries.filter(Boolean).sort((a, b) => a.prob - b.prob);
+  return seasonRankingCache;
+}
+
+async function getRoundMatches(roundNumber) {
+  try {
+    const res = await fetch(`${TRYSCORER_API}/round_results/${roundNumber}/nrl`);
+    const data = await res.json();
+    console.log(`[round_results] Round ${roundNumber}:`, data);
+    return data;
+  } catch (e) {
+    console.error(`[round_results] Failed for Round ${roundNumber}:`, e);
+    return [];
+  }
+}
+
+async function updateLiveScoreOverlays(predictions) {
+  let matches;
+
+  if (currentRound === latestRound) {
+    // Current round: scores from NRL live API, match IDs from current_round_matches
+    const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
+    // Merge: attach live scores onto the match objects that have IDs
+    matches = currentMatches.map(m => {
+      const live = liveResults.find(r =>
+        teamsMatch(m.home_team, r.home) && teamsMatch(m.away_team, r.away)
+      );
+      return live
+        ? { ...m, home_score: live.home_score, away_score: live.away_score }
+        : m;
+    });
+  } else {
+    // Previous rounds: scores and match IDs from DB — use display round (folder + 1)
+    matches = await getRoundMatches(currentRound + 1);
+  }
+
+  const renderedMatchIds = [];
+
+  for (const pred of predictions) {
+    const match = matches.find(m =>
+      teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
+    );
+    if (!match) { console.log(`[overlay] No match found for ${pred.home_team} v ${pred.away_team}`); continue; }
+
+    const homeScore = match.home_score;
+    const awayScore = match.away_score;
+    console.log(`[overlay] ${pred.home_team} v ${pred.away_team} → scores:`, homeScore, awayScore);
+    if (homeScore === null || homeScore === undefined) continue;
+    if (awayScore === null || awayScore === undefined) continue;
+    if (typeof homeScore !== 'number' || typeof awayScore !== 'number') continue;
+
+    const margin = homeScore - awayScore;
+    if (margin === 0) continue;
+
+    const winner    = margin > 0 ? pred.home_team : pred.away_team;
+    const winMargin = Math.abs(margin);
+    const lineLabel = `${winner} -${winMargin - 1}.5`;
+
+    const prob = await fetchResultLineProb(match.match_id, homeScore, awayScore);
+
+    const matchKey = `${pred.home_team}_v_${pred.away_team}`;
+    const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+    if (!card) continue;
+
+    const slot = card.querySelector('.js-result-prob');
+    if (!slot) continue;
+
+    const winnerColor = teamColor(winner);
+    const probPct     = prob !== null ? (prob * 100) : null;
+
+    // Colour the percentage text by how likely the outcome was
+    let probColor = 'text-gray-400';
+    if (probPct !== null) {
+      if (probPct >= 50)      probColor = 'text-green-400';
+      else if (probPct >= 25) probColor = 'text-amber-400';
+      else                    probColor = 'text-rose-400';
+    }
+
+    const stateBadge = `<span class="text-xs font-semibold uppercase tracking-wider text-gray-500">Result</span>`;
+
+    const scoreDisplay = `<span class="font-mono font-bold text-white">${homeScore}–${awayScore}</span>`;
+
+    slot.innerHTML = `
+      <div class="mt-3 rounded-lg overflow-hidden" style="border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.03);">
+        <div class="px-3 pt-2.5 pb-2">
+          <div class="flex items-center justify-between gap-3 mb-2">
+            <div class="flex items-center gap-2 min-w-0">
+              ${stateBadge}
+              <span class="text-gray-600">·</span>
+              ${scoreDisplay}
+              <span class="text-gray-600">·</span>
+              <span class="text-sm font-semibold text-white truncate">${lineLabel}</span>
+            </div>
+            ${probPct !== null ? `
+            <div class="shrink-0 flex items-center gap-3">
+              <span class="js-season-rank text-right"></span>
+              <div class="text-right leading-none">
+                <div class="text-xl font-bold ${probColor}">${probPct.toFixed(1)}%</div>
+                <div class="text-xs text-gray-500 mt-0.5">$${(1 / prob).toFixed(2)}</div>
+              </div>
+            </div>` : ''}
+          </div>
+          ${probPct !== null ? `
+          <div class="w-full rounded-full" style="height:4px; background:rgba(255,255,255,0.08);">
+            <div style="width:${Math.min(probPct, 100)}%; height:100%; background:${winnerColor}; border-radius:9999px; transition:width 0.8s ease;"></div>
+          </div>` : ''}
+        </div>
+      </div>
+    `;
+
+    renderedMatchIds.push({ matchId: match.match_id, matchKey });
+  }
+
+  // Phase 2: build season ranking in background, then fill in rank badges
+  buildSeasonRanking().then(ranking => {
+    renderedMatchIds.forEach(({ matchId, matchKey }) => {
+      const idx = ranking.findIndex(r => r.match_id === matchId);
+      if (idx === -1) return;
+      const rank = idx + 1;
+      const total = ranking.length;
+      const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+      const rankEl = card?.querySelector('.js-season-rank');
+      if (rankEl) rankEl.innerHTML = `<div class="text-gray-500 text-xs uppercase tracking-wider leading-none mb-0.5">Likeliness</div><div class="text-gray-300 text-sm font-semibold leading-none">${total - rank + 1}/${total}</div>`;
+    });
+  });
+}
+
+// --- MATCH CARD ---
 function createMatchCard(data) {
   const { home_team, away_team, home_score, away_score, home_perc, away_perc } = data;
   const matchKey = `${home_team}_v_${away_team}`;
 
   const homeWin = home_perc >= away_perc;
-  const homePercValue = home_perc * 100;
-  const awayPercValue = away_perc * 100;
+  const homePercValue   = home_perc * 100;
+  const awayPercValue   = away_perc * 100;
   const homePercDisplay = homePercValue.toFixed(1);
   const awayPercDisplay = awayPercValue.toFixed(1);
-  const homeFairOdds = (1 / home_perc).toFixed(2);
-  const awayFairOdds = (1 / away_perc).toFixed(2);
-  const expectedTotal = home_score + away_score;
-  const homeColor = teamColor(home_team);
-  const awayColor = teamColor(away_team);
+  const homeFairOdds    = (1 / home_perc).toFixed(2);
+  const awayFairOdds    = (1 / away_perc).toFixed(2);
+  const expectedTotal   = home_score + away_score;
+  const homeColor       = teamColor(home_team);
+  const awayColor       = teamColor(away_team);
 
   const card = document.createElement("div");
   card.className = "match-card";
+  card.dataset.matchKey = matchKey;
 
   const bar = `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
@@ -202,6 +431,9 @@ function createMatchCard(data) {
         <div class="js-tryscorer-btn flex justify-center"></div>
       </div>
     </div>
+
+    <!-- Result line probability (populated async for current round) -->
+    <div class="js-result-prob"></div>
   `;
 
   card.querySelectorAll('.team-tip-area').forEach(area => {
@@ -213,6 +445,7 @@ function createMatchCard(data) {
   return card;
 }
 
+// --- TIP / BETSLIP ---
 function handleTip(matchKey, team, perc) {
   if (tips[matchKey]?.team === team) {
     delete tips[matchKey];
@@ -247,10 +480,10 @@ function renderBetslip() {
     return;
   }
 
-  const combinedProb = selections.reduce((acc, s) => acc * s.perc, 1);
-  const combinedOdds = (1 / combinedProb).toFixed(2);
+  const combinedProb        = selections.reduce((acc, s) => acc * s.perc, 1);
+  const combinedOdds        = (1 / combinedProb).toFixed(2);
   const combinedPercDisplay = (combinedProb * 100).toFixed(1);
-  const legLabel = selections.length === 1 ? 'Single' : `${selections.length}-leg multi`;
+  const legLabel            = selections.length === 1 ? 'Single' : `${selections.length}-leg multi`;
 
   const legsHtml = selections.map(s => `
     <div class="sgm-pick flex items-center justify-between">
@@ -303,45 +536,76 @@ function renderBetslip() {
   });
 }
 
-async function loadPredictions() {
-  const roundFolder = await getLatestRoundFolder();
-  if (!roundFolder) {
-    container.innerHTML = `<p class="text-gray-400">No predictions available yet.</p>`;
-    return;
-  }
+// --- LOAD ROUND ---
+async function loadRound() {
+  container.innerHTML = '<p class="text-gray-500 text-sm animate-pulse">Loading...</p>';
 
-  const predictionsPath = `../data/${roundFolder}/Predictions.txt`;
+  // Reset tips when changing rounds
+  Object.keys(tips).forEach(k => delete tips[k]);
+  renderBetslip();
+
+  const predictionsPath = `../data/Round${currentRound}/Predictions.txt`;
 
   try {
     const response = await fetch(predictionsPath);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    const text = await response.text();
-    const lines = text.trim().split("\n");
+    const text        = await response.text();
+    const lines       = text.trim().split("\n");
+    const predictions = [];
+
+    container.innerHTML = '';
 
     lines.forEach((line, idx) => {
       try {
         const data = JSON.parse(line.replace(/'/g, '"'));
+        predictions.push(data);
         const card = createMatchCard(data);
         container.appendChild(card);
 
-        // Async: update button once we know if team lists are available
-        checkTryscorerAvailable(data.home_team, data.away_team).then(({ available, matchId }) => {
-          card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
-            slot.innerHTML = available
-              ? tryscorerButtonEnabled(matchId)
-              : tryscorerButtonDisabled();
+        if (currentRound === latestRound) {
+          // Async: update tryscorer button once we know if team lists are available
+          checkTryscorerAvailable(data.home_team, data.away_team).then(({ available, matchId }) => {
+            card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
+              slot.innerHTML = available
+                ? tryscorerButtonEnabled(matchId)
+                : tryscorerButtonDisabled();
+            });
           });
-        });
+        } else {
+          // Previous rounds: no tryscorer button
+          card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
+            slot.innerHTML = '';
+          });
+        }
       } catch (err) {
         console.error(`Error parsing line ${idx}:`, line, err);
       }
     });
+
+    // Async: overlay result line probability for all rounds
+    updateLiveScoreOverlays(predictions);
   } catch (err) {
     console.error("Failed to load predictions:", err);
-    container.innerHTML = `<p class="text-gray-400">Predictions unavailable — check back after the next round update.</p>`;
+    container.innerHTML = `<p class="text-gray-400">Predictions unavailable for Round ${currentRound}.</p>`;
   }
 }
 
-loadPredictions();
-renderBetslip();
+// --- INIT ---
+async function init() {
+  try {
+    const res  = await fetch('../data/latestRound.json');
+    const data = await res.json();
+    latestRound  = data.latest;
+    currentRound = latestRound;
+  } catch {
+    latestRound  = 1;
+    currentRound = 1;
+  }
+
+  renderRoundNav();
+  renderBetslip();
+  loadRound();
+}
+
+init();
