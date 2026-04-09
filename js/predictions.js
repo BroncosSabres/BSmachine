@@ -32,8 +32,16 @@ const teamColors = {
   "Tigers":    "#F57600",
 };
 
+const slugToShortName = {
+  broncos: 'Broncos', bulldogs: 'Bulldogs', cowboys: 'Cowboys', dolphins: 'Dolphins',
+  dragons: 'Dragons', eels: 'Eels', knights: 'Knights', manly: 'Manly',
+  panthers: 'Panthers', rabbitohs: 'Rabbitohs', raiders: 'Raiders', roosters: 'Roosters',
+  sharks: 'Sharks', storm: 'Storm', tigers: 'Tigers', titans: 'Titans', warriors: 'Warriors',
+};
+
 function teamColor(name) {
-  return teamColors[name] ?? "#6b7280";
+  const short = slugToShortName[teamSlug(name)] ?? name;
+  return teamColors[short] ?? "#6b7280";
 }
 
 function teamSlug(name) {
