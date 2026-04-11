@@ -44,6 +44,25 @@ function teamColor(name) {
   return teamColors[short] ?? "#6b7280";
 }
 
+// Interpolates red→amber→green based on a 0–1 position (0 = red, 1 = green)
+function bucketColor(fraction) {
+  const stops = [
+    { r: 244, g: 63,  b: 94  }, // 0%   rose-500
+    { r: 251, g: 146, b: 60  }, // 25%  orange-400
+    { r: 250, g: 204, b: 21  }, // 50%  yellow-400
+    { r: 163, g: 230, b: 53  }, // 75%  lime-400
+    { r: 74,  g: 222, b: 128 }, // 100% green-400
+  ];
+  const scaled = Math.max(0, Math.min(1, fraction)) * (stops.length - 1);
+  const lo = Math.floor(scaled), hi = Math.min(lo + 1, stops.length - 1);
+  const t  = scaled - lo;
+  const a  = stops[lo], b = stops[hi];
+  const r  = Math.round(a.r + (b.r - a.r) * t);
+  const g  = Math.round(a.g + (b.g - a.g) * t);
+  const bv = Math.round(a.b + (b.b - a.b) * t);
+  return `rgb(${r},${g},${bv})`;
+}
+
 function teamSlug(name) {
   const n = (name || '').toLowerCase();
   if (n.includes('broncos'))              return 'broncos';
@@ -186,6 +205,23 @@ async function fetchResultLineProb(matchId, homeScore, awayScore) {
   }
 }
 
+// Over X.5 = total_gte of the actual total; complement is under
+async function fetchTotalProb(matchId, total) {
+  const cacheKey = `total_${matchId}_${total}`;
+  if (cacheKey in lineProbCache) return lineProbCache[cacheKey];
+
+  try {
+    const res = await fetch(`${TRYSCORER_API}/match_sgm_bins_range/${matchId}?total_gte=${total}`);
+    const data = await res.json();
+    const prob = typeof data.prob === 'number' ? data.prob : null;
+    lineProbCache[cacheKey] = prob;
+    return prob;
+  } catch {
+    lineProbCache[cacheKey] = null;
+    return null;
+  }
+}
+
 // Build a season-wide ranked list of all result probabilities (least likely first)
 let seasonRankingCache = null;
 
@@ -238,14 +274,50 @@ async function buildSeasonRanking() {
   return seasonRankingCache;
 }
 
+// Season-wide ranking of total points probabilities (least likely first)
+let totalRankingCache = null;
+
+async function buildTotalRanking() {
+  if (totalRankingCache) return totalRankingCache;
+
+  const roundFetches = [];
+  for (let r = MIN_ROUND; r <= latestRound; r++) {
+    if (r === latestRound) {
+      roundFetches.push(
+        Promise.all([getLiveResults(), getTryscorerMatches()]).then(([live, curr]) =>
+          curr.map(m => {
+            const l = live.find(lv => teamsMatch(m.home_team, lv.home) && teamsMatch(m.away_team, lv.away));
+            return l ? { ...m, home_score: l.home_score, away_score: l.away_score } : m;
+          })
+        )
+      );
+    } else {
+      roundFetches.push(getRoundMatches(r + 1));
+    }
+  }
+
+  const allMatches = (await Promise.all(roundFetches)).flat();
+
+  const entries = await Promise.all(
+    allMatches
+      .filter(m => typeof m.home_score === 'number' && typeof m.away_score === 'number')
+      .map(async m => {
+        const actualTotal = m.home_score + m.away_score;
+        const prob = await fetchTotalProb(m.match_id, actualTotal);
+        if (prob === null) return null;
+        return { match_id: m.match_id, prob };
+      })
+  );
+
+  totalRankingCache = entries.filter(Boolean).sort((a, b) => a.prob - b.prob);
+  return totalRankingCache;
+}
+
 async function getRoundMatches(roundNumber) {
   try {
     const res = await fetch(`${TRYSCORER_API}/round_results/${roundNumber}/nrl`);
-    const data = await res.json();
-    console.log(`[round_results] Round ${roundNumber}:`, data);
-    return data;
-  } catch (e) {
-    console.error(`[round_results] Failed for Round ${roundNumber}:`, e);
+    return await res.json();
+  } catch {
     return [];
   }
 }
@@ -276,11 +348,10 @@ async function updateLiveScoreOverlays(predictions) {
     const match = matches.find(m =>
       teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
     );
-    if (!match) { console.log(`[overlay] No match found for ${pred.home_team} v ${pred.away_team}`); continue; }
+    if (!match) continue;
 
     const homeScore = match.home_score;
     const awayScore = match.away_score;
-    console.log(`[overlay] ${pred.home_team} v ${pred.away_team} → scores:`, homeScore, awayScore);
     if (homeScore === null || homeScore === undefined) continue;
     if (awayScore === null || awayScore === undefined) continue;
     if (typeof homeScore !== 'number' || typeof awayScore !== 'number') continue;
@@ -292,7 +363,11 @@ async function updateLiveScoreOverlays(predictions) {
     const winMargin = Math.abs(margin);
     const lineLabel = `${winner} -${winMargin - 1}.5`;
 
-    const prob = await fetchResultLineProb(match.match_id, homeScore, awayScore);
+    const actualTotal = homeScore + awayScore;
+    const [prob, overProb] = await Promise.all([
+      fetchResultLineProb(match.match_id, homeScore, awayScore),
+      fetchTotalProb(match.match_id, actualTotal),
+    ]);
 
     const matchKey = `${pred.home_team}_v_${pred.away_team}`;
     const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
@@ -304,7 +379,7 @@ async function updateLiveScoreOverlays(predictions) {
     const winnerColor = teamColor(winner);
     const probPct     = prob !== null ? (prob * 100) : null;
 
-    // Colour the percentage text by how likely the outcome was
+    // Colour the margin % by how likely the outcome was
     let probColor = 'text-gray-400';
     if (probPct !== null) {
       if (probPct >= 50)      probColor = 'text-green-400';
@@ -312,9 +387,28 @@ async function updateLiveScoreOverlays(predictions) {
       else                    probColor = 'text-rose-400';
     }
 
+    // Totals bar: over = teal, under = slate
+    const overPct  = overProb !== null ? overProb * 100 : null;
+    const underPct = overPct !== null ? 100 - overPct : null;
+    const totalsHtml = overPct !== null ? `
+      <div class="mt-3 pt-2.5 border-t border-gray-700/50">
+        <div class="flex items-center justify-between text-xs mb-1.5">
+          <span class="text-gray-500 font-semibold uppercase tracking-wider">Total · ${actualTotal} pts</span>
+          <span class="js-total-rank text-right"></span>
+        </div>
+        <div class="flex items-center justify-between text-xs mb-1">
+          <span class="font-semibold ${overPct >= 50 ? 'text-green-400' : 'text-rose-400'}">Over ${actualTotal - 0.5} &nbsp;${overPct.toFixed(1)}%</span>
+          <span class="font-semibold ${underPct >= 50 ? 'text-green-400' : 'text-rose-400'}">${underPct.toFixed(1)}% &nbsp;Under ${actualTotal + 0.5}</span>
+        </div>
+        <div class="flex w-full overflow-hidden" style="height:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1);">
+          <div style="width:${overPct.toFixed(1)}%; background:${overPct >= 50 ? '#4ade80' : '#f43f5e'}; height:100%; transition:width 0.8s ease;"></div>
+          <div style="width:${underPct.toFixed(1)}%; background:${underPct >= 50 ? '#4ade80' : '#f43f5e'}; height:100%; transition:width 0.8s ease;"></div>
+        </div>
+      </div>` : '';
+
     slot.innerHTML = `
       <div class="mt-3 rounded-lg overflow-hidden" style="border:1px solid rgba(255,255,255,0.07); background:rgba(255,255,255,0.03);">
-        <div class="px-3 pt-2.5 pb-2">
+        <div class="px-3 pt-2.5 pb-2.5">
           <div class="flex items-center justify-between gap-3 mb-2">
             <!-- Left: result info stacked -->
             <div class="flex flex-col gap-0.5 min-w-0">
@@ -339,6 +433,7 @@ async function updateLiveScoreOverlays(predictions) {
           <div class="w-full rounded-full" style="height:4px; background:rgba(255,255,255,0.08);">
             <div style="width:${Math.min(probPct, 100)}%; height:100%; background:${winnerColor}; border-radius:9999px; transition:width 0.8s ease;"></div>
           </div>` : ''}
+          ${totalsHtml}
         </div>
       </div>
     `;
@@ -346,15 +441,28 @@ async function updateLiveScoreOverlays(predictions) {
     renderedMatchIds.push({ matchId: match.match_id, matchKey });
   }
 
-  // Phase 2: build season ranking in background, then fill in rank badges
+  // Phase 2: fill margin likelihood badges
   buildSeasonRanking().then(ranking => {
     renderedMatchIds.forEach(({ matchId, matchKey }) => {
       const idx = ranking.findIndex(r => r.match_id === matchId);
       if (idx === -1) return;
-      const rank = idx + 1;
+      const rank  = idx + 1;
       const total = ranking.length;
-      const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+      const card   = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
       const rankEl = card?.querySelector('.js-season-rank');
+      if (rankEl) rankEl.innerHTML = `<div class="text-gray-500 text-xs uppercase tracking-wider leading-none mb-0.5">Likelihood</div><div class="text-gray-300 text-sm font-semibold leading-none">${total - rank + 1}/${total}</div>`;
+    });
+  });
+
+  // Phase 2: fill total points likelihood badges
+  buildTotalRanking().then(ranking => {
+    renderedMatchIds.forEach(({ matchId, matchKey }) => {
+      const idx = ranking.findIndex(r => r.match_id === matchId);
+      if (idx === -1) return;
+      const rank  = idx + 1;
+      const total = ranking.length;
+      const card    = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+      const rankEl  = card?.querySelector('.js-total-rank');
       if (rankEl) rankEl.innerHTML = `<div class="text-gray-500 text-xs uppercase tracking-wider leading-none mb-0.5">Likelihood</div><div class="text-gray-300 text-sm font-semibold leading-none">${total - rank + 1}/${total}</div>`;
     });
   });
@@ -683,10 +791,7 @@ function renderTracker() {
     const { wins, total } = buckets[key];
     if (total === 0) return '';
     const pct      = (wins / total) * 100;
-    const midpoint = parseInt(key); // e.g. "60–70%" → 60, midpoint = 65
-    const midPct   = midpoint + 5;
-    // Green if outperforming implied, red if underperforming
-    const barColor = pct >= midPct ? '#22c55e' : pct >= midPct - 15 ? '#f59e0b' : '#f43f5e';
+    const barColor = bucketColor(pct / 100);
     return `
       <div class="flex items-center gap-2 text-xs">
         <span class="text-gray-500 w-14 shrink-0">${key}</span>
@@ -776,12 +881,149 @@ function renderLeastLikely(ranking) {
   `;
 }
 
+// --- TOTALS TRACKER ---
+
+let totalTrackerEntries = null;
+let totalTrackerFilter  = 'season';
+
+async function buildTotalTrackerEntries() {
+  if (totalTrackerEntries) return totalTrackerEntries;
+
+  const roundNums = [];
+  for (let r = MIN_ROUND; r <= latestRound; r++) roundNums.push(r);
+
+  const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
+  const allEntries = [];
+
+  await Promise.all(roundNums.map(async r => {
+    const preds = await fetchPredictionsForRound(r);
+    let results;
+    if (r === latestRound) {
+      results = currentMatches.map(m => {
+        const lv = liveResults.find(l => teamsMatch(m.home_team, l.home) && teamsMatch(m.away_team, l.away));
+        return lv ? { ...m, home_score: lv.home_score, away_score: lv.away_score } : m;
+      });
+    } else {
+      results = await getRoundMatches(r + 1);
+    }
+
+    await Promise.all(preds.map(async pred => {
+      const result = results.find(m =>
+        teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
+      );
+      if (!result) return;
+      const hs = result.home_score, as = result.away_score;
+      if (typeof hs !== 'number' || typeof as !== 'number') return;
+
+      const actualTotal = hs + as;
+
+      // Fetch P(Over actualTotal - 0.5) — the probability the model gave to this exact total occurring via the over
+      const overProb = await fetchTotalProb(result.match_id, actualTotal);
+      if (overProb === null) return;
+
+      // overHit = true: the actual total lands on the over side (always true by definition here,
+      // but we track it as "over" since we're asking P(≥ actualTotal))
+      // What we're really binning: where did the model put this outcome?
+      allEntries.push({ roundFolder: r, overProb, underProb: 1 - overProb });
+    }));
+  }));
+
+  totalTrackerEntries = allEntries;
+  return totalTrackerEntries;
+}
+
+function applyTotalTrackerFilter(entries) {
+  if (totalTrackerFilter === 'season') return entries;
+  const n = totalTrackerFilter === 'last5' ? 5 : 10;
+  return entries.filter(e => e.roundFolder >= latestRound - n + 1);
+}
+
+function renderTotalsTracker() {
+  const el = document.getElementById('totals-tracker');
+  if (!el || !totalTrackerEntries) return;
+
+  const filtered = applyTotalTrackerFilter(totalTrackerEntries);
+  const total = filtered.length;
+
+  // Cumulative buckets: bin i = count of entries with prob <= (i+1)*10%
+  // A result in the 0-10% bin also "wins" all higher bins
+  const overCum  = Array(10).fill(0);
+  const underCum = Array(10).fill(0);
+  for (const e of filtered) {
+    const overIdx  = Math.min(Math.floor(e.overProb  * 10), 9);
+    const underIdx = Math.min(Math.floor(e.underProb * 10), 9);
+    for (let i = overIdx;  i < 10; i++) overCum[i]++;
+    for (let i = underIdx; i < 10; i++) underCum[i]++;
+  }
+
+  const filterBtns = ['season', 'last10', 'last5'].map(f => {
+    const label  = f === 'season' ? 'Season' : f === 'last10' ? 'Last 10 Rds' : 'Last 5 Rds';
+    const active = totalTrackerFilter === f;
+    return `<button data-tfilter="${f}"
+      class="total-filter-btn px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+             ${active ? 'bg-gray-600 text-white' : 'text-gray-500 hover:text-gray-300'}">${label}</button>`;
+  }).join('');
+
+  const rowsHtml = overCum.map((overCount, i) => {
+    const underCount = underCum[i];
+    const label      = `${i * 10}–${(i + 1) * 10}%`;
+    // Bar widths as % of total (last row is always 100%)
+    const overBarPct  = total > 0 ? (overCount  / total) * 100 : 0;
+    const underBarPct = total > 0 ? (underCount / total) * 100 : 0;
+
+    return `
+      <div>
+        <div class="flex items-center justify-between text-xs mb-1">
+          <span class="text-rose-400 font-medium">${underCount}/${total} <span class="text-gray-500 font-normal">(${underBarPct.toFixed(0)}%)</span></span>
+          <span class="text-gray-500">${label}</span>
+          <span class="text-green-400 font-medium">${overCount}/${total} <span class="text-gray-500 font-normal">(${overBarPct.toFixed(0)}%)</span></span>
+        </div>
+        <div class="flex gap-px" style="height:5px;">
+          <div class="flex-1 flex justify-end" style="background:rgba(255,255,255,0.05); border-radius:2px 0 0 2px;">
+            <div style="width:${underBarPct.toFixed(1)}%; background:${bucketColor(underBarPct / 100)}; height:100%; border-radius:2px 0 0 2px; transition:width 0.6s ease;"></div>
+          </div>
+          <div class="flex-1" style="background:rgba(255,255,255,0.05); border-radius:0 2px 2px 0;">
+            <div style="width:${overBarPct.toFixed(1)}%; background:${bucketColor(overBarPct / 100)}; height:100%; border-radius:0 2px 2px 0; transition:width 0.6s ease;"></div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Totals Tracker</span>
+        <div class="flex items-center gap-1">${filterBtns}</div>
+      </div>
+      <div class="flex items-center justify-between text-xs text-gray-600 mb-2">
+        <span>← Unders (cumul.)</span>
+        <span>Overs (cumul.) →</span>
+      </div>
+      <div class="flex flex-col gap-3">${rowsHtml}</div>
+    </div>
+  `;
+
+  el.querySelectorAll('.total-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      totalTrackerFilter = btn.dataset.tfilter;
+      renderTotalsTracker();
+    });
+  });
+}
+
 async function loadTracker() {
   const el = document.getElementById('prediction-tracker');
   if (el) el.innerHTML = `<div class="bg-gray-800 border border-gray-700 rounded-xl p-4 text-xs text-gray-500 animate-pulse">Loading tracker...</div>`;
+  const tel = document.getElementById('totals-tracker');
+  if (tel) tel.innerHTML = `<div class="bg-gray-800 border border-gray-700 rounded-xl p-4 text-xs text-gray-500 animate-pulse">Loading totals tracker...</div>`;
+
   await buildTrackerEntries();
   renderTracker();
-  // Season ranking powers both the per-card likelihood badges and the surprises widget
+
+  // Totals tracker — runs in parallel, renders when ready
+  buildTotalTrackerEntries().then(() => renderTotalsTracker());
+
+  // Season ranking powers per-card likelihood badges and Biggest Upsets
   buildSeasonRanking().then(ranking => renderLeastLikely(ranking));
 }
 
