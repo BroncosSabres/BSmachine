@@ -375,6 +375,8 @@ async function updateLiveScoreOverlays(predictions) {
 
     const slot = card.querySelector('.js-result-prob');
     if (!slot) continue;
+    // Clear loading indicator — will be replaced with actual content
+    slot.querySelector('.js-result-loading')?.remove();
 
     const winnerColor = teamColor(winner);
     const probPct     = prob !== null ? (prob * 100) : null;
@@ -397,12 +399,12 @@ async function updateLiveScoreOverlays(predictions) {
           <span class="js-total-rank text-right"></span>
         </div>
         <div class="flex items-center justify-between text-xs mb-1">
-          <span class="font-semibold ${overPct >= 50 ? 'text-green-400' : 'text-rose-400'}">Over ${actualTotal - 0.5} &nbsp;${overPct.toFixed(1)}%</span>
-          <span class="font-semibold ${underPct >= 50 ? 'text-green-400' : 'text-rose-400'}">${underPct.toFixed(1)}% &nbsp;Under ${actualTotal + 0.5}</span>
+          <span class="font-semibold" style="color:${bucketColor(overPct / 100)}">Over ${actualTotal - 0.5} &nbsp;${overPct.toFixed(1)}%</span>
+          <span class="font-semibold" style="color:${bucketColor(underPct / 100)}">${underPct.toFixed(1)}% &nbsp;Under ${actualTotal + 0.5}</span>
         </div>
-        <div class="flex w-full overflow-hidden" style="height:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1);">
-          <div style="width:${overPct.toFixed(1)}%; background:${overPct >= 50 ? '#4ade80' : '#f43f5e'}; height:100%; transition:width 0.8s ease;"></div>
-          <div style="width:${underPct.toFixed(1)}%; background:${underPct >= 50 ? '#4ade80' : '#f43f5e'}; height:100%; transition:width 0.8s ease;"></div>
+        <div class="flex w-full" style="height:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.15); overflow:hidden; gap:1px; background:rgba(255,255,255,0.15);">
+          <div style="width:${overPct.toFixed(1)}%; background:${bucketColor(overPct / 100)}; height:100%; transition:width 0.8s ease;"></div>
+          <div style="width:${underPct.toFixed(1)}%; background:${bucketColor(underPct / 100)}; height:100%; transition:width 0.8s ease;"></div>
         </div>
       </div>` : '';
 
@@ -440,6 +442,9 @@ async function updateLiveScoreOverlays(predictions) {
 
     renderedMatchIds.push({ matchId: match.match_id, matchKey });
   }
+
+  // Clear any remaining loading indicators (cards with no result yet)
+  container.querySelectorAll('.js-result-loading').forEach(el => el.remove());
 
   // Phase 2: fill margin likelihood badges
   buildSeasonRanking().then(ranking => {
@@ -582,8 +587,13 @@ function createMatchCard(data) {
       </div>
     </div>
 
-    <!-- Result line probability (populated async for current round) -->
-    <div class="js-result-prob"></div>
+    <!-- Result line probability (populated async) -->
+    <div class="js-result-prob">
+      <div class="js-result-loading mt-3 flex items-center gap-2 text-xs text-gray-600 animate-pulse">
+        <div class="w-2 h-2 rounded-full bg-gray-700"></div>
+        <span>Checking results…</span>
+      </div>
+    </div>
   `;
 
   card.querySelectorAll('.team-tip-area').forEach(area => {
@@ -1029,7 +1039,29 @@ async function loadTracker() {
 
 // --- LOAD ROUND ---
 async function loadRound() {
-  container.innerHTML = '<p class="text-gray-500 text-sm animate-pulse">Loading...</p>';
+  container.innerHTML = [1,2,3].map(() => `
+    <div class="match-card animate-pulse">
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3 flex-1">
+          <div class="w-12 h-12 rounded-full bg-gray-700 shrink-0"></div>
+          <div class="flex flex-col gap-2 flex-1">
+            <div class="h-3 bg-gray-700 rounded w-24"></div>
+            <div class="h-2 bg-gray-700 rounded w-12"></div>
+          </div>
+        </div>
+        <div class="flex flex-col items-center gap-2 w-32">
+          <div class="h-3 bg-gray-700 rounded w-20"></div>
+          <div class="h-2 bg-gray-700 rounded w-full"></div>
+        </div>
+        <div class="flex items-center gap-3 flex-1 justify-end">
+          <div class="flex flex-col gap-2 items-end flex-1">
+            <div class="h-3 bg-gray-700 rounded w-24"></div>
+            <div class="h-2 bg-gray-700 rounded w-12"></div>
+          </div>
+          <div class="w-12 h-12 rounded-full bg-gray-700 shrink-0"></div>
+        </div>
+      </div>
+    </div>`).join('');
 
   // Reset tips when changing rounds
   Object.keys(tips).forEach(k => delete tips[k]);
