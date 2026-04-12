@@ -105,11 +105,12 @@ function formBadge(form) {
   }));
 
   rankings.forEach(r => {
-    const formArrow = r.form != null
-      ? (r.form > 0
-          ? `<span style='color:#4ade80'>▲</span>${Math.abs(r.form).toFixed(2)}`
-          : r.form < 0
-            ? `<span style='color:#f87171'>▼</span>${Math.abs(r.form).toFixed(2)}`
+    const wc = r.weekly_change;
+    const formArrow = wc != null
+      ? (wc > 0
+          ? `<span style='color:#4ade80'>▲</span>${Math.abs(wc).toFixed(2)}`
+          : wc < 0
+            ? `<span style='color:#f87171'>▼</span>${Math.abs(wc).toFixed(2)}`
             : '')
       : '';
 
