@@ -424,9 +424,15 @@
 
         let targetRound = availableRounds[availableRounds.length - 1]
         try {
-          const res  = await fetch(`${BACKEND}/current_round_matches/nrl`)
-          const data = await res.json()
-          if (data.length) targetRound = data[0].round_number
+          const res     = await fetch(`${BACKEND}/season_matches/nrl`)
+          const json    = await res.json()
+          const matches = json.matches || []
+          const unplayedRounds = [...new Set(
+            matches
+              .filter(m => m.home_score === null || m.home_score === undefined)
+              .map(m => m.round_number)
+          )].sort((a, b) => a - b)
+          if (unplayedRounds.length) targetRound = unplayedRounds[0]
         } catch {}
 
         currentRoundIndex = availableRounds.indexOf(targetRound)

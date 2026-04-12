@@ -1,5 +1,6 @@
 // main.js
 import { updateChart, updateScatter, formatDecimal, formatPercent } from './charts.js';
+import { teamSlug } from './utils.js';
 
 const ladderTable   = document.querySelector("#ladder-table tbody");
 const rankingsTable = document.querySelector("#rankings-table tbody");
@@ -37,35 +38,49 @@ function formBadge(form) {
   return `<span style="color:${color};font-weight:600">${sign} ${Math.abs(f).toFixed(2)}</span>`;
 }
 
-// Map full DB team names to site short names (for logo paths)
-function teamSlug(name) {
-  const n = (name || '').toLowerCase();
-  if (n.includes('broncos'))                              return 'broncos';
-  if (n.includes('raiders'))                              return 'raiders';
-  if (n.includes('bulldogs'))                             return 'bulldogs';
-  if (n.includes('sharks'))                               return 'sharks';
-  if (n.includes('dolphins'))                             return 'dolphins';
-  if (n.includes('titans'))                               return 'titans';
-  if (n.includes('sea eagles') || n.includes('manly'))    return 'manly';
-  if (n.includes('storm'))                                return 'storm';
-  if (n.includes('knights'))                              return 'knights';
-  if (n.includes('cowboys'))                              return 'cowboys';
-  if (n.includes('eels') || n.includes('parramatta'))     return 'eels';
-  if (n.includes('panthers'))                             return 'panthers';
-  if (n.includes('rabbitohs'))                            return 'rabbitohs';
-  if (n.includes('dragons'))                              return 'dragons';
-  if (n.includes('roosters'))                             return 'roosters';
-  if (n.includes('warriors'))                             return 'warriors';
-  if (n.includes('tigers'))                               return 'tigers';
-  return n.replace(/\s+/g, '_');
-}
 
 (async () => {
-  const res = await fetch(`${BACKEND}/power_rankings/nrl`);
-  if (!res.ok) return;
-  const json = await res.json();
+  const [rankingsRes, latestRoundRes] = await Promise.all([
+    fetch(`${BACKEND}/power_rankings/nrl`),
+    fetch('../data/latestRound.json'),
+  ]);
+  if (!rankingsRes.ok) return;
+  const json = await rankingsRes.json();
   const rankings = json.rankings || [];
   const roundNumber = json.round_number;
+
+  // Load projected ladder from CSV for the current round
+  if (latestRoundRes.ok) {
+    const { latest } = await latestRoundRes.json();
+    const csvUrl = `../data/Round${latest}/projected_ladder.csv`;
+    Papa.parse(csvUrl, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete({ data }) {
+        data.forEach((row, i) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class="text-center text-gray-400 font-medium">${row['Rank'] ?? i + 1}</td>
+            <td>
+              <div class="flex items-center gap-2">
+                <img src="../logos/${teamSlug(row['Team'])}.svg"
+                     alt="${row['Team']}" class="w-6 h-6 object-contain shrink-0"
+                     onerror="this.style.display='none'">
+                <span>${row['Team']}</span>
+              </div>
+            </td>
+            <td class="text-center font-mono">${row['Wins'] ?? ''}</td>
+            <td class="text-center font-mono">${row['Losses'] ?? ''}</td>
+            <td class="text-center font-mono">${row['PD'] ?? ''}</td>
+            <td class="text-center font-mono">${row['Points For'] ?? ''}</td>
+            <td class="text-center font-mono">${row['Points Against'] ?? ''}</td>
+          `;
+          ladderTable.appendChild(tr);
+        });
+      },
+    });
+  }
 
   // Update round badge
   const badge = document.getElementById('round-badge');
@@ -120,10 +135,28 @@ function teamSlug(name) {
     rankingsTable.appendChild(tr);
   });
 
-  updateChart(resultsData, 'Top 8', {});
+  // Fetch previous round's rankings for chart delta comparison
+  let prevData = {};
+  if (roundNumber != null && roundNumber > 1) {
+    const prevRes = await fetch(`${BACKEND}/power_rankings/nrl?round=${roundNumber - 1}`);
+    if (prevRes.ok) {
+      const prevJson = await prevRes.json();
+      (prevJson.rankings || []).forEach(r => {
+        prevData[r.team] = {
+          'Top 8':         r.percent_top8,
+          'Top 4':         r.percent_top4,
+          'Minor Premiers': r.percent_minor_premiers,
+          'Premiers':       r.percent_premiers,
+          'Spoon':          r.percent_wooden_spoon,
+        };
+      });
+    }
+  }
+
+  updateChart(resultsData, 'Top 8', prevData);
   updateScatter(resultsData);
 
   chartDropdown.addEventListener('change', (e) => {
-    updateChart(resultsData, e.target.value, {});
+    updateChart(resultsData, e.target.value, prevData);
   });
 })();

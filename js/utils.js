@@ -1,5 +1,27 @@
 // utils.js
 
+export function teamSlug(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('broncos'))                              return 'broncos';
+  if (n.includes('raiders'))                              return 'raiders';
+  if (n.includes('bulldogs'))                             return 'bulldogs';
+  if (n.includes('sharks'))                               return 'sharks';
+  if (n.includes('dolphins'))                             return 'dolphins';
+  if (n.includes('titans'))                               return 'titans';
+  if (n.includes('sea eagles') || n.includes('manly'))    return 'manly';
+  if (n.includes('storm'))                                return 'storm';
+  if (n.includes('knights'))                              return 'knights';
+  if (n.includes('cowboys'))                              return 'cowboys';
+  if (n.includes('eels') || n.includes('parramatta'))     return 'eels';
+  if (n.includes('panthers'))                             return 'panthers';
+  if (n.includes('rabbitohs'))                            return 'rabbitohs';
+  if (n.includes('dragons'))                              return 'dragons';
+  if (n.includes('roosters'))                             return 'roosters';
+  if (n.includes('warriors'))                             return 'warriors';
+  if (n.includes('tigers'))                               return 'tigers';
+  return n.replace(/\s+/g, '_');
+}
+
 /**
  * Finds the latest round folder that contains a results.csv file
  * Example: "Round6"
