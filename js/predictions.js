@@ -1,14 +1,13 @@
 // predictions.js
-import { getLatestRoundFolder } from './utils.js';
 import { supabase } from './supabase-client.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
-const MIN_ROUND = 0; // folder Round0 = Round 1 predictions
 
 // --- STATE ---
-let latestRound = 0;
-let currentRound = 0;
+// All rounds are 1-indexed round numbers (same as display)
+let latestRound  = 1;  // highest round with matches in current season
+let currentRound = 1;  // currently selected round
 let tryscorerMatchCache = null;
 
 const teamColors = {
@@ -109,6 +108,7 @@ function adaptiveBinSize(n) {
 }
 
 // Bin raw pick values into a histogram normalised to max=1
+// Normalise pick counts to relative frequency (sum = 1, directly comparable to machine)
 function binPickValues(values, binSize) {
   if (!values.length) return [];
   const min = Math.floor(Math.min(...values) / binSize) * binSize;
@@ -120,20 +120,20 @@ function binPickValues(values, binSize) {
     counts[b] = (counts[b] || 0) + 1;
   });
   const entries = Object.entries(counts).map(([x, c]) => ({ x: Number(x), y: c })).sort((a, b) => a.x - b.x);
-  const maxY = Math.max(...entries.map(e => e.y));
-  return entries.map(e => ({ x: e.x, y: maxY > 0 ? e.y / maxY : 0 }));
+  const total = entries.reduce((sum, e) => sum + e.y, 0);
+  return entries.map(e => ({ x: e.x, y: total > 0 ? e.y / total : 0 }));
 }
 
-// Group machine distribution bins and normalise to max=1 for visual comparison
+// Group machine bins into the same bin size, preserving prob values (sum ≈ 1)
 function normaliseMachineBins(rawBins, binSize) {
   const grouped = {};
   rawBins.forEach(({ x, prob }) => {
     const b = Math.floor(x / binSize) * binSize;
     grouped[b] = (grouped[b] || 0) + prob;
   });
-  const entries = Object.entries(grouped).map(([x, p]) => ({ x: Number(x), y: p })).sort((a, b) => a.x - b.x);
-  const maxY = Math.max(...entries.map(e => e.y));
-  return entries.map(e => ({ x: e.x, y: maxY > 0 ? e.y / maxY : 0 }));
+  return Object.entries(grouped)
+    .map(([x, p]) => ({ x: Number(x), y: p }))
+    .sort((a, b) => a.x - b.x);
 }
 
 // --- USER MODEL: MACHINE DISTRIBUTION FETCH ---
@@ -188,15 +188,11 @@ async function fetchUserPicksForRound(displayRound) {
   return userPicksCache[displayRound];
 }
 
-// Returns pick data for a game (always includes matchId from Supabase game_id)
-function findPicksForPrediction(result, homeTeam, awayTeam) {
-  if (!result?.games) return null;
-  const game = result.games.find(g =>
-    teamsMatch(homeTeam, g.home_team) && teamsMatch(awayTeam, g.away_team)
-  );
-  if (!game) return null;
-  const picks = result.byGame[`${game.game_id}`];
-  return { margins: [], totals: [], ...(picks || {}), matchId: game.game_id };
+// Returns pick data for a game by direct match_id lookup (game_id == matches.id)
+function findPicksForMatch(result, matchId) {
+  if (!result) return null;
+  const picks = result.byGame[`${matchId}`];
+  return { margins: [], totals: [], ...(picks || {}), matchId };
 }
 
 // --- DISTRIBUTION MODAL ---
@@ -282,7 +278,7 @@ async function openDistModal(title, pickData, matchId) {
         },
         y: {
           display: true,
-          min: 0, max: 1,
+          min: 0,
           title: { display: true, text: 'Relative frequency', color: '#4a5568', font: { size: 10, weight: '600' }, padding: { bottom: 4 } },
           ticks: {
             color: '#4a5568', font: { size: 9 },
@@ -300,7 +296,6 @@ async function openDistModal(title, pickData, matchId) {
   const userBinT       = adaptiveBinSize(pickData.totals.length);
   const userMarginBins = binPickValues(pickData.margins, userBinM);
   const userTotalBins  = binPickValues(pickData.totals,  userBinT);
-
   function makeDatasets(machineBins, userBins, machineGroupBin) {
     const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
     return [
@@ -439,7 +434,7 @@ async function updateUserModelOverlays(predictions, displayRound) {
     const matchKey = `${pred.home_team}_v_${pred.away_team}`;
     const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
     if (!card) return;
-    const pickData = findPicksForPrediction(result, pred.home_team, pred.away_team);
+    const pickData = findPicksForMatch(result, pred.match_id);
     renderUserModel(card, matchKey, pickData, pred.home_score, pred.away_score);
   });
 }
@@ -447,12 +442,11 @@ async function updateUserModelOverlays(predictions, displayRound) {
 // --- ROUND NAVIGATION ---
 function renderRoundNav() {
   const nav = document.getElementById('round-nav');
-  if (!nav || latestRound === 0) return;
+  if (!nav) return;
 
   const options = [];
-  for (let r = latestRound; r >= MIN_ROUND; r--) {
-    const displayRound = r + 1;
-    const label = r === latestRound ? `Round ${displayRound} (Current)` : `Round ${displayRound}`;
+  for (let r = latestRound; r >= 1; r--) {
+    const label = r === currentRound ? `Round ${r} (Current)` : `Round ${r}`;
     options.push(`<option value="${r}" ${r === currentRound ? 'selected' : ''}>${label}</option>`);
   }
 
@@ -585,7 +579,7 @@ async function buildSeasonRanking() {
 
   // Fetch all rounds' match data in parallel
   const roundFetches = [];
-  for (let r = MIN_ROUND; r <= latestRound; r++) {
+  for (let r = 1; r <= latestRound; r++) {
     if (r === latestRound) {
       roundFetches.push(
         Promise.all([getLiveResults(), getTryscorerMatches()]).then(([live, curr]) =>
@@ -596,7 +590,7 @@ async function buildSeasonRanking() {
         )
       );
     } else {
-      roundFetches.push(getRoundMatches(r + 1));
+      roundFetches.push(getRoundMatches(r));
     }
   }
 
@@ -619,7 +613,7 @@ async function buildSeasonRanking() {
           away_team:  m.away_team,
           home_score: m.home_score,
           away_score: m.away_score,
-          round:      m.round_number ?? (latestRound + 1), // DB returns round_number; current round fallback
+          round:      m.round_number ?? latestRound,
           lineLabel:  `${winner} -${winMargin - 1}.5`,
         };
       })
@@ -636,7 +630,7 @@ async function buildTotalRanking() {
   if (totalRankingCache) return totalRankingCache;
 
   const roundFetches = [];
-  for (let r = MIN_ROUND; r <= latestRound; r++) {
+  for (let r = 1; r <= latestRound; r++) {
     if (r === latestRound) {
       roundFetches.push(
         Promise.all([getLiveResults(), getTryscorerMatches()]).then(([live, curr]) =>
@@ -647,7 +641,7 @@ async function buildTotalRanking() {
         )
       );
     } else {
-      roundFetches.push(getRoundMatches(r + 1));
+      roundFetches.push(getRoundMatches(r));
     }
   }
 
@@ -693,8 +687,8 @@ async function updateLiveScoreOverlays(predictions) {
         : m;
     });
   } else {
-    // Previous rounds: scores and match IDs from DB — use display round (folder + 1)
-    matches = await getRoundMatches(currentRound + 1);
+    // Previous rounds: scores and match IDs from DB
+    matches = await getRoundMatches(currentRound);
   }
 
   const renderedMatchIds = [];
@@ -941,12 +935,17 @@ function createMatchCard(data) {
 
 // --- PREDICTION TRACKER ---
 
-async function fetchPredictionsForRound(folderNum) {
+const roundPredictionsCache = {};
+
+async function fetchPredictionsForRound(roundNumber) {
+  if (roundPredictionsCache[roundNumber]) return roundPredictionsCache[roundNumber];
   try {
-    const res = await fetch(`../data/Round${folderNum}/Predictions.txt`);
+    const res = await fetch(`${TRYSCORER_API}/round_predictions/${roundNumber}/nrl`);
     if (!res.ok) return [];
-    const text = await res.text();
-    return text.trim().split('\n').map(l => JSON.parse(l.replace(/'/g, '"')));
+    const data = await res.json();
+    const preds = (data.predictions || []).filter(p => p.has_prediction);
+    roundPredictionsCache[roundNumber] = preds;
+    return preds;
   } catch { return []; }
 }
 
@@ -958,13 +957,14 @@ async function buildTrackerEntries() {
   if (trackerEntries) return trackerEntries;
 
   const roundNums = [];
-  for (let r = MIN_ROUND; r <= latestRound; r++) roundNums.push(r);
+  for (let r = 1; r <= latestRound; r++) roundNums.push(r);
 
   const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
 
   const allEntries = [];
 
   await Promise.all(roundNums.map(async r => {
+    // fetchPredictionsForRound returns only entries with has_prediction=true
     const preds = await fetchPredictionsForRound(r);
     let results;
     if (r === latestRound) {
@@ -973,22 +973,28 @@ async function buildTrackerEntries() {
         return lv ? { ...m, home_score: lv.home_score, away_score: lv.away_score } : m;
       });
     } else {
-      results = await getRoundMatches(r + 1);
+      results = await getRoundMatches(r);
     }
 
     for (const pred of preds) {
-      const result = results.find(m =>
-        teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
-      );
-      if (!result) continue;
-      const hs = result.home_score, as = result.away_score;
-      if (typeof hs !== 'number' || typeof as !== 'number') continue;
+      // Predictions from round_predictions already include actual scores for finished matches
+      const hs = pred.home_score, as = pred.away_score;
+      if (typeof hs !== 'number' || typeof as !== 'number') {
+        // Fall back to results array for live round
+        const result = results.find(m =>
+          teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
+        );
+        if (!result || typeof result.home_score !== 'number') continue;
+      }
+      const finalHs = typeof hs === 'number' ? hs : null;
+      const finalAs = typeof as === 'number' ? as : null;
+      if (finalHs === null || finalAs === null) continue;
 
-      const homeWon = hs > as, awayWon = as > hs;
+      const homeWon = finalHs > finalAs, awayWon = finalAs > finalHs;
+      const predTotal = pred.exp_home_score !== null ? pred.exp_home_score + pred.exp_away_score : null;
 
-      // Two data points per match — one for each team's predicted probability
-      allEntries.push({ roundFolder: r, prob: pred.home_perc, won: homeWon, predictedTotal: pred.home_score + pred.away_score, actualTotal: hs + as });
-      allEntries.push({ roundFolder: r, prob: pred.away_perc, won: awayWon, predictedTotal: null, actualTotal: null }); // totals only counted once (home entry)
+      allEntries.push({ roundFolder: r, prob: pred.home_perc, won: homeWon, predictedTotal: predTotal, actualTotal: finalHs + finalAs });
+      allEntries.push({ roundFolder: r, prob: pred.away_perc, won: awayWon, predictedTotal: null, actualTotal: null });
     }
   }));
 
@@ -999,8 +1005,7 @@ async function buildTrackerEntries() {
 function applyTrackerFilter(entries) {
   if (trackerFilter === 'season') return entries;
   const n = trackerFilter === 'last5' ? 5 : 10;
-  const minFolder = latestRound - n + 1;
-  return entries.filter(e => e.roundFolder >= minFolder);
+  return entries.filter(e => e.roundFolder >= latestRound - n + 1);
 }
 
 function bucketEntries(entries) {
@@ -1143,7 +1148,7 @@ async function buildTotalTrackerEntries() {
   if (totalTrackerEntries) return totalTrackerEntries;
 
   const roundNums = [];
-  for (let r = MIN_ROUND; r <= latestRound; r++) roundNums.push(r);
+  for (let r = 1; r <= latestRound; r++) roundNums.push(r);
 
   const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
   const allEntries = [];
@@ -1157,21 +1162,25 @@ async function buildTotalTrackerEntries() {
         return lv ? { ...m, home_score: lv.home_score, away_score: lv.away_score } : m;
       });
     } else {
-      results = await getRoundMatches(r + 1);
+      results = await getRoundMatches(r);
     }
 
     await Promise.all(preds.map(async pred => {
-      const result = results.find(m =>
-        teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
-      );
-      if (!result) return;
-      const hs = result.home_score, as = result.away_score;
+      // Use actual scores from the prediction endpoint (finished matches)
+      let hs = pred.home_score, as = pred.away_score;
+      if (typeof hs !== 'number' || typeof as !== 'number') {
+        const result = results.find(m =>
+          teamsMatch(pred.home_team, m.home_team) && teamsMatch(pred.away_team, m.away_team)
+        );
+        if (!result) return;
+        hs = result.home_score; as = result.away_score;
+      }
       if (typeof hs !== 'number' || typeof as !== 'number') return;
 
       const actualTotal = hs + as;
 
       // Fetch P(Over actualTotal - 0.5) — the probability the model gave to this exact total occurring via the over
-      const overProb = await fetchTotalProb(result.match_id, actualTotal);
+      const overProb = await fetchTotalProb(pred.match_id, actualTotal);
       if (overProb === null) return;
 
       // overHit = true: the actual total lands on the over side (always true by definition here,
@@ -1306,50 +1315,54 @@ async function loadRound() {
       </div>
     </div>`).join('');
 
-  const predictionsPath = `../data/Round${currentRound}/Predictions.txt`;
-
   try {
-    const response = await fetch(predictionsPath);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-    const text        = await response.text();
-    const lines       = text.trim().split("\n");
-    const predictions = [];
+    const res  = await fetch(`${TRYSCORER_API}/round_predictions/${currentRound}/nrl`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const allMatches  = data.predictions || [];
+    const predictions = allMatches.filter(p => p.has_prediction);
 
     container.innerHTML = '';
 
-    lines.forEach((line, idx) => {
-      try {
-        const data = JSON.parse(line.replace(/'/g, '"'));
-        predictions.push(data);
-        const card = createMatchCard(data);
-        container.appendChild(card);
+    if (allMatches.length === 0) {
+      container.innerHTML = `<p class="text-gray-400">No matches found for Round ${currentRound}.</p>`;
+      return;
+    }
 
-        if (currentRound === latestRound) {
-          // Async: update tryscorer button once we know if team lists are available
-          checkTryscorerAvailable(data.home_team, data.away_team).then(({ available, matchId }) => {
-            card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
-              slot.innerHTML = available
-                ? tryscorerButtonEnabled(matchId)
-                : tryscorerButtonDisabled();
-            });
-          });
-        } else {
-          // Previous rounds: no tryscorer button
+    for (const match of allMatches) {
+      // Build card data: fall back to equal 50/50 if no prediction
+      const cardData = {
+        home_team:  match.home_team,
+        away_team:  match.away_team,
+        home_score: match.exp_home_score ?? 0,
+        away_score: match.exp_away_score ?? 0,
+        home_perc:  match.home_perc ?? 0.5,
+        away_perc:  match.away_perc ?? 0.5,
+      };
+      const card = createMatchCard(cardData);
+      container.appendChild(card);
+
+      if (currentRound === latestRound) {
+        checkTryscorerAvailable(match.home_team, match.away_team).then(({ available, matchId }) => {
           card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
-            slot.innerHTML = '';
+            slot.innerHTML = available
+              ? tryscorerButtonEnabled(matchId)
+              : tryscorerButtonDisabled();
           });
-        }
-      } catch (err) {
-        console.error(`Error parsing line ${idx}:`, line, err);
+        });
+      } else {
+        card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
+          slot.innerHTML = '';
+        });
       }
-    });
+    }
 
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);
 
-    // Async: overlay user model picks for this round
-    updateUserModelOverlays(predictions, currentRound + 1);
+    // Async: overlay user model picks for this round — pass ALL matches so rounds
+    // without model predictions (no SGM bins) still show user picks
+    updateUserModelOverlays(allMatches, currentRound);
   } catch (err) {
     console.error("Failed to load predictions:", err);
     container.innerHTML = `<p class="text-gray-400">Predictions unavailable for Round ${currentRound}.</p>`;
@@ -1359,10 +1372,20 @@ async function loadRound() {
 // --- INIT ---
 async function init() {
   try {
-    const res  = await fetch('../data/latestRound.json');
+    const res  = await fetch(`${TRYSCORER_API}/season_matches/nrl`);
     const data = await res.json();
-    latestRound  = data.latest;
-    currentRound = latestRound;
+    const matches = data.matches || [];
+    if (matches.length > 0) {
+      latestRound = Math.max(...matches.map(m => m.round_number));
+
+      // Current round = earliest round with at least one unplayed match (null score)
+      const unplayedRounds = [...new Set(
+        matches.filter(m => m.home_score === null || m.home_score === undefined).map(m => m.round_number)
+      )].sort((a, b) => a - b);
+
+      // If all rounds are complete, default to the latest
+      currentRound = unplayedRounds.length > 0 ? unplayedRounds[0] : latestRound;
+    }
   } catch {
     latestRound  = 1;
     currentRound = 1;

@@ -15,7 +15,7 @@ const metrics = [
   'Minor Premiers',
   'Spoon'
 ];
-const roundCount = 27; // Update as needed based on your current round
+let roundCount = 0; // Determined dynamically from the API
 
 // Team colors mapping
 const teamColors = {
@@ -214,7 +214,14 @@ function updateChartDatasets() {
 // Render all charts and setup controls
 async function renderAllCharts() {
   const metricData = await window.loadRoundData(roundCount, metrics);
-  const labels = Array.from({ length: roundCount + 1 }, (_, i) => `Round ${i}`);
+
+  // Derive roundCount from actual data
+  const allRounds = new Set();
+  Object.values(metricData[metrics[0]]).forEach(values => values.forEach(v => allRounds.add(v.round)));
+  roundCount = allRounds.size > 0 ? Math.max(...allRounds) : 1;
+
+  // Labels: Round 1 through roundCount
+  const labels = Array.from({ length: roundCount }, (_, i) => `Round ${i + 1}`);
 
   // Determine team list from data
   const teamNames = Object.keys(metricData[metrics[0]]).sort();
@@ -231,14 +238,15 @@ async function renderAllCharts() {
 
   metricConfigs.forEach(({ metric, container, yMax }) => {
     const teamData = metricData[metric];
+    // Build sparse array: index = round-1, value = metric value (null if no data that round)
     const datasets = Object.entries(teamData)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([team, values]) => ({
-        label: team,
-        data: values.map(v => yMax ? v.value * 100 : v.value),
-        fill: false,
-        tension: 0.2
-      }));
+      .map(([team, values]) => {
+        const byRound = {};
+        values.forEach(v => { byRound[v.round] = yMax ? v.value * 100 : v.value; });
+        const data = Array.from({ length: roundCount }, (_, i) => byRound[i + 1] ?? null);
+        return { label: team, data, fill: false, tension: 0.2, spanGaps: true };
+      });
     createChart(container, { metric, labels, datasets }, yMax);
   });
 }

@@ -5,16 +5,9 @@ const ladderTable   = document.querySelector("#ladder-table tbody");
 const rankingsTable = document.querySelector("#rankings-table tbody");
 const chartDropdown = document.getElementById("chart-select");
 
-let resultsData = [];
+const BACKEND = 'https://bsmachine-backend.onrender.com/api';
 
-async function getLatestRoundFolder() {
-  const roundCount = 30;
-  for (let i = roundCount; i >= 0; i--) {
-    const response = await fetch(`../data/Round${i}/results.csv`);
-    if (response.ok) return `Round${i}`;
-  }
-  return null;
-}
+let resultsData = [];
 
 // Colour a probability cell from red → yellow → green
 function probColor(val) {
@@ -44,94 +37,93 @@ function formBadge(form) {
   return `<span style="color:${color};font-weight:600">${sign} ${Math.abs(f).toFixed(2)}</span>`;
 }
 
+// Map full DB team names to site short names (for logo paths)
+function teamSlug(name) {
+  const n = (name || '').toLowerCase();
+  if (n.includes('broncos'))                              return 'broncos';
+  if (n.includes('raiders'))                              return 'raiders';
+  if (n.includes('bulldogs'))                             return 'bulldogs';
+  if (n.includes('sharks'))                               return 'sharks';
+  if (n.includes('dolphins'))                             return 'dolphins';
+  if (n.includes('titans'))                               return 'titans';
+  if (n.includes('sea eagles') || n.includes('manly'))    return 'manly';
+  if (n.includes('storm'))                                return 'storm';
+  if (n.includes('knights'))                              return 'knights';
+  if (n.includes('cowboys'))                              return 'cowboys';
+  if (n.includes('eels') || n.includes('parramatta'))     return 'eels';
+  if (n.includes('panthers'))                             return 'panthers';
+  if (n.includes('rabbitohs'))                            return 'rabbitohs';
+  if (n.includes('dragons'))                              return 'dragons';
+  if (n.includes('roosters'))                             return 'roosters';
+  if (n.includes('warriors'))                             return 'warriors';
+  if (n.includes('tigers'))                               return 'tigers';
+  return n.replace(/\s+/g, '_');
+}
+
 (async () => {
-  const roundFolder = await getLatestRoundFolder();
-  if (!roundFolder) return;
-  const currentRoundNum = parseInt(roundFolder.replace("Round", ""));
-  const prevRoundFolder = `Round${currentRoundNum - 1}`;
+  const res = await fetch(`${BACKEND}/power_rankings/nrl`);
+  if (!res.ok) return;
+  const json = await res.json();
+  const rankings = json.rankings || [];
+  const roundNumber = json.round_number;
 
   // Update round badge
   const badge = document.getElementById('round-badge');
-  if (badge) badge.textContent = `Round ${currentRoundNum}`;
+  if (badge && roundNumber != null) badge.textContent = `Round ${roundNumber}`;
 
-  let prevDataMap = {};
-  try {
-    const prevRes = await fetch(`../data/${prevRoundFolder}/results.csv`);
-    if (prevRes.ok) {
-      const prevText = await prevRes.text();
-      Papa.parse(prevText, { header: true }).data.forEach(row => {
-        if (row["Team"]) prevDataMap[row["Team"]] = row;
-      });
-    }
-  } catch (err) {
-    console.warn("Previous round data not available");
-  }
+  // Build resultsData in a shape compatible with updateChart / updateScatter
+  resultsData = rankings.map(r => ({
+    'Rank':              r.rank,
+    'Team':              r.team,
+    'Total Rating':      r.total_rating,
+    'Offensive Rating':  r.off_rating,
+    'Defensive Rating':  r.def_rating,
+    'form':              r.form,
+    'Top 8':             r.percent_top8,
+    'Top 4':             r.percent_top4,
+    'Minor Premiers':    r.percent_minor_premiers,
+    'Premiers':          r.percent_premiers,
+    'Spoon':             r.percent_wooden_spoon,
+    'W':                 r.wins,
+    'L':                 r.losses,
+    'D':                 r.draws,
+  }));
 
-  const res = await fetch(`../data/${roundFolder}/results.csv`);
-  resultsData = Papa.parse(await res.text(), { header: true }).data;
-
-  resultsData.forEach(row => {
-    if (!row["Team"]) return;
-    const prev   = prevDataMap[row["Team"]];
-    const change = prev ? (parseFloat(row["Total Rating"]) - parseFloat(prev["Total Rating"])).toFixed(2) : null;
-    const changeArrow = change !== null
-      ? (change > 0 ? `<span style='color:#4ade80'>▲</span>${Math.abs(change)}`
-                    : change < 0 ? `<span style='color:#f87171'>▼</span>${Math.abs(change)}` : '')
+  rankings.forEach(r => {
+    const formArrow = r.form != null
+      ? (r.form > 0
+          ? `<span style='color:#4ade80'>▲</span>${Math.abs(r.form).toFixed(2)}`
+          : r.form < 0
+            ? `<span style='color:#f87171'>▼</span>${Math.abs(r.form).toFixed(2)}`
+            : '')
       : '';
 
-    const tr = document.createElement("tr");
+    const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="text-center text-gray-400 font-medium">${row["Rank"]}</td>
+      <td class="text-center text-gray-400 font-medium">${r.rank}</td>
       <td>
         <div class="flex items-center gap-2">
-          <img src="../logos/${row["Team"].toLowerCase()}.svg"
-               alt="${row["Team"]}" class="w-6 h-6 object-contain shrink-0"
+          <img src="../logos/${teamSlug(r.team)}.svg"
+               alt="${r.team}" class="w-6 h-6 object-contain shrink-0"
                onerror="this.style.display='none'">
-          <span>${row["Team"]}</span>
+          <span>${r.team}</span>
         </div>
       </td>
-      <td class="text-center font-mono">${formatDecimal(row["Total Rating"])} ${changeArrow}</td>
-      <td class="text-center">${formBadge(row["form"])}</td>
-      <td class="text-center font-medium" style="${probColor(row["Top 8"])}">${formatPercent(row["Top 8"])}</td>
-      <td class="text-center font-medium" style="${probColor(row["Top 4"])}">${formatPercent(row["Top 4"])}</td>
-      <td class="text-center font-medium" style="${probColor(row["Minor Premiers"])}">${formatPercent(row["Minor Premiers"])}</td>
-      <td class="text-center font-medium" style="${probColor(row["Premiers"])}">${formatPercent(row["Premiers"])}</td>
-      <td class="text-center font-medium" style="${spoonColor(row["Spoon"])}">${formatPercent(row["Spoon"])}</td>
+      <td class="text-center font-mono">${formatDecimal(r.total_rating)} ${formArrow}</td>
+      <td class="text-center">${formBadge(r.form)}</td>
+      <td class="text-center font-medium" style="${probColor(r.percent_top8)}">${formatPercent(r.percent_top8)}</td>
+      <td class="text-center font-medium" style="${probColor(r.percent_top4)}">${formatPercent(r.percent_top4)}</td>
+      <td class="text-center font-medium" style="${probColor(r.percent_minor_premiers)}">${formatPercent(r.percent_minor_premiers)}</td>
+      <td class="text-center font-medium" style="${probColor(r.percent_premiers)}">${formatPercent(r.percent_premiers)}</td>
+      <td class="text-center font-medium" style="${spoonColor(r.percent_wooden_spoon)}">${formatPercent(r.percent_wooden_spoon)}</td>
     `;
     rankingsTable.appendChild(tr);
   });
 
-  updateChart(resultsData, "Top 8", prevDataMap);
+  updateChart(resultsData, 'Top 8', {});
   updateScatter(resultsData);
 
-  chartDropdown.addEventListener("change", (e) => {
-    updateChart(resultsData, e.target.value, prevDataMap);
-  });
-
-  const ladderRes  = await fetch(`../data/${roundFolder}/projected_ladder.csv`);
-  const parsedLadder = Papa.parse(await ladderRes.text(), { header: true });
-
-  parsedLadder.data.forEach(row => {
-    if (!row["Team"]) return;
-    const pd = parseFloat(row["PD"]);
-    const pdColor = pd > 0 ? 'color:#4ade80' : pd < 0 ? 'color:#f87171' : '';
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="text-center text-gray-400 font-medium">${row["Rank"]}</td>
-      <td>
-        <div class="flex items-center gap-2">
-          <img src="../logos/${row["Team"].toLowerCase()}.svg"
-               alt="${row["Team"]}" class="w-6 h-6 object-contain shrink-0"
-               onerror="this.style.display='none'">
-          <span>${row["Team"]}</span>
-        </div>
-      </td>
-      <td class="text-center">${row["Wins"]}</td>
-      <td class="text-center">${row["Losses"]}</td>
-      <td class="text-center font-medium" style="${pdColor}">${pd > 0 ? '+' : ''}${pd}</td>
-      <td class="text-center">${row["Points For"]}</td>
-      <td class="text-center">${row["Points Against"]}</td>
-    `;
-    ladderTable.appendChild(tr);
+  chartDropdown.addEventListener('change', (e) => {
+    updateChart(resultsData, e.target.value, {});
   });
 })();
