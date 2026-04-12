@@ -110,5 +110,23 @@
     </main>
 
     <script src="../js/tryscorer_predictions.js"></script>
+    <script type="module">
+      import { updateAuthNav } from '../js/supabase-client.js'
+      updateAuthNav()
+    </script>
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+    </script>
   </body>
 </html>

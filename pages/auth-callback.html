@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Confirming — The BS Machine</title>
+    <style>
+      body {
+        background: #0f1117;
+        color: #e2e8f0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Barlow', system-ui, sans-serif;
+        margin: 0;
+      }
+      .spinner {
+        width: 36px; height: 36px;
+        border: 3px solid rgba(245,158,11,0.2);
+        border-top-color: #f59e0b;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        margin: 0 auto 1rem;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div style="text-align:center;">
+      <div class="spinner"></div>
+      <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.1rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:#8892a4;">
+        Confirming your account…
+      </div>
+    </div>
+
+    <script type="module">
+      import { supabase } from '../js/supabase-client.js'
+
+      // Supabase automatically processes the token from the URL hash.
+      // Wait for the auth state to settle then route accordingly.
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        // Token may need a moment — listen for the change
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+          subscription.unsubscribe()
+          await routeAfterAuth(newSession)
+        })
+        // Timeout fallback
+        setTimeout(() => {
+          window.location.href = '/pages/login.html'
+        }, 8000)
+      } else {
+        await routeAfterAuth(session)
+      }
+
+      async function routeAfterAuth(session) {
+        if (!session) {
+          window.location.href = '/pages/login.html'
+          return
+        }
+
+        // Check if a profile row already exists
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', session.user.id)
+          .maybeSingle()
+
+        if (profile) {
+          // Profile exists — go straight to tipping
+          window.location.href = '/pages/tipping.html'
+          return
+        }
+
+        // No profile yet — try to create one from signup metadata
+        const meta     = session.user.user_metadata || {}
+        const username = meta.username || null
+
+        if (username) {
+          // Email/password signup — metadata has username and team
+          const { error } = await supabase
+            .from('profiles')
+            .insert({
+              id:              session.user.id,
+              username:        username,
+              favourite_team:  meta.favourite_team || null,
+              email_reminders: meta.email_reminders || false,
+            })
+
+          if (error && error.code !== '23505') {
+            // 23505 = unique violation (profile already exists — race condition, safe to ignore)
+            console.error('Profile insert error:', error)
+          }
+          window.location.href = '/pages/tipping.html'
+        } else {
+          // Google OAuth or unknown — collect username/team via onboarding
+          window.location.href = '/pages/onboarding.html'
+        }
+      }
+    </script>
+  </body>
+</html>

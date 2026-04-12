@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign In — The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .auth-input {
+        width: 100%;
+        background: #0f1117;
+        border: 1px solid #2e3a4e;
+        border-radius: 8px;
+        padding: 0.625rem 0.875rem;
+        color: #e2e8f0;
+        font-size: 0.9375rem;
+        font-family: 'Barlow', system-ui, sans-serif;
+        transition: border-color 0.15s ease;
+        outline: none;
+      }
+      .auth-input:focus {
+        border-color: #f59e0b;
+      }
+      .auth-input::placeholder { color: #4a5568; }
+
+      .auth-btn-primary {
+        width: 100%;
+        padding: 0.7rem 1rem;
+        border-radius: 8px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: #f59e0b;
+        color: #0a0d14;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .auth-btn-primary:hover { background: #fbbf24; }
+      .auth-btn-primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+
+      .auth-btn-google {
+        width: 100%;
+        padding: 0.65rem 1rem;
+        border-radius: 8px;
+        font-family: 'Barlow', system-ui, sans-serif;
+        font-size: 0.9375rem;
+        font-weight: 600;
+        background: #161b24;
+        color: #e2e8f0;
+        border: 1px solid #2e3a4e;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.625rem;
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .auth-btn-google:hover { border-color: #435168; background: #1c2333; }
+
+      .auth-error {
+        background: rgba(239,68,68,0.1);
+        border: 1px solid rgba(239,68,68,0.3);
+        border-radius: 8px;
+        padding: 0.625rem 0.875rem;
+        color: #fca5a5;
+        font-size: 0.875rem;
+      }
+      .auth-success {
+        background: rgba(74,222,128,0.1);
+        border: 1px solid rgba(74,222,128,0.3);
+        border-radius: 8px;
+        padding: 0.625rem 0.875rem;
+        color: #86efac;
+        font-size: 0.875rem;
+      }
+
+      .tab-btn { transition: color 0.15s ease, border-color 0.15s ease; }
+      .tab-btn.active {
+        color: #fbbf24;
+        border-bottom-color: #f59e0b;
+      }
+      .tab-btn:not(.active) {
+        color: #4a5568;
+        border-bottom-color: transparent;
+      }
+    </style>
+  </head>
+  <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
+    <div id="site-header"></div>
+
+    <main class="flex items-center justify-center px-4 py-16 min-h-[calc(100vh-4rem)]">
+      <div style="width:100%; max-width:420px;">
+
+        <!-- Logo mark -->
+        <div class="text-center mb-8">
+          <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.5rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:#e2e8f0;">
+            THE <span style="color:#fbbf24;">BS</span> MACHINE
+          </div>
+          <div style="color:#8892a4; font-size:0.875rem; margin-top:0.25rem;">Tipping Competition</div>
+        </div>
+
+        <!-- Card -->
+        <div style="background:#161b24; border:1px solid #2e3a4e; border-radius:16px; padding:2rem; box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+          <!-- Tabs -->
+          <div class="flex border-b mb-6" style="border-color:#2e3a4e;">
+            <button id="tab-signin" class="tab-btn active flex-1 pb-3 text-sm font-semibold border-b-2">
+              Sign In
+            </button>
+            <button id="tab-signup" class="tab-btn flex-1 pb-3 text-sm font-semibold border-b-2">
+              Create Account
+            </button>
+          </div>
+
+          <!-- Message area -->
+          <div id="auth-message" class="mb-4 hidden"></div>
+
+          <!-- SIGN IN FORM -->
+          <form id="signin-form" class="flex flex-col gap-4">
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Email</label>
+              <input id="signin-email" type="email" class="auth-input" placeholder="you@example.com" autocomplete="email" required />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Password</label>
+              <input id="signin-password" type="password" class="auth-input" placeholder="••••••••" autocomplete="current-password" required />
+            </div>
+            <button type="submit" class="auth-btn-primary mt-1">Sign In</button>
+          </form>
+
+          <!-- SIGN UP FORM (hidden initially) -->
+          <form id="signup-form" class="flex flex-col gap-4 hidden">
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Email</label>
+              <input id="signup-email" type="email" class="auth-input" placeholder="you@example.com" autocomplete="email" required />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Password</label>
+              <input id="signup-password" type="password" class="auth-input" placeholder="Min. 8 characters" autocomplete="new-password" required minlength="8" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Confirm Password</label>
+              <input id="signup-password-confirm" type="password" class="auth-input" placeholder="Re-enter your password" autocomplete="new-password" required minlength="8" />
+              <div id="password-match-msg" class="text-xs mt-1 hidden"></div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Username</label>
+              <input id="signup-username" type="text" class="auth-input" placeholder="Your display name" autocomplete="username" required minlength="3" maxlength="24" />
+              <div class="text-xs mt-1" style="color:#4a5568;">3–24 characters, shown on the leaderboard</div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Favourite NRL Team</label>
+              <select id="signup-team" class="auth-input" style="cursor:pointer;">
+                <option value="">I don't support a team</option>
+                <option value="Broncos">Brisbane Broncos</option>
+                <option value="Raiders">Canberra Raiders</option>
+                <option value="Bulldogs">Canterbury Bulldogs</option>
+                <option value="Sharks">Cronulla Sharks</option>
+                <option value="Dolphins">Dolphins</option>
+                <option value="Titans">Gold Coast Titans</option>
+                <option value="Manly">Manly Sea Eagles</option>
+                <option value="Storm">Melbourne Storm</option>
+                <option value="Knights">Newcastle Knights</option>
+                <option value="Cowboys">North QLD Cowboys</option>
+                <option value="Eels">Parramatta Eels</option>
+                <option value="Panthers">Penrith Panthers</option>
+                <option value="Rabbitohs">South Sydney Rabbitohs</option>
+                <option value="Dragons">St George Illawarra Dragons</option>
+                <option value="Roosters">Sydney Roosters</option>
+                <option value="Warriors">Warriors</option>
+                <option value="Tigers">Wests Tigers</option>
+              </select>
+            </div>
+            <div class="flex items-start gap-2.5 mt-1">
+              <input id="signup-reminders" type="checkbox" style="width:16px;height:16px;margin-top:2px;accent-color:#f59e0b;flex-shrink:0;cursor:pointer;">
+              <label for="signup-reminders" style="font-size:0.8125rem;color:#8892a4;line-height:1.5;cursor:pointer;">
+                Send me weekly tipping reminders if I haven't submitted my picks
+              </label>
+            </div>
+            <button type="submit" class="auth-btn-primary mt-1">Create Account</button>
+          </form>
+
+          <!-- Divider -->
+          <div class="flex items-center gap-3 my-5">
+            <div class="flex-1 h-px" style="background:#2e3a4e;"></div>
+            <span class="text-xs" style="color:#4a5568;">or</span>
+            <div class="flex-1 h-px" style="background:#2e3a4e;"></div>
+          </div>
+
+          <!-- Google OAuth -->
+          <button id="google-btn" class="auth-btn-google">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+              <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+              <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+              <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+            </svg>
+            Continue with Google
+          </button>
+
+        </div>
+
+        <!-- Footer -->
+        <p class="text-center text-xs mt-6" style="color:#4a5568;">
+          Free to enter. No prize money.
+        </p>
+      </div>
+    </main>
+
+    <script type="module">
+      import { supabase, getSession, updateAuthNav } from '../js/supabase-client.js'
+
+      // Only allow same-origin redirects (prevent open redirect attacks)
+      function safeNext(fallback = '/pages/tipping.html') {
+        const next = new URLSearchParams(window.location.search).get('next') || ''
+        return (next.startsWith('/') && !next.startsWith('//')) ? next : fallback
+      }
+
+      // Redirect if already signed in
+      const session = await getSession()
+      if (session) {
+        window.location.href = safeNext()
+      }
+
+      // --- Tab switching ---
+      const tabSignin = document.getElementById('tab-signin')
+      const tabSignup = document.getElementById('tab-signup')
+      const signinForm = document.getElementById('signin-form')
+      const signupForm = document.getElementById('signup-form')
+
+      tabSignin.addEventListener('click', () => {
+        tabSignin.classList.add('active')
+        tabSignup.classList.remove('active')
+        signinForm.classList.remove('hidden')
+        signupForm.classList.add('hidden')
+        clearMessage()
+      })
+      tabSignup.addEventListener('click', () => {
+        tabSignup.classList.add('active')
+        tabSignin.classList.remove('active')
+        signupForm.classList.remove('hidden')
+        signinForm.classList.add('hidden')
+        clearMessage()
+      })
+
+      // --- Message helpers ---
+      function showError(msg) {
+        const el = document.getElementById('auth-message')
+        el.className = 'mb-4 auth-error'
+        el.textContent = msg
+      }
+      function showSuccess(msg) {
+        const el = document.getElementById('auth-message')
+        el.className = 'mb-4 auth-success'
+        el.textContent = msg
+      }
+      function clearMessage() {
+        const el = document.getElementById('auth-message')
+        el.className = 'mb-4 hidden'
+        el.textContent = ''
+      }
+
+      // Inline password match feedback
+      const pwInput  = document.getElementById('signup-password')
+      const pwConfirm = document.getElementById('signup-password-confirm')
+      const pwMatchMsg = document.getElementById('password-match-msg')
+
+      function checkPasswordMatch() {
+        const val = pwConfirm.value
+        if (!val) {
+          pwMatchMsg.className = 'text-xs mt-1 hidden'
+          pwConfirm.style.borderColor = ''
+          return
+        }
+        if (val === pwInput.value) {
+          pwMatchMsg.className = 'text-xs mt-1'
+          pwMatchMsg.style.color = '#86efac'
+          pwMatchMsg.textContent = 'Passwords match'
+          pwConfirm.style.borderColor = '#4ade80'
+        } else {
+          pwMatchMsg.className = 'text-xs mt-1'
+          pwMatchMsg.style.color = '#fca5a5'
+          pwMatchMsg.textContent = 'Passwords do not match'
+          pwConfirm.style.borderColor = '#ef4444'
+        }
+      }
+
+      pwConfirm.addEventListener('input', checkPasswordMatch)
+      pwInput.addEventListener('input', () => { if (pwConfirm.value) checkPasswordMatch() })
+
+      function getRedirect() {
+        return safeNext()
+      }
+
+      // --- Sign In ---
+      signinForm.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const btn = signinForm.querySelector('button[type=submit]')
+        btn.disabled = true
+        btn.textContent = 'Signing in…'
+        clearMessage()
+
+        const { error } = await supabase.auth.signInWithPassword({
+          email:    document.getElementById('signin-email').value.trim(),
+          password: document.getElementById('signin-password').value,
+        })
+
+        if (error) {
+          showError(error.message)
+          btn.disabled = false
+          btn.textContent = 'Sign In'
+        } else {
+          window.location.href = getRedirect()
+        }
+      })
+
+      // --- Sign Up ---
+      signupForm.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const btn = signupForm.querySelector('button[type=submit]')
+        btn.disabled = true
+        btn.textContent = 'Creating account…'
+        clearMessage()
+
+        const email    = document.getElementById('signup-email').value.trim()
+        const password = document.getElementById('signup-password').value
+        const confirm  = document.getElementById('signup-password-confirm').value
+        const username = document.getElementById('signup-username').value.trim()
+        const team     = document.getElementById('signup-team').value || null
+
+        if (password !== confirm) {
+          showError('Passwords do not match.')
+          btn.disabled = false
+          btn.textContent = 'Create Account'
+          return
+        }
+
+        // Check username isn't taken
+        const { data: existing } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', username)
+          .maybeSingle()
+
+        if (existing) {
+          showError('That username is already taken. Please choose another.')
+          btn.disabled = false
+          btn.textContent = 'Create Account'
+          return
+        }
+
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              username,
+              favourite_team:  team,
+              email_reminders: document.getElementById('signup-reminders').checked,
+            }
+          }
+        })
+
+        if (error) {
+          showError(error.message)
+          btn.disabled = false
+          btn.textContent = 'Create Account'
+        } else {
+          // Email verification required — send to the check-your-inbox page
+          window.location.href = `/pages/verify-email.html?email=${encodeURIComponent(email)}`
+        }
+      })
+
+      // --- Google OAuth ---
+      document.getElementById('google-btn').addEventListener('click', async () => {
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: window.location.origin + getRedirect()
+          }
+        })
+        if (error) showError(error.message)
+      })
+
+      // Load header
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          updateAuthNav()
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Leaderboard — The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .lb-tab {
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-family: 'Barlow', system-ui, sans-serif;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.15s ease;
+        color: #8892a4;
+        background: transparent;
+      }
+      .lb-tab.active {
+        background: rgba(245,158,11,0.12);
+        border-color: rgba(245,158,11,0.3);
+        color: #fbbf24;
+      }
+      .lb-tab:not(.active):hover {
+        background: rgba(255,255,255,0.04);
+        color: #e2e8f0;
+      }
+      .lb-row {
+        display: grid;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #1e2a3a;
+        transition: background 0.1s ease;
+      }
+      .lb-row:last-child { border-bottom: none; }
+      .lb-row:hover { background: rgba(245,158,11,0.03); }
+      .rank-badge {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.875rem;
+        font-weight: 700;
+        width: 2rem;
+        text-align: center;
+        color: #4a5568;
+      }
+      .rank-badge.top1 { color: #fbbf24; }
+      .rank-badge.top2 { color: #94a3b8; }
+      .rank-badge.top3 { color: #c2906a; }
+      .pts-display {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #e2e8f0;
+      }
+      .round-filter {
+        background: #0f1117;
+        border: 1px solid #2e3a4e;
+        border-radius: 8px;
+        padding: 0.4rem 0.75rem;
+        color: #e2e8f0;
+        font-size: 0.8125rem;
+        font-family: 'Barlow', system-ui, sans-serif;
+        outline: none;
+        cursor: pointer;
+      }
+      .me-row { background: rgba(245,158,11,0.05) !important; }
+      .me-row .rank-badge, .me-row .username { color: #fbbf24 !important; }
+    </style>
+  </head>
+  <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
+    <div id="site-header"></div>
+
+    <main class="max-w-3xl mx-auto px-4 py-8">
+      <div class="flex items-baseline gap-4 mb-2">
+        <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Leaderboard</h1>
+      </div>
+      <p class="mb-6 text-sm" style="color:#8892a4;">Who's outpicking the model?</p>
+
+      <!-- Controls -->
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+        <!-- Tab switcher -->
+        <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
+          <button class="lb-tab active" data-tab="individual">Individual</button>
+          <button class="lb-tab" data-tab="fanbase">Fan Base</button>
+          <button class="lb-tab" data-tab="consensus">Consensus</button>
+        </div>
+        <!-- Round filter -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
+          <select id="round-filter" class="round-filter">
+            <option value="season">Full Season</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Leaderboard panel -->
+      <div id="lb-panel" style="background:#161b24; border:1px solid #2e3a4e; border-radius:12px; overflow:hidden;">
+        <!-- Populated by JS -->
+        <div class="p-8 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
+      </div>
+
+      <!-- Legend -->
+      <div class="mt-4 flex items-center gap-4 text-xs" style="color:#4a5568;">
+        <span>Pts = margin score + total score (max 10/game)</span>
+        <span>·</span>
+        <span>Bell curve σ=6 (one converted try)</span>
+      </div>
+    </main>
+
+    <script type="module">
+      import { supabase, getSession, getProfile, updateAuthNav } from '../js/supabase-client.js'
+
+      let activeTab   = 'individual'
+      let roundFilter = 'season'
+      let myUserId    = null
+      let rounds      = []
+
+      const panel = document.getElementById('lb-panel')
+
+      // --- Init ---
+      const session = await getSession()
+      if (session) myUserId = session.user.id
+
+      // Load available rounds from games that have scores
+      const { data: roundRows } = await supabase
+        .from('scores')
+        .select('round_number')
+        .order('round_number', { ascending: false })
+
+      if (roundRows) {
+        const seen = new Set()
+        rounds = roundRows.filter(r => {
+          if (seen.has(r.round_number)) return false
+          seen.add(r.round_number)
+          return true
+        })
+        const sel = document.getElementById('round-filter')
+        rounds.forEach(r => {
+          const opt = document.createElement('option')
+          opt.value = r.round_number
+          opt.textContent = `Round ${r.round_number}`
+          sel.appendChild(opt)
+        })
+      }
+
+      document.getElementById('round-filter').addEventListener('change', function () {
+        roundFilter = this.value
+        loadLeaderboard()
+      })
+
+      // --- Tab switching ---
+      document.querySelectorAll('.lb-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.lb-tab').forEach(b => b.classList.remove('active'))
+          btn.classList.add('active')
+          activeTab = btn.dataset.tab
+          loadLeaderboard()
+        })
+      })
+
+      // --- Load ---
+      async function loadLeaderboard() {
+        panel.innerHTML = `<div class="p-8 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
+
+        if (activeTab === 'individual') await loadIndividual()
+        else if (activeTab === 'fanbase') await loadFanbase()
+        else await loadConsensus()
+      }
+
+      async function getScores() {
+        let query = supabase
+          .from('scores')
+          .select('user_id, game_id, points, margin_score, total_score, round_number')
+
+        if (roundFilter !== 'season') {
+          query = query.eq('round_number', Number(roundFilter))
+        }
+
+        const { data, error } = await query
+        if (error) return []
+        return data
+      }
+
+      // --- Individual leaderboard ---
+      async function loadIndividual() {
+        const [scores, { data: profiles }] = await Promise.all([
+          getScores(),
+          supabase.from('profiles').select('id, username, favourite_team')
+        ])
+
+        // Aggregate by user
+        const userMap = {}
+        scores.forEach(s => {
+          if (!userMap[s.user_id]) userMap[s.user_id] = { pts: 0, games: 0 }
+          userMap[s.user_id].pts   += s.points
+          userMap[s.user_id].games += 1
+        })
+
+        const profileMap = {}
+        profiles?.forEach(p => { profileMap[p.id] = p })
+
+        const rows = Object.entries(userMap)
+          .map(([uid, stats]) => ({
+            uid,
+            username: profileMap[uid]?.username || 'Unknown',
+            team: profileMap[uid]?.favourite_team || null,
+            pts:  stats.pts,
+            avg:  stats.games > 0 ? (stats.pts / stats.games).toFixed(2) : '0.00',
+            games: stats.games,
+          }))
+          .sort((a, b) => b.pts - a.pts || b.avg - a.avg)
+
+        if (!rows.length) {
+          panel.innerHTML = emptyState('No scores yet this season.')
+          return
+        }
+
+        panel.innerHTML = `
+          <div class="lb-row" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem; background:#0f1117; border-bottom:1px solid #1e2a3a;">
+            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">#</div>
+            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">Player</div>
+            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Pts</div>
+            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568; width:4rem;">Avg/Game</div>
+          </div>
+          ${rows.map((r, i) => `
+            <div class="lb-row ${r.uid === myUserId ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem;">
+              <div class="rank-badge ${i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : ''}">${i + 1}</div>
+              <div class="flex items-center gap-2 min-w-0">
+                ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-5 h-5 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
+                <span class="username text-sm font-semibold truncate ${r.uid === myUserId ? 'text-amber-400' : ''}">${escapeHtml(r.username)}${r.uid === myUserId ? ' (you)' : ''}</span>
+              </div>
+              <div class="pts-display text-right">${r.pts.toFixed(1)}</div>
+              <div class="text-right text-sm font-semibold w-16" style="color:#8892a4;">${r.avg}</div>
+            </div>`).join('')}
+        `
+      }
+
+      // --- Fanbase leaderboard ---
+      async function loadFanbase() {
+        const [scores, { data: profiles }] = await Promise.all([
+          getScores(),
+          supabase.from('profiles').select('id, favourite_team')
+        ])
+
+        const profileMap = {}
+        profiles?.forEach(p => { profileMap[p.id] = p })
+
+        const teamMap = {}
+        scores.forEach(s => {
+          const team = profileMap[s.user_id]?.favourite_team
+          if (!team) return
+          if (!teamMap[team]) teamMap[team] = { pts: 0, games: 0, fans: new Set() }
+          teamMap[team].pts  += s.points
+          teamMap[team].games += 1
+          teamMap[team].fans.add(s.user_id)
+        })
+
+        const rows = Object.entries(teamMap)
+          .map(([team, stats]) => ({
+            team,
+            avg:  stats.fans.size > 0 ? (stats.pts / stats.fans.size).toFixed(1) : '0.0',
+            fans: stats.fans.size,
+            games: stats.games,
+          }))
+          .sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg))
+
+        if (!rows.length) {
+          panel.innerHTML = emptyState('No fanbase data yet.')
+          return
+        }
+
+        panel.innerHTML = `
+          <div class="lb-row" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem; background:#0f1117; border-bottom:1px solid #1e2a3a;">
+            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">#</div>
+            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">Fan Base</div>
+            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Fans</div>
+            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568; width:5rem;">Avg Pts/Fan</div>
+          </div>
+          ${rows.map((r, i) => `
+            <div class="lb-row" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem;">
+              <div class="rank-badge ${i === 0 ? 'top1' : i === 1 ? 'top2' : i === 2 ? 'top3' : ''}">${i + 1}</div>
+              <div class="flex items-center gap-2 min-w-0">
+                <img src="../logos/${teamSlug(r.team)}.svg" class="w-5 h-5 object-contain shrink-0" onerror="this.style.display='none'">
+                <span class="text-sm font-semibold">${r.team}</span>
+              </div>
+              <div class="text-right text-sm" style="color:#8892a4;">${r.fans}</div>
+              <div class="pts-display text-right w-20">${r.avg}</div>
+            </div>`).join('')}
+        `
+      }
+
+      // --- Consensus leaderboard ---
+      async function loadConsensus() {
+        // Probability scoring: crowd vs BS Machine
+        // For each completed game, derive crowd win probability from scoreline picks,
+        // then score both models using P(actual result).
+
+        let gamesQuery = supabase
+          .from('games')
+          .select('game_id, round_number, home_team, away_team, home_score, away_score, home_perc, away_perc')
+          .eq('is_complete', true)
+          .not('home_score', 'is', null)
+          .order('round_number', { ascending: true })
+
+        if (roundFilter !== 'season') {
+          gamesQuery = gamesQuery.eq('round_number', Number(roundFilter))
+        }
+
+        const { data: completedGames } = await gamesQuery
+
+        if (!completedGames?.length) {
+          panel.innerHTML = emptyState('No completed games yet.')
+          return
+        }
+
+        const gameIds = completedGames.map(g => g.game_id)
+
+        const { data: allPicks } = await supabase
+          .from('picks')
+          .select('game_id, home_score_pick, away_score_pick')
+          .in('game_id', gameIds)
+
+        if (!allPicks?.length) {
+          panel.innerHTML = emptyState('No picks submitted yet.')
+          return
+        }
+
+        // Tally picks per game: how many predicted home win vs away win
+        const picksByGame = {}
+        allPicks.forEach(p => {
+          if (p.home_score_pick == null || p.away_score_pick == null) return
+          if (!picksByGame[p.game_id]) picksByGame[p.game_id] = { home: 0, away: 0, total: 0 }
+          if (p.home_score_pick > p.away_score_pick)      picksByGame[p.game_id].home++
+          else if (p.away_score_pick > p.home_score_pick) picksByGame[p.game_id].away++
+          else { picksByGame[p.game_id].home += 0.5; picksByGame[p.game_id].away += 0.5 } // draw split
+          picksByGame[p.game_id].total++
+        })
+
+        // Probability score each game
+        let crowdScore = 0, modelScore = 0, totalGames = 0
+        const roundRows = {}
+
+        completedGames.forEach(g => {
+          const pg = picksByGame[g.game_id]
+          if (!pg || pg.total === 0) return
+          if (g.home_perc == null || g.away_perc == null) return
+
+          const homeWon = g.home_score > g.away_score
+
+          // Crowd probability: fraction of pickers who predicted the winning side
+          const crowdHomeProb = pg.home / pg.total
+          const crowdAwayProb = pg.away / pg.total
+          const crowdProbForResult = homeWon ? crowdHomeProb : crowdAwayProb
+
+          // Machine probability (stored as percentage 0–100)
+          const modelProbForResult = homeWon
+            ? g.home_perc / 100
+            : g.away_perc / 100
+
+          crowdScore += crowdProbForResult
+          modelScore += modelProbForResult
+          totalGames++
+
+          const rn = g.round_number
+          if (!roundRows[rn]) roundRows[rn] = { round: rn, crowd: 0, model: 0, games: 0 }
+          roundRows[rn].crowd += crowdProbForResult
+          roundRows[rn].model += modelProbForResult
+          roundRows[rn].games++
+        })
+
+        if (!totalGames) {
+          panel.innerHTML = emptyState('No completed games with picks yet.')
+          return
+        }
+
+        const crowdAvg = (crowdScore / totalGames).toFixed(3)
+        const modelAvg = (modelScore / totalGames).toFixed(3)
+        const crowdWinning = parseFloat(crowdAvg) >= parseFloat(modelAvg)
+
+        const roundHtml = Object.values(roundRows)
+          .sort((a, b) => a.round - b.round)
+          .map(r => {
+            const rCrowd = (r.crowd / r.games).toFixed(3)
+            const rModel = (r.model / r.games).toFixed(3)
+            const rCrowdWin = parseFloat(rCrowd) >= parseFloat(rModel)
+            return `
+              <div class="lb-row" style="grid-template-columns:5rem 1fr 1fr; gap:1rem;">
+                <span class="text-sm font-semibold" style="color:#8892a4;">Round ${r.round}</span>
+                <div class="text-center">
+                  <div class="pts-display" style="color:${rCrowdWin ? '#86efac' : '#e2e8f0'};">${rCrowd}</div>
+                  <div class="text-xs" style="color:#4a5568;">${r.games} game${r.games > 1 ? 's' : ''}</div>
+                </div>
+                <div class="text-center">
+                  <div class="pts-display" style="color:${!rCrowdWin ? '#86efac' : '#e2e8f0'};">${rModel}</div>
+                  <div class="text-xs" style="color:#4a5568;">${r.games} game${r.games > 1 ? 's' : ''}</div>
+                </div>
+              </div>`
+          }).join('')
+
+        panel.innerHTML = `
+          <div class="p-4 grid grid-cols-2 gap-4 border-b" style="border-color:#1e2a3a; background:#0f1117;">
+            <div class="text-center p-3 rounded-xl" style="background:#161b24; border:1px solid ${crowdWinning ? 'rgba(74,222,128,0.3)' : '#2e3a4e'};">
+              <div class="text-xs uppercase tracking-wider mb-1" style="color:#8892a4;">User Model</div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2rem; font-weight:700; color:#fbbf24;">${crowdAvg}</div>
+              <div class="text-xs" style="color:#4a5568;">avg prob/game · ${totalGames} games</div>
+              ${crowdWinning ? '<div class="text-xs mt-1" style="color:#86efac;">Leading</div>' : ''}
+            </div>
+            <div class="text-center p-3 rounded-xl" style="background:#161b24; border:1px solid ${!crowdWinning ? 'rgba(74,222,128,0.3)' : '#2e3a4e'};">
+              <div class="text-xs uppercase tracking-wider mb-1" style="color:#8892a4;">BS Machine</div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2rem; font-weight:700; color:#e2e8f0;">${modelAvg}</div>
+              <div class="text-xs" style="color:#4a5568;">avg prob/game · ${totalGames} games</div>
+              ${!crowdWinning ? '<div class="text-xs mt-1" style="color:#86efac;">Leading</div>' : ''}
+            </div>
+          </div>
+          <div class="text-xs px-4 py-2 border-b" style="border-color:#1e2a3a; color:#4a5568;">
+            Probability scoring: each model earns P(actual result) per game. Higher average = better calibration.
+          </div>
+          <div class="lb-row" style="grid-template-columns:5rem 1fr 1fr; gap:1rem; background:#0f1117; border-bottom:1px solid #1e2a3a;">
+            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</div>
+            <div class="text-xs uppercase tracking-wider text-center" style="color:#4a5568;">User Model</div>
+            <div class="text-xs uppercase tracking-wider text-center" style="color:#4a5568;">BS Machine</div>
+          </div>
+          ${roundHtml}
+        `
+      }
+
+      function emptyState(msg) {
+        return `<div class="p-10 text-center text-sm" style="color:#4a5568;">${msg}</div>`
+      }
+
+      function escapeHtml(str) {
+        return String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+      }
+
+      function teamSlug(name) {
+        const n = (name || '').toLowerCase()
+        if (n.includes('broncos'))    return 'broncos'
+        if (n.includes('bulldogs'))   return 'bulldogs'
+        if (n.includes('cowboys'))    return 'cowboys'
+        if (n.includes('dolphins'))   return 'dolphins'
+        if (n.includes('dragons'))    return 'dragons'
+        if (n.includes('eels'))       return 'eels'
+        if (n.includes('knights'))    return 'knights'
+        if (n.includes('sea eagles') || n.includes('manly')) return 'manly'
+        if (n.includes('panthers'))   return 'panthers'
+        if (n.includes('rabbitohs'))  return 'rabbitohs'
+        if (n.includes('raiders'))    return 'raiders'
+        if (n.includes('roosters'))   return 'roosters'
+        if (n.includes('sharks'))     return 'sharks'
+        if (n.includes('storm'))      return 'storm'
+        if (n.includes('tigers'))     return 'tigers'
+        if (n.includes('titans'))     return 'titans'
+        if (n.includes('warriors'))   return 'warriors'
+        return name?.toLowerCase().replace(/\s+/g, '_') || ''
+      }
+
+      // Load header
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          updateAuthNav()
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+
+      loadLeaderboard()
+    </script>
+  </body>
+</html>

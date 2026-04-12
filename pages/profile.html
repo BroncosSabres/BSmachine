@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Profile — The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .auth-input {
+        background: #0f1117;
+        border: 1px solid #2e3a4e;
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        color: #e2e8f0;
+        font-size: 0.9375rem;
+        font-family: 'Barlow', system-ui, sans-serif;
+        transition: border-color 0.15s ease;
+        outline: none;
+        width: 100%;
+      }
+      .auth-input:focus { border-color: #f59e0b; }
+
+      .btn-primary {
+        padding: 0.45rem 1rem;
+        border-radius: 7px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.875rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: #f59e0b;
+        color: #0a0d14;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s ease;
+        white-space: nowrap;
+      }
+      .btn-primary:hover { background: #fbbf24; }
+      .btn-primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+
+      .btn-edit {
+        padding: 0.3rem 0.7rem;
+        border-radius: 6px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: transparent;
+        color: #8892a4;
+        border: 1px solid #2e3a4e;
+        cursor: pointer;
+        transition: border-color 0.15s ease, color 0.15s ease;
+        white-space: nowrap;
+      }
+      .btn-edit:hover { border-color: #f59e0b; color: #fbbf24; }
+
+      .btn-cancel {
+        padding: 0.45rem 0.9rem;
+        border-radius: 7px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.875rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: transparent;
+        color: #8892a4;
+        border: 1px solid #2e3a4e;
+        cursor: pointer;
+        transition: border-color 0.15s ease;
+        white-space: nowrap;
+      }
+      .btn-cancel:hover { border-color: #435168; }
+
+      .btn-danger {
+        padding: 0.6rem 1.25rem;
+        border-radius: 8px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.9375rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: transparent;
+        color: #f87171;
+        border: 1px solid rgba(239,68,68,0.35);
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .btn-danger:hover { background: rgba(239,68,68,0.08); border-color: #ef4444; }
+      .btn-danger:disabled { color: #4a5568; border-color: #2e3a4e; cursor: not-allowed; }
+
+      .msg-success {
+        background: rgba(74,222,128,0.1);
+        border: 1px solid rgba(74,222,128,0.3);
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        color: #86efac;
+        font-size: 0.8125rem;
+      }
+      .msg-error {
+        background: rgba(239,68,68,0.1);
+        border: 1px solid rgba(239,68,68,0.3);
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        color: #fca5a5;
+        font-size: 0.8125rem;
+      }
+
+      .field-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.875rem 0;
+        border-bottom: 1px solid #1c2333;
+      }
+      .field-row:last-of-type { border-bottom: none; }
+      .field-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: #4a5568;
+        margin-bottom: 0.2rem;
+      }
+      .field-value {
+        font-size: 0.9375rem;
+        color: #e2e8f0;
+      }
+    </style>
+  </head>
+  <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
+    <div id="site-header"></div>
+
+    <main class="px-4 py-10" style="max-width:500px; margin:0 auto;">
+
+      <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.75rem; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; margin-bottom:1.25rem;">
+        My Profile
+      </h1>
+
+      <!-- Profile card -->
+      <div style="background:#161b24; border:1px solid #2e3a4e; border-radius:16px; padding:1.5rem; margin-bottom:1rem;">
+
+        <!-- Team logo + name header -->
+        <div class="flex items-center gap-4 mb-4 pb-4" style="border-bottom:1px solid #1c2333;">
+          <img id="team-logo" src="" alt="" style="width:52px; height:52px; object-fit:contain; flex-shrink:0;" />
+          <div>
+            <div id="display-username"
+                 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.4rem; font-weight:700; letter-spacing:0.04em; line-height:1.2;"></div>
+            <div id="display-team-name" style="color:#8892a4; font-size:0.875rem; margin-top:0.15rem;"></div>
+          </div>
+        </div>
+
+        <!-- Username field -->
+        <div class="field-row">
+          <div style="flex:1; min-width:0;">
+            <div class="field-label">Username</div>
+            <div id="username-display" class="field-value"></div>
+            <div id="username-edit" class="hidden mt-2 flex gap-2">
+              <input id="username-input" type="text" class="auth-input" minlength="3" maxlength="24" autocomplete="username" />
+              <button id="username-save" class="btn-primary">Save</button>
+              <button id="username-cancel" class="btn-cancel">Cancel</button>
+            </div>
+            <div id="username-msg" class="mt-2 hidden"></div>
+          </div>
+          <button id="username-edit-btn" class="btn-edit" style="align-self:flex-start; margin-top:1.1rem;">Edit</button>
+        </div>
+
+        <!-- Favourite team field -->
+        <div class="field-row">
+          <div style="flex:1; min-width:0;">
+            <div class="field-label">Favourite Team</div>
+            <div id="team-display" class="field-value"></div>
+            <div id="team-edit" class="hidden mt-2 flex gap-2">
+              <select id="team-input" class="auth-input" style="cursor:pointer;">
+                <option value="">I don't support a team</option>
+                <option value="Broncos">Brisbane Broncos</option>
+                <option value="Raiders">Canberra Raiders</option>
+                <option value="Bulldogs">Canterbury Bulldogs</option>
+                <option value="Sharks">Cronulla Sharks</option>
+                <option value="Dolphins">Dolphins</option>
+                <option value="Titans">Gold Coast Titans</option>
+                <option value="Manly">Manly Sea Eagles</option>
+                <option value="Storm">Melbourne Storm</option>
+                <option value="Knights">Newcastle Knights</option>
+                <option value="Cowboys">North QLD Cowboys</option>
+                <option value="Eels">Parramatta Eels</option>
+                <option value="Panthers">Penrith Panthers</option>
+                <option value="Rabbitohs">South Sydney Rabbitohs</option>
+                <option value="Dragons">St George Illawarra Dragons</option>
+                <option value="Roosters">Sydney Roosters</option>
+                <option value="Warriors">Warriors</option>
+                <option value="Tigers">Wests Tigers</option>
+              </select>
+              <button id="team-save" class="btn-primary">Save</button>
+              <button id="team-cancel" class="btn-cancel">Cancel</button>
+            </div>
+            <div id="team-msg" class="mt-2 hidden"></div>
+          </div>
+          <button id="team-edit-btn" class="btn-edit" style="align-self:flex-start; margin-top:1.1rem;">Edit</button>
+        </div>
+
+        <!-- Email reminders -->
+        <div class="field-row">
+          <div style="flex:1;">
+            <div class="field-label">Tipping Reminders</div>
+            <div style="font-size:0.875rem; color:#8892a4; margin-top:0.2rem;">Weekly email if you haven't submitted picks</div>
+          </div>
+          <label style="display:flex;align-items:center;cursor:pointer;gap:0.5rem;flex-shrink:0;">
+            <input id="reminders-toggle" type="checkbox" style="width:18px;height:18px;accent-color:#f59e0b;cursor:pointer;">
+          </label>
+        </div>
+
+        <!-- Member since (read-only) -->
+        <div class="field-row">
+          <div>
+            <div class="field-label">Member Since</div>
+            <div id="display-since" class="field-value"></div>
+          </div>
+        </div>
+
+        <!-- Email (read-only) -->
+        <div class="field-row">
+          <div>
+            <div class="field-label">Email</div>
+            <div id="display-email" class="field-value" style="color:#8892a4;"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Danger zone -->
+      <div style="background:#161b24; border:1px solid rgba(239,68,68,0.2); border-radius:16px; padding:1.5rem;">
+        <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8125rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:rgba(239,68,68,0.5); margin-bottom:1rem;">
+          Danger Zone
+        </div>
+
+        <div id="delete-confirm" class="hidden mb-4"
+             style="background:#0f1117; border:1px solid rgba(239,68,68,0.3); border-radius:10px; padding:1rem;">
+          <div style="font-size:0.875rem; color:#fca5a5; margin-bottom:0.75rem; line-height:1.5;">
+            This will permanently delete your account, all your picks, and your score history. This cannot be undone.
+          </div>
+          <div class="mb-3">
+            <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">
+              Type <span style="color:#f87171; font-family:monospace;">DELETE</span> to confirm
+            </label>
+            <input id="delete-confirm-input" type="text" class="auth-input" placeholder="DELETE" autocomplete="off" />
+          </div>
+          <div id="delete-msg" class="mb-3 hidden"></div>
+          <div class="flex gap-2">
+            <button id="confirm-delete-btn" class="btn-danger" disabled>Delete My Account</button>
+            <button id="cancel-delete-btn" type="button" class="btn-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <button id="delete-btn" class="btn-danger">Delete Account</button>
+      </div>
+
+    </main>
+
+    <script type="module">
+      import { supabase, requireAuth, updateAuthNav } from '../js/supabase-client.js'
+
+      const TEAM_LABELS = {
+        Broncos: 'Brisbane Broncos', Raiders: 'Canberra Raiders', Bulldogs: 'Canterbury Bulldogs',
+        Sharks: 'Cronulla Sharks', Dolphins: 'Dolphins', Titans: 'Gold Coast Titans',
+        Manly: 'Manly Sea Eagles', Storm: 'Melbourne Storm', Knights: 'Newcastle Knights',
+        Cowboys: 'North QLD Cowboys', Eels: 'Parramatta Eels', Panthers: 'Penrith Panthers',
+        Rabbitohs: 'South Sydney Rabbitohs', Dragons: 'St George Illawarra Dragons',
+        Roosters: 'Sydney Roosters', Warriors: 'Warriors', Tigers: 'Wests Tigers',
+      }
+
+      const session = await requireAuth()
+      if (!session) throw new Error('Not authenticated')
+
+      // Fetch profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('username, favourite_team, created_at, email_reminders')
+        .eq('id', session.user.id)
+        .single()
+
+      const username = profile?.username || ''
+      const team     = profile?.favourite_team || ''
+      const since    = profile?.created_at || session.user.created_at
+
+      function renderTeamLogo(t) {
+        const logo = document.getElementById('team-logo')
+        if (t) {
+          logo.src = `../logos/${t.toLowerCase()}.svg`
+          logo.alt = t
+          logo.style.display = ''
+        } else {
+          logo.src = ''
+          logo.style.display = 'none'
+        }
+      }
+
+      function renderSummaryHeader(u, t) {
+        document.getElementById('display-username').textContent = u
+        document.getElementById('display-team-name').textContent = t ? (TEAM_LABELS[t] || t) : ''
+        renderTeamLogo(t)
+      }
+
+      // Populate display
+      renderSummaryHeader(username, team)
+      document.getElementById('username-display').textContent = username
+      document.getElementById('team-display').textContent = team ? (TEAM_LABELS[team] || team) : 'None'
+
+      if (since) {
+        document.getElementById('display-since').textContent =
+          new Date(since).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
+      }
+      document.getElementById('display-email').textContent = session.user.email || ''
+
+      // ---- Email reminders toggle ----
+      const remindersToggle = document.getElementById('reminders-toggle')
+      remindersToggle.checked = profile?.email_reminders || false
+      remindersToggle.addEventListener('change', async () => {
+        await supabase.from('profiles').update({ email_reminders: remindersToggle.checked }).eq('id', session.user.id)
+      })
+
+      // ---- Inline edit: Username ----
+      const usernameEditBtn  = document.getElementById('username-edit-btn')
+      const usernameDisplay  = document.getElementById('username-display')
+      const usernameEditRow  = document.getElementById('username-edit')
+      const usernameInput    = document.getElementById('username-input')
+      const usernameSaveBtn  = document.getElementById('username-save')
+      const usernameCancelBtn= document.getElementById('username-cancel')
+      const usernameMsgEl    = document.getElementById('username-msg')
+
+      usernameEditBtn.addEventListener('click', () => {
+        usernameInput.value = usernameDisplay.textContent
+        usernameDisplay.classList.add('hidden')
+        usernameEditRow.classList.remove('hidden')
+        usernameEditBtn.classList.add('hidden')
+        usernameMsgEl.className = 'mt-2 hidden'
+        usernameInput.focus()
+      })
+
+      usernameCancelBtn.addEventListener('click', () => {
+        usernameDisplay.classList.remove('hidden')
+        usernameEditRow.classList.add('hidden')
+        usernameEditBtn.classList.remove('hidden')
+        usernameMsgEl.className = 'mt-2 hidden'
+      })
+
+      usernameSaveBtn.addEventListener('click', async () => {
+        const newVal = usernameInput.value.trim()
+        if (!newVal || newVal.length < 3) {
+          usernameMsgEl.className = 'mt-2 msg-error'
+          usernameMsgEl.textContent = 'Username must be at least 3 characters.'
+          return
+        }
+
+        usernameSaveBtn.disabled = true
+        usernameSaveBtn.textContent = 'Saving…'
+        usernameMsgEl.className = 'mt-2 hidden'
+
+        const { data: taken } = await supabase
+          .from('profiles').select('id').eq('username', newVal).neq('id', session.user.id).maybeSingle()
+
+        if (taken) {
+          usernameMsgEl.className = 'mt-2 msg-error'
+          usernameMsgEl.textContent = 'That username is already taken.'
+          usernameSaveBtn.disabled = false
+          usernameSaveBtn.textContent = 'Save'
+          return
+        }
+
+        const { error } = await supabase.from('profiles').update({ username: newVal }).eq('id', session.user.id)
+        if (error) {
+          usernameMsgEl.className = 'mt-2 msg-error'
+          usernameMsgEl.textContent = error.message
+        } else {
+          usernameDisplay.textContent = newVal
+          document.getElementById('display-username').textContent = newVal
+          usernameDisplay.classList.remove('hidden')
+          usernameEditRow.classList.add('hidden')
+          usernameEditBtn.classList.remove('hidden')
+        }
+        usernameSaveBtn.disabled = false
+        usernameSaveBtn.textContent = 'Save'
+      })
+
+      // ---- Inline edit: Team ----
+      const teamEditBtn   = document.getElementById('team-edit-btn')
+      const teamDisplay   = document.getElementById('team-display')
+      const teamEditRow   = document.getElementById('team-edit')
+      const teamInput     = document.getElementById('team-input')
+      const teamSaveBtn   = document.getElementById('team-save')
+      const teamCancelBtn = document.getElementById('team-cancel')
+      const teamMsgEl     = document.getElementById('team-msg')
+
+      teamEditBtn.addEventListener('click', () => {
+        teamInput.value = team
+        teamDisplay.classList.add('hidden')
+        teamEditRow.classList.remove('hidden')
+        teamEditBtn.classList.add('hidden')
+        teamMsgEl.className = 'mt-2 hidden'
+      })
+
+      teamCancelBtn.addEventListener('click', () => {
+        teamDisplay.classList.remove('hidden')
+        teamEditRow.classList.add('hidden')
+        teamEditBtn.classList.remove('hidden')
+        teamMsgEl.className = 'mt-2 hidden'
+      })
+
+      teamSaveBtn.addEventListener('click', async () => {
+        const newVal = teamInput.value || null
+
+        teamSaveBtn.disabled = true
+        teamSaveBtn.textContent = 'Saving…'
+        teamMsgEl.className = 'mt-2 hidden'
+
+        const { error } = await supabase.from('profiles').update({ favourite_team: newVal }).eq('id', session.user.id)
+        if (error) {
+          teamMsgEl.className = 'mt-2 msg-error'
+          teamMsgEl.textContent = error.message
+        } else {
+          teamDisplay.textContent = newVal ? (TEAM_LABELS[newVal] || newVal) : 'None'
+          renderSummaryHeader(document.getElementById('display-username').textContent, newVal)
+          teamDisplay.classList.remove('hidden')
+          teamEditRow.classList.add('hidden')
+          teamEditBtn.classList.remove('hidden')
+        }
+        teamSaveBtn.disabled = false
+        teamSaveBtn.textContent = 'Save'
+      })
+
+      // ---- Delete account ----
+      const deleteBtn        = document.getElementById('delete-btn')
+      const deleteConfirm    = document.getElementById('delete-confirm')
+      const cancelDeleteBtn  = document.getElementById('cancel-delete-btn')
+      const confirmDeleteBtn = document.getElementById('confirm-delete-btn')
+      const confirmInput     = document.getElementById('delete-confirm-input')
+      const deleteMsgEl      = document.getElementById('delete-msg')
+
+      deleteBtn.addEventListener('click', () => {
+        deleteConfirm.classList.remove('hidden')
+        deleteBtn.classList.add('hidden')
+        confirmInput.focus()
+      })
+
+      cancelDeleteBtn.addEventListener('click', () => {
+        deleteConfirm.classList.add('hidden')
+        deleteBtn.classList.remove('hidden')
+        confirmInput.value = ''
+        confirmDeleteBtn.disabled = true
+        deleteMsgEl.className = 'mb-3 hidden'
+      })
+
+      confirmInput.addEventListener('input', () => {
+        confirmDeleteBtn.disabled = confirmInput.value !== 'DELETE'
+      })
+
+      confirmDeleteBtn.addEventListener('click', async () => {
+        confirmDeleteBtn.disabled = true
+        confirmDeleteBtn.textContent = 'Deleting…'
+
+        const { data: { session: current } } = await supabase.auth.getSession()
+        const res = await fetch('https://bsmachine-backend.onrender.com/user/delete-account', {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${current?.access_token}` },
+        })
+
+        if (res.ok) {
+          await supabase.auth.signOut()
+          window.location.href = '/index.html'
+        } else {
+          const body = await res.json().catch(() => ({}))
+          deleteMsgEl.className = 'mb-3 msg-error'
+          deleteMsgEl.textContent = body.error || 'Something went wrong. Please try again.'
+          confirmDeleteBtn.disabled = false
+          confirmDeleteBtn.textContent = 'Delete My Account'
+        }
+      })
+
+      // Load header
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          updateAuthNav()
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+    </script>
+  </body>
+</html>

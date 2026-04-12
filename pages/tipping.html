@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tipping — The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .pick-card {
+        background: #161b24;
+        border: 1px solid #2e3a4e;
+        border-radius: 12px;
+        padding: 1.25rem 1.5rem;
+        transition: border-color 0.15s ease;
+      }
+      .score-input-wrap {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.5rem;
+        flex: 1;
+      }
+      .score-input {
+        width: 80px;
+        background: #0f1117;
+        border: 1px solid #435168;
+        border-radius: 10px;
+        padding: 0.6rem 0.5rem;
+        color: #e2e8f0;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        text-align: center;
+        outline: none;
+        -moz-appearance: textfield;
+        appearance: textfield;
+        transition: border-color 0.15s ease;
+      }
+      .score-input::-webkit-outer-spin-button,
+      .score-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      .score-input:focus { border-color: #f59e0b; }
+      .score-input:disabled, .score-input.locked { border-color: #2e3a4e; color: #4a5568; cursor: not-allowed; }
+      .score-team-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-align: center;
+        color: #8892a4;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .score-vs {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #2e3a4e;
+        padding: 0 0.25rem;
+        padding-top: 1rem;
+      }
+      .save-btn {
+        padding: 0.45rem 1rem;
+        border-radius: 8px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.875rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        background: #f59e0b;
+        color: #0a0d14;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s ease, opacity 0.15s ease;
+      }
+      .save-btn:hover { background: #fbbf24; }
+      .save-btn:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+      .save-btn.saved {
+        background: rgba(74,222,128,0.15);
+        color: #86efac;
+        border: 1px solid rgba(74,222,128,0.3);
+      }
+      .locked-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        background: rgba(75,85,99,0.3);
+        color: #6b7280;
+        border: 1px solid #374151;
+      }
+      .implied-stats {
+        display: flex;
+        gap: 1rem;
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #1c2333;
+        font-size: 0.8125rem;
+      }
+      .implied-stat {
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+      }
+      .implied-stat-label {
+        font-size: 0.6875rem;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: #4a5568;
+        font-weight: 600;
+      }
+      .implied-stat-value {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fbbf24;
+      }
+
+      /* ── Sliders ── */
+      .slider-section {
+        margin-top: 1rem;
+      }
+      .slider-label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 0.375rem;
+        font-size: 0.75rem;
+      }
+      .slider-team-name {
+        color: #8892a4;
+        font-weight: 600;
+        max-width: 100px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .slider-value-label {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: #f59e0b;
+        letter-spacing: 0.02em;
+      }
+      .slider {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 100%;
+        height: 5px;
+        border-radius: 3px;
+        background: #2e3a4e;
+        outline: none;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #f59e0b;
+        cursor: pointer;
+        border: 2px solid #0f1117;
+        box-shadow: 0 0 0 2px rgba(245,158,11,0.3);
+        transition: box-shadow 0.15s ease;
+      }
+      .slider::-webkit-slider-thumb:hover {
+        box-shadow: 0 0 0 4px rgba(245,158,11,0.25);
+      }
+      .slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #f59e0b;
+        cursor: pointer;
+        border: 2px solid #0f1117;
+      }
+      .slider:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+      .slider:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+      .slider-hint-row {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 0.25rem;
+        font-size: 0.68rem;
+        color: #374151;
+      }
+    </style>
+  </head>
+  <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
+    <div id="site-header"></div>
+
+    <main class="max-w-3xl mx-auto px-4 py-8 pb-16">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-3">
+          <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Round Tipping</h1>
+          <a href="/pages/leaderboard.html" style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#f59e0b; text-decoration:none; border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:0.2rem 0.6rem; background:rgba(245,158,11,0.08); white-space:nowrap;">Leaderboard →</a>
+        </div>
+        <select id="round-select" style="background:#161b24;border:1px solid #2e3a4e;border-radius:8px;padding:0.35rem 0.75rem;color:#8892a4;font-family:'Barlow',system-ui,sans-serif;font-size:0.875rem;cursor:pointer;outline:none;"></select>
+      </div>
+
+      <!-- Explainer -->
+      <div style="background:#161b24; border:1px solid #2e3a4e; border-radius:12px; padding:1.25rem 1.5rem; margin-bottom:2rem;">
+        <button id="explainer-toggle" class="flex items-center justify-between w-full text-left" style="background:none;border:none;cursor:pointer;padding:0;">
+          <span style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:#e2e8f0;">
+            How does this work?
+          </span>
+          <svg id="explainer-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink:0; transition:transform 0.2s ease; transform:rotate(0deg);">
+            <path d="M4 6l4 4 4-4" stroke="#8892a4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <div id="explainer-body" style="display:none; margin-top:1rem;">
+          <div class="flex flex-col gap-4" style="font-size:0.875rem; line-height:1.65; color:#8892a4;">
+
+            <div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.875rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#fbbf24; margin-bottom:0.375rem;">
+                You're building the User Model
+              </div>
+              Your predicted scoreline is treated as a simulation — the same way the BS Machine runs thousands of simulations to generate its probability distributions. Across all users, your collective picks form a <em style="color:#e2e8f0;">crowd model</em> that we pit against the BS Machine. The more accurate your scoreline prediction, the more your simulation contributes to beating the machine.
+            </div>
+
+            <div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.875rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#fbbf24; margin-bottom:0.375rem;">
+                How to use the sliders
+              </div>
+              Use the <strong style="color:#e2e8f0;">Margin</strong> slider to pick the winner and by how much — slide left for a home win, right for an away win. Use the <strong style="color:#e2e8f0;">Total Points</strong> slider to predict the combined score — it defaults to this season's average. The scores update automatically.
+            </div>
+
+            <div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.875rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#fbbf24; margin-bottom:0.375rem;">
+                User vs User scoring
+              </div>
+              Each game is worth up to <strong style="color:#e2e8f0;">10 points</strong> — margin and total are scored independently, each out of 5. Scoring follows a bell curve with a standard deviation of 6 points — one converted try. A perfect margin prediction scores 5, a perfect total scores 5. Being one converted try off still scores well. Two tries off and you're near zero.
+              <div style="margin-top:0.5rem; display:flex; gap:1.5rem; flex-wrap:wrap;">
+                <span>Perfect → <strong style="color:#86efac;">5 pts</strong></span>
+                <span>±6 pts error → <strong style="color:#fbbf24;">~3 pts</strong></span>
+                <span>±12 pts error → <strong style="color:#f87171;">~0.7 pts</strong></span>
+              </div>
+            </div>
+
+            <div>
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.875rem; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#fbbf24; margin-bottom:0.375rem;">
+                User Model vs Machine Model
+              </div>
+              After each round, the crowd's picks are compared against the BS Machine's predictions using probability scoring. For each game, if the BS Machine assigned a 36% chance to the actual result, it scores 0.36. If the crowd model implied a 45% chance, it scores 0.45. Scores accumulate across all games — whoever is closer to 1.0 per game wins the round.
+            </div>
+
+            <div style="font-size:0.8125rem; color:#4a5568; border-top:1px solid #1c2333; padding-top:0.75rem;">
+              Picks lock at kickoff. You can update your prediction for any game right up until the ball is kicked.
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div id="picks-container" class="flex flex-col gap-4">
+        <!-- Loading skeleton -->
+        <div class="pick-card animate-pulse">
+          <div class="h-4 bg-gray-700 rounded w-48 mb-4"></div>
+          <div class="h-10 bg-gray-700 rounded mb-3"></div>
+          <div class="h-10 bg-gray-700 rounded"></div>
+        </div>
+        <div class="pick-card animate-pulse">
+          <div class="h-4 bg-gray-700 rounded w-48 mb-4"></div>
+          <div class="h-10 bg-gray-700 rounded mb-3"></div>
+          <div class="h-10 bg-gray-700 rounded"></div>
+        </div>
+      </div>
+
+      <div id="submit-bar" class="hidden mt-6 flex items-center justify-between px-4 py-3 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
+        <span id="picks-summary" class="text-sm" style="color:#8892a4;"></span>
+        <button id="save-all-btn" class="save-btn">Save All Picks</button>
+      </div>
+    </main>
+
+    <script type="module">
+      import { supabase, getSession, updateAuthNav } from '../js/supabase-client.js'
+
+      const BACKEND = 'https://bsmachine-backend.onrender.com/api'
+
+      const session = await getSession()
+      if (!session) {
+        document.getElementById('picks-container').innerHTML = `
+          <div class="pick-card text-center py-10">
+            <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.5rem;">
+              Register to play
+            </div>
+            <div style="color:#8892a4; font-size:0.875rem; margin-bottom:1.25rem; line-height:1.6;">
+              You need a free account to submit tips and compete on the leaderboard.
+            </div>
+            <a href="/pages/login.html?next=/pages/tipping.html"
+               style="display:inline-block; padding:0.65rem 1.5rem; border-radius:8px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; background:#f59e0b; color:#0a0d14; text-decoration:none;">
+              Sign In / Register
+            </a>
+          </div>`
+        document.getElementById('submit-bar').classList.add('hidden')
+        throw new Error('Not authenticated')
+      }
+      const userId = session.user.id
+
+      // picks[gameId] = { home: int, away: int }
+      const picks = {}
+      let games = []
+      let availableRounds = []
+      let currentRoundIndex = 0
+      let avgTotal = 44  // default, updated from completed games
+
+      // ── Team colours (for slider track) ──
+      const TEAM_COLORS = {
+        broncos: '#760135', raiders: '#32CD32', bulldogs: '#00539F',
+        sharks: '#00A9D8', dolphins: '#E0121A', titans: '#009DDC',
+        manly: '#6F163D', storm: '#632390', knights: '#EE3524',
+        cowboys: '#002B5C', eels: '#006EB5', panthers: '#1a1a2e',
+        rabbitohs: '#025D17', dragons: '#E2231B', roosters: '#E82C2E',
+        warriors: '#231F20', tigers: '#F57600',
+      }
+      function teamColor(name) {
+        const n = (name || '').toLowerCase()
+        if (n.includes('broncos'))   return TEAM_COLORS.broncos
+        if (n.includes('raiders'))   return TEAM_COLORS.raiders
+        if (n.includes('bulldogs'))  return TEAM_COLORS.bulldogs
+        if (n.includes('sharks'))    return TEAM_COLORS.sharks
+        if (n.includes('dolphins'))  return TEAM_COLORS.dolphins
+        if (n.includes('titans'))    return TEAM_COLORS.titans
+        if (n.includes('sea eagle') || n.includes('manly')) return TEAM_COLORS.manly
+        if (n.includes('storm'))     return TEAM_COLORS.storm
+        if (n.includes('knights'))   return TEAM_COLORS.knights
+        if (n.includes('cowboys'))   return TEAM_COLORS.cowboys
+        if (n.includes('eels') || n.includes('parramatta')) return TEAM_COLORS.eels
+        if (n.includes('panthers'))  return TEAM_COLORS.panthers
+        if (n.includes('rabbitohs')) return TEAM_COLORS.rabbitohs
+        if (n.includes('dragons'))   return TEAM_COLORS.dragons
+        if (n.includes('roosters'))  return TEAM_COLORS.roosters
+        if (n.includes('warriors'))  return TEAM_COLORS.warriors
+        if (n.includes('tigers'))    return TEAM_COLORS.tigers
+        return '#6b7280'
+      }
+
+      // ── Slider helpers ──
+      function scoresFromSliders(marginVal, totalVal) {
+        // marginVal: negative = home wins, positive = away wins (away - home)
+        const home = Math.round((totalVal - marginVal) / 2)
+        const away = totalVal - home
+        return { home: Math.max(0, home), away: Math.max(0, away) }
+      }
+
+      function marginLabel(val, homeTeam, awayTeam) {
+        if (val === 0) return 'Even'
+        if (val < 0) return `${homeTeam} +${Math.abs(val)}`
+        return `${awayTeam} +${val}`
+      }
+
+      function updateMarginTrack(slider, homeCol, awayCol, val) {
+        const min = parseFloat(slider.min)
+        const max = parseFloat(slider.max)
+        const pct = ((val - min) / (max - min)) * 100
+        if (val < 0) {
+          slider.style.background = `linear-gradient(to right, ${homeCol}bb 0%, ${homeCol}dd ${pct}%, #2e3a4e ${pct}%, #2e3a4e 100%)`
+        } else if (val > 0) {
+          slider.style.background = `linear-gradient(to right, #2e3a4e 0%, #2e3a4e ${pct}%, ${awayCol}dd ${pct}%, ${awayCol}bb 100%)`
+        } else {
+          slider.style.background = '#2e3a4e'
+        }
+      }
+
+      function updateTotalTrack(slider, val) {
+        const min = parseFloat(slider.min)
+        const max = parseFloat(slider.max)
+        const pct = ((val - min) / (max - min)) * 100
+        slider.style.background = `linear-gradient(to right, #3b82f6 0%, #f59e0b ${pct}%, #2e3a4e ${pct}%, #2e3a4e 100%)`
+      }
+
+      // ── Fetch season average total ──
+      async function fetchAvgTotal() {
+        const { data } = await supabase
+          .from('games')
+          .select('home_score, away_score')
+          .not('home_score', 'is', null)
+          .not('away_score', 'is', null)
+        if (data?.length) {
+          const valid = data.filter(g => g.home_score != null && g.away_score != null)
+          if (valid.length) {
+            avgTotal = Math.round(valid.reduce((acc, g) => acc + g.home_score + g.away_score, 0) / valid.length)
+          }
+        }
+      }
+
+      // ── Init ──
+      async function init() {
+        await fetchAvgTotal()
+
+        const { data: roundData } = await supabase
+          .from('games')
+          .select('round_number')
+          .order('round_number', { ascending: true })
+
+        if (!roundData?.length) {
+          document.getElementById('picks-container').innerHTML = `
+            <div class="pick-card text-center py-8" style="color:#8892a4;">
+              No games found. Check back soon.
+            </div>`
+          return
+        }
+
+        availableRounds = [...new Set(roundData.map(g => g.round_number))]
+
+        let targetRound = availableRounds[availableRounds.length - 1]
+        try {
+          const res  = await fetch(`${BACKEND}/current_round_matches/nrl`)
+          const data = await res.json()
+          if (data.length) targetRound = data[0].round_number
+        } catch {}
+
+        currentRoundIndex = availableRounds.indexOf(targetRound)
+        if (currentRoundIndex === -1) currentRoundIndex = availableRounds.length - 1
+
+        updateRoundSelect()
+        await loadRound(availableRounds[currentRoundIndex])
+      }
+
+      function updateRoundSelect() {
+        const sel = document.getElementById('round-select')
+        sel.innerHTML = availableRounds.map(r =>
+          `<option value="${r}"${r === availableRounds[currentRoundIndex] ? ' selected' : ''}>Round ${r}</option>`
+        ).join('')
+      }
+
+      // ── Load round ──
+      async function loadRound(roundNumber) {
+        document.getElementById('picks-container').innerHTML = `
+          <div class="pick-card animate-pulse">
+            <div class="h-4 bg-gray-700 rounded w-48 mb-4"></div>
+            <div class="h-16 bg-gray-700 rounded mb-3"></div>
+            <div class="h-8 bg-gray-700 rounded"></div>
+          </div>
+          <div class="pick-card animate-pulse">
+            <div class="h-4 bg-gray-700 rounded w-48 mb-4"></div>
+            <div class="h-16 bg-gray-700 rounded mb-3"></div>
+            <div class="h-8 bg-gray-700 rounded"></div>
+          </div>`
+        document.getElementById('submit-bar').classList.add('hidden')
+
+        const { data: gamesData, error } = await supabase
+          .from('games')
+          .select('*')
+          .eq('round_number', roundNumber)
+          .order('kickoff_time', { ascending: true })
+
+        if (error || !gamesData?.length) {
+          document.getElementById('picks-container').innerHTML = `
+            <div class="pick-card text-center py-8" style="color:#8892a4;">
+              No games loaded for this round yet. Check back soon.
+            </div>`
+          return
+        }
+
+        games = gamesData
+
+        const gameIds = games.map(g => g.game_id)
+        const { data: existingPicks } = await supabase
+          .from('picks')
+          .select('game_id, home_score_pick, away_score_pick')
+          .eq('user_id', userId)
+          .in('game_id', gameIds)
+
+        // Clear picks for this round
+        games.forEach(g => { delete picks[g.game_id] })
+
+        if (existingPicks) {
+          existingPicks.forEach(p => {
+            if (p.home_score_pick != null && p.away_score_pick != null) {
+              picks[p.game_id] = { home: p.home_score_pick, away: p.away_score_pick }
+            }
+          })
+        }
+
+        renderGames()
+      }
+
+      document.getElementById('round-select').addEventListener('change', async (e) => {
+        const round = parseInt(e.target.value, 10)
+        currentRoundIndex = availableRounds.indexOf(round)
+        await loadRound(round)
+      })
+
+      // ── Render game cards ──
+      function renderGames() {
+        const container = document.getElementById('picks-container')
+        container.innerHTML = ''
+        const now = new Date()
+
+        games.forEach(game => {
+          const isLocked       = new Date(game.kickoff_time) <= now
+          const existingPick   = picks[game.game_id]
+          const modelTotal     = game.model_total
+          const modelFavTeam   = game.model_ready
+            ? ((game.home_perc >= game.away_perc) ? game.home_team : game.away_team)
+            : null
+          const kickoffDisplay = formatKickoff(game.kickoff_time)
+          const hColor         = teamColor(game.home_team)
+          const aColor         = teamColor(game.away_team)
+
+          // Derive initial slider values from existing pick or defaults
+          let initMarginVal = 0
+          let initTotalVal  = avgTotal
+          if (existingPick) {
+            const h = existingPick.home, a = existingPick.away
+            initTotalVal  = h + a
+            initMarginVal = a - h  // negative = home wins
+            initMarginVal = Math.max(-44, Math.min(44, initMarginVal))
+            initTotalVal  = Math.max(8,  Math.min(88,  initTotalVal))
+          }
+
+          const initScores = scoresFromSliders(initMarginVal, initTotalVal)
+
+          // For unlocked games, always set picks from slider position (existing or default)
+          if (!isLocked) {
+            picks[game.game_id] = { home: initScores.home, away: initScores.away }
+          }
+
+          const hasDisplayScore = isLocked ? !!existingPick : true
+          const marginLabelStr  = marginLabel(initMarginVal, game.home_team, game.away_team)
+
+          const card = document.createElement('div')
+          card.className = 'pick-card'
+          card.dataset.gameId = game.game_id
+
+          card.innerHTML = `
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <img src="../logos/${teamSlug(game.home_team)}.svg" class="w-5 h-5 object-contain" onerror="this.style.display='none'">
+                <span class="text-xs font-semibold uppercase tracking-wider" style="color:#8892a4;">
+                  ${game.home_team} <span style="color:#2e3a4e;">vs</span> ${game.away_team}
+                </span>
+                <img src="../logos/${teamSlug(game.away_team)}.svg" class="w-5 h-5 object-contain" onerror="this.style.display='none'">
+              </div>
+              ${isLocked
+                ? `<span class="locked-badge">🔒 Locked</span>`
+                : `<span class="text-xs" style="color:#4a5568;">${kickoffDisplay}</span>`}
+            </div>
+
+            <!-- Score inputs -->
+            <div class="flex items-start justify-center gap-3">
+              <div class="score-input-wrap">
+                <img src="../logos/${teamSlug(game.home_team)}.svg" style="width:36px;height:36px;object-fit:contain;" onerror="this.style.display='none'">
+                <input type="text" inputmode="numeric" pattern="[0-9]*"
+                       class="score-input js-home-score${isLocked ? ' locked' : ''}"
+                       ${isLocked ? 'disabled' : ''}
+                       value="${hasDisplayScore ? initScores.home : ''}"
+                       placeholder="—">
+                <div class="score-team-label">${game.home_team}</div>
+              </div>
+              <div class="score-vs">–</div>
+              <div class="score-input-wrap">
+                <img src="../logos/${teamSlug(game.away_team)}.svg" style="width:36px;height:36px;object-fit:contain;" onerror="this.style.display='none'">
+                <input type="text" inputmode="numeric" pattern="[0-9]*"
+                       class="score-input js-away-score${isLocked ? ' locked' : ''}"
+                       ${isLocked ? 'disabled' : ''}
+                       value="${hasDisplayScore ? initScores.away : ''}"
+                       placeholder="—">
+                <div class="score-team-label">${game.away_team}</div>
+              </div>
+            </div>
+
+            ${!isLocked ? `
+            <!-- Margin slider -->
+            <div class="slider-section">
+              <div class="slider-label-row">
+                <span class="slider-team-name">${game.home_team}</span>
+                <span class="slider-value-label js-margin-label">${marginLabelStr}</span>
+                <span class="slider-team-name" style="text-align:right;">${game.away_team}</span>
+              </div>
+              <input type="range" class="slider js-margin-slider"
+                     min="-44" max="44" step="1" value="${initMarginVal}">
+              <div class="slider-hint-row">
+                <span>← Home wins</span>
+                <span>Away wins →</span>
+              </div>
+            </div>
+
+            <!-- Total points slider -->
+            <div class="slider-section">
+              <div class="slider-label-row">
+                <span class="slider-team-name">Total Points</span>
+                <span class="slider-value-label js-total-label">${initTotalVal} pts</span>
+                <span></span>
+              </div>
+              <input type="range" class="slider js-total-slider"
+                     min="8" max="88" step="1" value="${initTotalVal}">
+              <div class="slider-hint-row">
+                <span>← Lower</span>
+                <span>Higher →</span>
+              </div>
+            </div>
+            ` : ''}
+
+            <!-- Implied stats -->
+            <div class="implied-stats js-implied" style="display:${hasDisplayScore ? 'flex' : 'none'};">
+              <div class="implied-stat">
+                <div class="implied-stat-label">Winner</div>
+                <div class="implied-stat-value js-implied-winner">—</div>
+              </div>
+              <div class="implied-stat">
+                <div class="implied-stat-label">Line</div>
+                <div class="implied-stat-value js-implied-line">—</div>
+              </div>
+              <div class="implied-stat">
+                <div class="implied-stat-label">Total</div>
+                <div class="implied-stat-value js-implied-total">—</div>
+              </div>
+              ${modelFavTeam ? `
+              <div class="implied-stat" style="margin-left:auto;">
+                <div class="implied-stat-label">Model</div>
+                <div class="implied-stat-value" style="color:#f59e0b;font-size:0.875rem;">${modelFavTeam}${modelTotal ? ` · ${modelTotal}` : ''}</div>
+              </div>` : ''}
+            </div>
+          `
+
+          const homeInput    = card.querySelector('.js-home-score')
+          const awayInput    = card.querySelector('.js-away-score')
+          const marginSlider = card.querySelector('.js-margin-slider')
+          const totalSlider  = card.querySelector('.js-total-slider')
+          const marginLabelEl = card.querySelector('.js-margin-label')
+          const totalLabelEl  = card.querySelector('.js-total-label')
+
+          // Apply initial track colours
+          if (marginSlider) updateMarginTrack(marginSlider, hColor, aColor, initMarginVal)
+          if (totalSlider)  updateTotalTrack(totalSlider, initTotalVal)
+
+          // Apply initial implied stats
+          if (hasDisplayScore) updateImplied(card, game, initScores.home, initScores.away)
+
+          // Wire up sliders → scores
+          if (!isLocked && marginSlider && totalSlider) {
+            function onSlide() {
+              const mVal   = parseFloat(marginSlider.value)
+              const tVal   = parseFloat(totalSlider.value)
+              const scores = scoresFromSliders(mVal, tVal)
+
+              homeInput.value = scores.home
+              awayInput.value = scores.away
+              picks[game.game_id] = { home: scores.home, away: scores.away }
+
+              marginLabelEl.textContent = marginLabel(mVal, game.home_team, game.away_team)
+              totalLabelEl.textContent  = `${tVal} pts`
+
+              updateMarginTrack(marginSlider, hColor, aColor, mVal)
+              updateTotalTrack(totalSlider, tVal)
+              updateImplied(card, game, scores.home, scores.away)
+              updateSubmitBar()
+            }
+
+            marginSlider.addEventListener('input', onSlide)
+            totalSlider.addEventListener('input', onSlide)
+
+            // Wire up score inputs → sliders (two-way binding)
+            function onScoreInput() {
+              const hRaw = homeInput.value.replace(/[^0-9]/g, '')
+              const aRaw = awayInput.value.replace(/[^0-9]/g, '')
+              const h = hRaw !== '' ? Math.min(99, parseInt(hRaw, 10)) : null
+              const a = aRaw !== '' ? Math.min(99, parseInt(aRaw, 10)) : null
+
+              picks[game.game_id] = { home: h, away: a }
+
+              if (h !== null && a !== null) {
+                const mVal = Math.max(-44, Math.min(44, a - h))
+                const tVal = Math.max(8,  Math.min(88, h + a))
+                marginSlider.value = mVal
+                totalSlider.value  = tVal
+                marginLabelEl.textContent = marginLabel(mVal, game.home_team, game.away_team)
+                totalLabelEl.textContent  = `${tVal} pts`
+                updateMarginTrack(marginSlider, hColor, aColor, mVal)
+                updateTotalTrack(totalSlider, tVal)
+                updateImplied(card, game, h, a)
+              }
+              updateSubmitBar()
+            }
+
+            homeInput.addEventListener('input', onScoreInput)
+            awayInput.addEventListener('input', onScoreInput)
+          }
+
+          container.appendChild(card)
+        })
+
+        updateSubmitBar()
+      }
+
+      function updateImplied(card, game, home, away) {
+        const el = card.querySelector('.js-implied')
+        if (!el) return
+        if (home == null || away == null) { el.style.display = 'none'; return }
+
+        const margin = home - away
+        const total  = home + away
+        const winner = margin > 0 ? game.home_team : margin < 0 ? game.away_team : 'Draw'
+        const lineStr = margin === 0 ? 'Draw' : `${winner} -${Math.abs(margin)}`
+
+        card.querySelector('.js-implied-winner').textContent = winner
+        card.querySelector('.js-implied-line').textContent   = lineStr
+        card.querySelector('.js-implied-total').textContent  = total
+        el.style.display = 'flex'
+      }
+
+      // ── Submit bar ──
+      function updateSubmitBar() {
+        const bar     = document.getElementById('submit-bar')
+        const summary = document.getElementById('picks-summary')
+        const now     = new Date()
+        const unlocked = games.filter(g => new Date(g.kickoff_time) > now)
+        if (!unlocked.length) { bar.classList.add('hidden'); return }
+
+        const complete = unlocked.filter(g => {
+          const p = picks[g.game_id]
+          return p?.home != null && p?.away != null
+        }).length
+        summary.textContent = `${complete} of ${unlocked.length} picks complete`
+        bar.classList.remove('hidden')
+      }
+
+      // ── Save all picks ──
+      document.getElementById('save-all-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('save-all-btn')
+        btn.disabled = true
+        btn.textContent = 'Saving…'
+
+        const now  = new Date()
+        const rows = games
+          .filter(g => {
+            const p = picks[g.game_id]
+            return new Date(g.kickoff_time) > now && p?.home != null && p?.away != null
+          })
+          .map(g => {
+            const h = picks[g.game_id].home
+            const a = picks[g.game_id].away
+            return {
+              user_id:         userId,
+              game_id:         g.game_id,
+              home_score_pick: h,
+              away_score_pick: a,
+              line_pick:       h >= a ? 'home' : 'away',
+              line_value:      Math.abs(h - a),
+              total_pick:      h + a >= (g.model_total ?? 0) ? 'over' : 'under',
+              total_value:     h + a,
+            }
+          })
+
+        if (!rows.length) {
+          btn.disabled = false
+          btn.textContent = 'Save All Picks'
+          return
+        }
+
+        const { error } = await supabase
+          .from('picks')
+          .upsert(rows, { onConflict: 'user_id,game_id' })
+
+        if (error) {
+          btn.disabled = false
+          btn.textContent = 'Save All Picks'
+          alert('Error saving picks: ' + error.message)
+        } else {
+          btn.className = 'save-btn saved'
+          btn.textContent = '✓ Picks Saved'
+          setTimeout(() => {
+            btn.className = 'save-btn'
+            btn.disabled = false
+            btn.textContent = 'Save All Picks'
+          }, 3000)
+        }
+      })
+
+      // ── Helpers ──
+      function teamSlug(name) {
+        const n = (name || '').toLowerCase()
+        if (n.includes('broncos'))    return 'broncos'
+        if (n.includes('bulldogs'))   return 'bulldogs'
+        if (n.includes('cowboys'))    return 'cowboys'
+        if (n.includes('dolphins'))   return 'dolphins'
+        if (n.includes('dragons'))    return 'dragons'
+        if (n.includes('eels'))       return 'eels'
+        if (n.includes('knights'))    return 'knights'
+        if (n.includes('sea eagles') || n.includes('manly')) return 'manly'
+        if (n.includes('panthers'))   return 'panthers'
+        if (n.includes('rabbitohs'))  return 'rabbitohs'
+        if (n.includes('raiders'))    return 'raiders'
+        if (n.includes('roosters'))   return 'roosters'
+        if (n.includes('sharks'))     return 'sharks'
+        if (n.includes('storm'))      return 'storm'
+        if (n.includes('tigers'))     return 'tigers'
+        if (n.includes('titans'))     return 'titans'
+        if (n.includes('warriors'))   return 'warriors'
+        return 'broncos'
+      }
+
+      function formatKickoff(isoString) {
+        const d = new Date(isoString)
+        return d.toLocaleString('en-AU', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' })
+      }
+
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          updateAuthNav()
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+
+      // Explainer toggle
+      document.getElementById('explainer-toggle').addEventListener('click', () => {
+        const body    = document.getElementById('explainer-body')
+        const chevron = document.getElementById('explainer-chevron')
+        const open    = body.style.display === 'none'
+        body.style.display      = open ? 'block' : 'none'
+        chevron.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)'
+      })
+
+      init()
+    </script>
+  </body>
+</html>

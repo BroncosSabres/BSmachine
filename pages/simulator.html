@@ -54,6 +54,10 @@
     </main>
 
     <script type="module" src="../js/impact-simulator.js"></script>
+    <script type="module">
+      import { updateAuthNav } from '../js/supabase-client.js'
+      updateAuthNav()
+    </script>
     <script>
       fetch('../components/header.html')
         .then(res => res.text())

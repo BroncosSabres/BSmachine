@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Welcome — The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      .auth-input {
+        width: 100%;
+        background: #0f1117;
+        border: 1px solid #2e3a4e;
+        border-radius: 8px;
+        padding: 0.625rem 0.875rem;
+        color: #e2e8f0;
+        font-size: 0.9375rem;
+        font-family: 'Barlow', system-ui, sans-serif;
+        transition: border-color 0.15s ease;
+        outline: none;
+      }
+      .auth-input:focus { border-color: #f59e0b; }
+      .auth-input::placeholder { color: #4a5568; }
+      .auth-btn-primary {
+        width: 100%;
+        padding: 0.7rem 1rem;
+        border-radius: 8px;
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        background: #f59e0b;
+        color: #0a0d14;
+        border: none;
+        cursor: pointer;
+        transition: background 0.15s ease;
+      }
+      .auth-btn-primary:hover { background: #fbbf24; }
+      .auth-btn-primary:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+      .auth-error {
+        background: rgba(239,68,68,0.1);
+        border: 1px solid rgba(239,68,68,0.3);
+        border-radius: 8px;
+        padding: 0.625rem 0.875rem;
+        color: #fca5a5;
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
+    <div id="site-header"></div>
+
+    <main class="flex items-center justify-center px-4 py-16 min-h-[calc(100vh-4rem)]">
+      <div style="width:100%; max-width:420px;">
+
+        <div class="text-center mb-8">
+          <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.5rem; font-weight:700; letter-spacing:0.05em; text-transform:uppercase;">
+            THE <span style="color:#fbbf24;">BS</span> MACHINE
+          </div>
+          <div style="color:#8892a4; font-size:0.875rem; margin-top:0.25rem;">One last step before you start tipping</div>
+        </div>
+
+        <div style="background:#161b24; border:1px solid #2e3a4e; border-radius:16px; padding:2rem; box-shadow:0 8px 40px rgba(0,0,0,0.4);">
+
+          <div class="mb-5">
+            <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:1.25rem; font-weight:700; margin-bottom:0.25rem;">Welcome!</div>
+            <div style="color:#8892a4; font-size:0.875rem;">Set up your tipping profile to get started.</div>
+          </div>
+
+          <div id="auth-message" class="mb-4 hidden"></div>
+
+          <form id="onboarding-form" class="flex flex-col gap-4">
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Username</label>
+              <input id="username" type="text" class="auth-input" placeholder="Your display name"
+                     autocomplete="username" required minlength="3" maxlength="24" />
+              <div class="text-xs mt-1" style="color:#4a5568;">3–24 characters, shown on the leaderboard</div>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wider mb-1.5" style="color:#8892a4;">Favourite NRL Team</label>
+              <select id="favourite-team" class="auth-input" style="cursor:pointer;">
+                <option value="">I don't support a team</option>
+                <option value="Broncos">Brisbane Broncos</option>
+                <option value="Raiders">Canberra Raiders</option>
+                <option value="Bulldogs">Canterbury Bulldogs</option>
+                <option value="Sharks">Cronulla Sharks</option>
+                <option value="Dolphins">Dolphins</option>
+                <option value="Titans">Gold Coast Titans</option>
+                <option value="Manly">Manly Sea Eagles</option>
+                <option value="Storm">Melbourne Storm</option>
+                <option value="Knights">Newcastle Knights</option>
+                <option value="Cowboys">North QLD Cowboys</option>
+                <option value="Eels">Parramatta Eels</option>
+                <option value="Panthers">Penrith Panthers</option>
+                <option value="Rabbitohs">South Sydney Rabbitohs</option>
+                <option value="Dragons">St George Illawarra Dragons</option>
+                <option value="Roosters">Sydney Roosters</option>
+                <option value="Warriors">Warriors</option>
+                <option value="Tigers">Wests Tigers</option>
+              </select>
+            </div>
+            <div class="flex items-start gap-2.5">
+              <input id="email-reminders" type="checkbox" style="width:16px;height:16px;margin-top:2px;accent-color:#f59e0b;flex-shrink:0;cursor:pointer;">
+              <label for="email-reminders" style="font-size:0.8125rem;color:#8892a4;line-height:1.5;cursor:pointer;">
+                Send me weekly tipping reminders if I haven't submitted my picks
+              </label>
+            </div>
+            <button type="submit" class="auth-btn-primary mt-1">Let's Go</button>
+          </form>
+        </div>
+      </div>
+    </main>
+
+    <script type="module">
+      import { supabase, getSession } from '../js/supabase-client.js'
+
+      // Must be logged in to reach this page
+      const session = await getSession()
+      if (!session) {
+        window.location.href = '/pages/login.html'
+        throw new Error('Not authenticated')
+      }
+
+      // If they already have a profile, skip onboarding
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      if (existing) {
+        const params = new URLSearchParams(window.location.search)
+        window.location.href = params.get('next') || '/pages/tipping.html'
+      }
+
+      function showError(msg) {
+        const el = document.getElementById('auth-message')
+        el.className = 'mb-4 auth-error'
+        el.textContent = msg
+      }
+
+      document.getElementById('onboarding-form').addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const btn      = e.target.querySelector('button[type=submit]')
+        const username = document.getElementById('username').value.trim()
+        const team     = document.getElementById('favourite-team').value || null
+
+        btn.disabled    = true
+        btn.textContent = 'Saving…'
+
+        // Check username isn't taken
+        const { data: taken } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', username)
+          .maybeSingle()
+
+        if (taken) {
+          showError('That username is already taken. Please choose another.')
+          btn.disabled    = false
+          btn.textContent = "Let's Go"
+          return
+        }
+
+        const emailReminders = document.getElementById('email-reminders').checked
+
+        const { error } = await supabase
+          .from('profiles')
+          .insert({ id: session.user.id, username, favourite_team: team, email_reminders: emailReminders })
+
+        if (error) {
+          showError(error.message)
+          btn.disabled    = false
+          btn.textContent = "Let's Go"
+        } else {
+          const params = new URLSearchParams(window.location.search)
+          window.location.href = params.get('next') || '/pages/tipping.html'
+        }
+      })
+
+      // Load header
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+    </script>
+  </body>
+</html>

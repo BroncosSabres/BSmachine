@@ -15,6 +15,7 @@
     <title>NRL Match Predictions</title>
     <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       .prob-bar-home,
@@ -57,7 +58,7 @@
   <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-5xl mx-auto px-4 py-8 pb-28">
+    <main class="max-w-5xl mx-auto px-4 py-8 pb-12">
       <h1 class="text-4xl font-bold mb-2">Round Predictions</h1>
       <p class="text-gray-400 mb-6 text-sm">Win probabilities and expected scores from the BS Machine model.</p>
 
@@ -73,10 +74,13 @@
           <div id="least-likely"></div>
         </div>
       </div>
-      <div id="betslip" class="sgm-result"></div>
     </main>
 
     <script type="module" src="../js/predictions.js"></script>
+    <script type="module">
+      import { updateAuthNav } from '../js/supabase-client.js'
+      updateAuthNav()
+    </script>
     <script>
       fetch('../components/header.html')
         .then(res => res.text())

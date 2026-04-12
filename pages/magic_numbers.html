@@ -40,6 +40,10 @@
       </div>
     </main>
 
+    <script type="module">
+      import { updateAuthNav } from '../js/supabase-client.js'
+      updateAuthNav()
+    </script>
     <script>
       fetch('../components/header.html')
         .then(res => res.text())

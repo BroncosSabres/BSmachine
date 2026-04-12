@@ -2,70 +2,181 @@
    The BS Machine — Design System
    ================================================ */
 
-/* ---- Navigation links (used in header.html) ---- */
+/* ---- Fonts ---- */
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700&display=swap');
+
+/* ---- Design Tokens ---- */
+:root {
+  --accent:          #f59e0b;   /* amber-500 */
+  --accent-bright:   #fbbf24;   /* amber-400 */
+  --accent-dim:      rgba(245, 158, 11, 0.12);
+  --bg-base:         #0f1117;
+  --bg-surface:      #161b24;
+  --bg-elevated:     #1c2333;
+  --border-subtle:   #252d3a;
+  --border-default:  #2e3a4e;
+  --border-hover:    #435168;
+  --text-primary:    #e2e8f0;
+  --text-secondary:  #8892a4;
+  --text-muted:      #4a5568;
+}
+
+/* ---- Base ---- */
+body {
+  font-family: 'Barlow', system-ui, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1 {
+  font-family: 'Barlow Condensed', system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+
+h2, h3 {
+  font-family: 'Barlow Condensed', system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* ================================================
+   Header
+   ================================================ */
+
+.site-header {
+  background-color: #0a0d14;
+  border-bottom: 1px solid var(--border-subtle);
+  box-shadow: 0 1px 0 rgba(245, 158, 11, 0.15), 0 4px 24px rgba(0, 0, 0, 0.4);
+  position: relative;
+}
+
+/* Amber top rule — the signature broadcast bar */
+.site-header::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--accent) 20%, var(--accent-bright) 50%, var(--accent) 80%, transparent 100%);
+}
+
+.site-logo {
+  font-family: 'Barlow Condensed', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.site-logo:hover {
+  color: #fff;
+}
+
+.site-logo-accent {
+  color: var(--accent-bright);
+}
+
+/* ---- Navigation links ---- */
 .site-nav-link {
-  color: #9ca3af;
-  padding: 0.4rem 0.75rem;
-  border-radius: 6px;
-  font-size: 0.875rem;
+  color: var(--text-secondary);
+  padding: 0.35rem 0.6rem;
+  font-family: 'Barlow', system-ui, sans-serif;
+  font-size: 0.8125rem;
   font-weight: 500;
   text-decoration: none;
+  border-radius: 5px;
   transition: color 0.15s ease, background-color 0.15s ease;
   white-space: nowrap;
+  position: relative;
 }
+
 .site-nav-link:hover {
-  color: #f9fafb;
-  background-color: #374151;
+  color: var(--text-primary);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.site-nav-link.active,
+.site-nav-link[aria-current="page"] {
+  color: var(--accent-bright);
 }
 
 .mobile-nav-link {
   display: block;
-  color: #d1d5db;
+  color: #c4ccd8;
   padding: 0.625rem 1.5rem;
+  font-family: 'Barlow', system-ui, sans-serif;
   font-size: 0.9375rem;
   font-weight: 500;
   text-decoration: none;
   transition: color 0.15s ease, background-color 0.15s ease;
+  border-left: 2px solid transparent;
 }
+
 .mobile-nav-link:hover {
   color: #ffffff;
-  background-color: #374151;
+  background-color: rgba(255, 255, 255, 0.04);
+  border-left-color: var(--accent);
 }
 
-/* ---- Card component ---- */
+/* ================================================
+   Cards
+   ================================================ */
 .card {
-  background-color: #1f2937;
-  border: 1px solid #374151;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
   border-radius: 12px;
   padding: 1.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    0 8px 32px rgba(0, 0, 0, 0.2);
   margin-bottom: 2rem;
+  transition: border-color 0.2s ease;
 }
 
-/* ---- Data tables ---- */
+.card:hover {
+  border-color: var(--border-hover);
+}
+
+/* ================================================
+   Data tables
+   ================================================ */
 .data-table {
   width: 100%;
   border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
 }
 
 .data-table thead th {
-  background-color: #111827;
+  background-color: #0a0d14;
   padding: 0.6875rem 1rem;
   text-align: left;
+  font-family: 'Barlow Condensed', system-ui, sans-serif;
   font-size: 0.6875rem;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: #6b7280;
-  border-bottom: 1px solid #374151;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-default);
   white-space: nowrap;
+}
+
+.data-table thead th:first-child {
+  border-left: 2px solid var(--accent);
+  padding-left: 0.875rem;
 }
 
 .data-table tbody td {
   padding: 0.75rem 1rem;
   border: none;
-  border-bottom: 1px solid #374151;
-  color: #e5e7eb;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
   font-size: 0.9375rem;
 }
 
@@ -73,23 +184,26 @@
   border-bottom: none;
 }
 
-.data-table tbody tr:hover td {
-  background-color: #2d3748;
+.data-table tbody tr {
+  transition: background-color 0.1s ease;
 }
 
-/* ---- Tryscorer SGM result box ---- */
+.data-table tbody tr:hover td {
+  background-color: rgba(245, 158, 11, 0.04);
+}
+
+/* ================================================
+   Betslip / SGM result
+   ================================================ */
 .sgm-result {
-  background-color: #1f2937;
+  background-color: #0d1117;
   color: #bbf7d0;
-  border: 1px solid #4b5563;
-  border-bottom: none;
-  border-left: none;
-  border-right: none;
-  border-top: 1px solid #4b5563;
+  border-top: 1px solid var(--border-default);
   border-radius: 0;
   padding: 0.75em 1em max(0.75em, env(safe-area-inset-bottom)) 1em;
+  font-family: 'Barlow', system-ui, sans-serif;
   font-size: 0.95em;
-  box-shadow: 0 -4px 24px rgba(0,0,0,0.5);
+  box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.6), 0 -1px 0 rgba(245, 158, 11, 0.2);
   min-height: 0;
   position: fixed;
   bottom: 0;
@@ -119,29 +233,31 @@
   margin-top: 0.6em;
   font-size: 1.07em;
   font-weight: 700;
-  color: #fbbf24;
+  color: var(--accent-bright);
   text-align: left;
   letter-spacing: 0.01em;
 }
 
 .sgm-odds {
   font-weight: 800;
-  color: #fbbf24;
+  color: var(--accent-bright);
 }
 
-/* Desktop: anchor to bottom-right, not full-width */
+/* Desktop: anchor to bottom-right */
 @media (min-width: 768px) {
   .sgm-result {
     left: auto;
     right: 1.5rem;
     bottom: 1.5rem;
     width: 300px;
-    border: 1px solid #4b5563;
+    border: 1px solid var(--border-default);
+    border-top: 1px solid rgba(245, 158, 11, 0.3);
     border-radius: 12px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    box-shadow: 0 4px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(245, 158, 11, 0.08);
     font-size: 1.05em;
     padding: 1.15em 1.5em;
   }
+
   .sgm-result.betslip-open {
     max-height: 70vh;
   }

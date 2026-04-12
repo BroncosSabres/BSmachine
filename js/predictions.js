@@ -1,5 +1,6 @@
 // predictions.js
 import { getLatestRoundFolder } from './utils.js';
+import { supabase } from './supabase-client.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -8,8 +9,6 @@ const MIN_ROUND = 0; // folder Round0 = Round 1 predictions
 // --- STATE ---
 let latestRound = 0;
 let currentRound = 0;
-const tips = {};
-let betslipExpanded = false;
 let tryscorerMatchCache = null;
 
 const teamColors = {
@@ -87,6 +86,362 @@ function teamSlug(name) {
 
 function logoUrl(teamName) {
   return `../logos/${teamSlug(teamName)}.svg`;
+}
+
+// --- USER MODEL: STATS HELPERS ---
+function median(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function mean(arr) {
+  return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
+}
+
+// Adaptive bin size: small n = exact values (bin 1), large n = grouped bins
+function adaptiveBinSize(n) {
+  if (n < 5)   return 1;
+  if (n < 15)  return 2;
+  if (n < 40)  return 4;
+  if (n < 100) return 6;
+  return 8;
+}
+
+// Bin raw pick values into a histogram normalised to max=1
+function binPickValues(values, binSize) {
+  if (!values.length) return [];
+  const min = Math.floor(Math.min(...values) / binSize) * binSize;
+  const max = Math.floor(Math.max(...values) / binSize) * binSize;
+  const counts = {};
+  for (let b = min; b <= max; b += binSize) counts[b] = 0;
+  values.forEach(v => {
+    const b = Math.floor(v / binSize) * binSize;
+    counts[b] = (counts[b] || 0) + 1;
+  });
+  const entries = Object.entries(counts).map(([x, c]) => ({ x: Number(x), y: c })).sort((a, b) => a.x - b.x);
+  const maxY = Math.max(...entries.map(e => e.y));
+  return entries.map(e => ({ x: e.x, y: maxY > 0 ? e.y / maxY : 0 }));
+}
+
+// Group machine distribution bins and normalise to max=1 for visual comparison
+function normaliseMachineBins(rawBins, binSize) {
+  const grouped = {};
+  rawBins.forEach(({ x, prob }) => {
+    const b = Math.floor(x / binSize) * binSize;
+    grouped[b] = (grouped[b] || 0) + prob;
+  });
+  const entries = Object.entries(grouped).map(([x, p]) => ({ x: Number(x), y: p })).sort((a, b) => a.x - b.x);
+  const maxY = Math.max(...entries.map(e => e.y));
+  return entries.map(e => ({ x: e.x, y: maxY > 0 ? e.y / maxY : 0 }));
+}
+
+// --- USER MODEL: MACHINE DISTRIBUTION FETCH ---
+const machineDistCache = {};
+const chartInstances   = {};
+
+async function fetchMachineDistributions(matchId) {
+  if (machineDistCache[matchId]) return machineDistCache[matchId];
+  try {
+    const res  = await fetch(`${TRYSCORER_API}/match_score_distributions/${matchId}`);
+    const data = await res.json();
+    if (data.error) return null;
+    machineDistCache[matchId] = data;
+    return data;
+  } catch { return null; }
+}
+
+// --- USER MODEL: PICKS FETCH ---
+const userPicksCache = {};
+
+async function fetchUserPicksForRound(displayRound) {
+  if (userPicksCache[displayRound]) return userPicksCache[displayRound];
+
+  const { data: games } = await supabase
+    .from('games')
+    .select('game_id, home_team, away_team')
+    .eq('round_number', displayRound);
+
+  if (!games?.length) { userPicksCache[displayRound] = { byGame: {}, games: [] }; return userPicksCache[displayRound]; }
+
+  const gameIds = games.map(g => g.game_id);
+  const { data: picks } = await supabase
+    .from('picks')
+    .select('game_id, home_score_pick, away_score_pick')
+    .in('game_id', gameIds);
+
+  const gameMap = {};
+  games.forEach(g => { gameMap[g.game_id] = g; });
+
+  const byGame = {};
+  (picks || []).forEach(p => {
+    if (p.home_score_pick == null || p.away_score_pick == null) return;
+    const g = gameMap[p.game_id];
+    if (!g) return;
+    const key = `${g.game_id}`;
+    if (!byGame[key]) byGame[key] = { home_team: g.home_team, away_team: g.away_team, margins: [], totals: [] };
+    byGame[key].margins.push(p.home_score_pick - p.away_score_pick);
+    byGame[key].totals.push(p.home_score_pick  + p.away_score_pick);
+  });
+
+  userPicksCache[displayRound] = { byGame, games };
+  return userPicksCache[displayRound];
+}
+
+// Returns pick data for a game (always includes matchId from Supabase game_id)
+function findPicksForPrediction(result, homeTeam, awayTeam) {
+  if (!result?.games) return null;
+  const game = result.games.find(g =>
+    teamsMatch(homeTeam, g.home_team) && teamsMatch(awayTeam, g.away_team)
+  );
+  if (!game) return null;
+  const picks = result.byGame[`${game.game_id}`];
+  return { margins: [], totals: [], ...(picks || {}), matchId: game.game_id };
+}
+
+// --- DISTRIBUTION MODAL ---
+let modalMcid = null, modalTcid = null;
+
+function ensureModal() {
+  if (document.getElementById('dist-modal')) return;
+  const el = document.createElement('div');
+  el.id = 'dist-modal';
+  el.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;padding:1rem;';
+  el.innerHTML = `
+    <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:16px;width:100%;max-width:min(900px,calc(100vw - 2rem));max-height:90vh;overflow-y:auto;padding:1.5rem;position:relative;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <div id="dist-modal-title" style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.1rem;font-weight:700;color:#e2e8f0;"></div>
+        <button id="dist-modal-close" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:1.25rem;line-height:1;padding:0.25rem;">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:1.25rem;justify-content:center;font-size:0.75rem;color:#4a5568;margin-bottom:1.25rem;">
+        <span style="display:flex;align-items:center;gap:5px;">
+          <span style="width:18px;height:2px;background:#f59e0b;display:inline-block;border-radius:1px;"></span>BS Machine
+        </span>
+        <span style="display:flex;align-items:center;gap:5px;">
+          <span style="width:12px;height:12px;background:rgba(96,165,250,0.45);display:inline-block;border-radius:2px;border:1px solid rgba(96,165,250,0.7);"></span>User Model
+        </span>
+      </div>
+      <div id="dist-modal-loading" style="text-align:center;color:#4a5568;font-size:0.875rem;padding:2rem;">Loading distributions…</div>
+      <div id="dist-modal-charts" style="display:none;">
+        <div style="margin-bottom:1.5rem;">
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#4a5568;margin-bottom:0.5rem;">Margin (home – away)</div>
+          <canvas id="dist-modal-margin"></canvas>
+        </div>
+        <div>
+          <div style="font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:#4a5568;margin-bottom:0.5rem;">Total Points</div>
+          <canvas id="dist-modal-total"></canvas>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(el);
+
+  el.addEventListener('click', e => { if (e.target === el) closeModal(); });
+  document.getElementById('dist-modal-close').addEventListener('click', closeModal);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+}
+
+function closeModal() {
+  const modal = document.getElementById('dist-modal');
+  if (modal) modal.style.display = 'none';
+  chartInstances['modal-margin']?.destroy(); delete chartInstances['modal-margin'];
+  chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
+}
+
+async function openDistModal(title, pickData, matchId) {
+  ensureModal();
+  const modal    = document.getElementById('dist-modal');
+  const loading  = document.getElementById('dist-modal-loading');
+  const charts   = document.getElementById('dist-modal-charts');
+  const titleEl  = document.getElementById('dist-modal-title');
+
+  // Reset state
+  closeModal();
+  titleEl.textContent = title;
+  loading.style.display = 'block';
+  charts.style.display  = 'none';
+  modal.style.display   = 'flex';
+
+  const machineDist = await fetchMachineDistributions(matchId);
+
+  loading.style.display = 'none';
+  charts.style.display  = 'block';
+
+  function makeChartOptions(xTitle) {
+    return {
+      responsive: true,
+      animation: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: {
+          type: 'linear', offset: false,
+          title: { display: true, text: xTitle, color: '#4a5568', font: { size: 10, weight: '600' }, padding: { top: 4 } },
+          ticks: { maxTicksLimit: 12, color: '#4a5568', font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { color: 'rgba(255,255,255,0.08)' },
+        },
+        y: {
+          display: true,
+          min: 0, max: 1,
+          title: { display: true, text: 'Relative frequency', color: '#4a5568', font: { size: 10, weight: '600' }, padding: { bottom: 4 } },
+          ticks: {
+            color: '#4a5568', font: { size: 9 },
+            stepSize: 0.25,
+            callback: v => `${Math.round(v * 100)}%`,
+          },
+          grid: { color: 'rgba(255,255,255,0.04)' },
+          border: { color: 'rgba(255,255,255,0.08)' },
+        },
+      },
+    };
+  }
+
+  const userBinM       = adaptiveBinSize(pickData.margins.length);
+  const userBinT       = adaptiveBinSize(pickData.totals.length);
+  const userMarginBins = binPickValues(pickData.margins, userBinM);
+  const userTotalBins  = binPickValues(pickData.totals,  userBinT);
+
+  function makeDatasets(machineBins, userBins, machineGroupBin) {
+    const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
+    return [
+      ...(machineData.length ? [{
+        type: 'line',
+        data: machineData.map(d => ({ x: d.x, y: d.y })),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.07)',
+        borderWidth: 2,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.35,
+        order: 2,
+      }] : []),
+      {
+        type: 'bar',
+        data: userBins.map(d => ({ x: d.x, y: d.y })),
+        backgroundColor: 'rgba(96,165,250,0.4)',
+        borderColor: 'rgba(96,165,250,0.7)',
+        borderWidth: 1,
+        barPercentage: 0.85,
+        categoryPercentage: 1,
+        order: 1,
+      },
+    ];
+  }
+
+  const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
+  if (mCtx) {
+    chartInstances['modal-margin'] = new Chart(mCtx, {
+      data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2) },
+      options: makeChartOptions('Margin (home – away, pts)'),
+    });
+  }
+
+  const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
+  if (tCtx) {
+    chartInstances['modal-total'] = new Chart(tCtx, {
+      data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2) },
+      options: makeChartOptions('Total points'),
+    });
+  }
+}
+
+// --- USER MODEL: RENDER ---
+function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScore) {
+  const slot = card.querySelector('.js-user-model');
+  if (!slot) return;
+
+  const n         = pickData?.margins?.length ?? 0;
+  const medMargin = n > 0 ? median(pickData.margins) : null;
+  const medTotal  = n > 0 ? median(pickData.totals)  : null;
+  const matchId   = pickData?.matchId ?? null;
+
+  const userHome = (medMargin !== null && medTotal !== null) ? Math.round((medTotal + medMargin) / 2) : null;
+  const userAway = (medMargin !== null && medTotal !== null) ? Math.round((medTotal - medMargin) / 2) : null;
+
+  // Fraction of picks predicting home win
+  const userHomeWinFrac = n > 0 ? pickData.margins.filter(m => m > 0).length / n : null;
+  const userAwayWinFrac = userHomeWinFrac !== null ? 1 - userHomeWinFrac : null;
+  const userHomeWin     = userHomeWinFrac !== null && userHomeWinFrac >= 0.5;
+  const userHomePct     = userHomeWinFrac !== null ? (userHomeWinFrac * 100).toFixed(1) : null;
+  const userAwayPct     = userAwayWinFrac !== null ? (userAwayWinFrac * 100).toFixed(1) : null;
+  const userHomeOdds    = userHomeWinFrac > 0 ? (1 / userHomeWinFrac).toFixed(2) : null;
+  const userAwayOdds    = userAwayWinFrac > 0 ? (1 / userAwayWinFrac).toFixed(2) : null;
+
+  const homeColor = teamColor(matchKey.split('_v_')[0]);
+  const awayColor = teamColor(matchKey.split('_v_')[1]);
+  const canExpand = n > 0 && matchId !== null;
+  const gameTitle = matchKey.replace('_v_', ' vs ').replace(/_/g, ' ');
+
+  const userBar = n > 0 ? `
+    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
+      <div style="width:${userHomePct}%; background:${homeColor}; height:8px; opacity:${userHomeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6); transition:width 0.6s ease;"></div>
+      <div style="width:${userAwayPct}%; background:${awayColor}; height:8px; opacity:${userHomeWin ? '0.4' : '1'}; transition:width 0.6s ease;"></div>
+    </div>` : `
+    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.1); border-radius:5px; overflow:hidden; height:8px; background:rgba(255,255,255,0.05);"></div>`;
+
+  slot.innerHTML = `
+    <div class="mt-3 pt-3 border-t border-gray-700">
+
+      <!-- DESKTOP layout — mirrors BS model exactly -->
+      <div class="hidden md:flex items-center justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-gray-500">User Model</div>
+        </div>
+        <div class="flex flex-col items-center gap-1.5 w-64">
+          ${n > 0 ? `
+          <div class="flex items-center justify-between w-full text-sm font-bold">
+            <div class="flex flex-col items-start">
+              <span class="${userHomeWin ? 'text-white' : 'text-gray-500'}">${userHomePct}%</span>
+              <span class="text-xs font-normal text-gray-500">${userHomeOdds ? '$' + userHomeOdds : ''}</span>
+            </div>
+            <span class="text-gray-600 text-xs font-normal px-2">vs</span>
+            <div class="flex flex-col items-end">
+              <span class="${!userHomeWin ? 'text-white' : 'text-gray-500'}">${userAwayPct}%</span>
+              <span class="text-xs font-normal text-gray-500">${userAwayOdds ? '$' + userAwayOdds : ''}</span>
+            </div>
+          </div>` : `<div class="text-xs text-gray-600 italic w-full text-center pb-1">No picks yet</div>`}
+          ${userBar}
+          ${userHome !== null ? `<div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${userHome} – ${userAway}</div>` : ''}
+          ${canExpand ? `<button class="js-dist-btn flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-300 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;"><svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${n} pick${n !== 1 ? 's' : ''} · Show Probability Distributions</button>` : `<div class="text-xs text-gray-700 mt-0.5">${n} pick${n !== 1 ? 's' : ''}</div>`}
+        </div>
+        <div class="flex-1 min-w-0"></div>
+      </div>
+
+      <!-- MOBILE layout -->
+      <div class="flex flex-col gap-1 md:hidden">
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-gray-500 font-semibold uppercase tracking-wider">User Model</span>
+          ${canExpand ? `<button class="js-dist-btn flex items-center gap-1 px-2 py-0.5 rounded border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-gray-300 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;font-size:0.7rem;"><svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${n} pick${n !== 1 ? 's' : ''}</button>` : `<span class="text-gray-700 text-xs">${n} pick${n !== 1 ? 's' : ''}</span>`}
+        </div>
+        ${n > 0 ? `
+        <div class="flex items-center justify-between text-sm font-bold">
+          <span class="${userHomeWin ? 'text-white' : 'text-gray-500'}">${userHomePct}%</span>
+          ${userHome !== null ? `<span class="font-mono font-bold text-white">${userHome}–${userAway}</span>` : ''}
+          <span class="${!userHomeWin ? 'text-white' : 'text-gray-500'}">${userAwayPct}%</span>
+        </div>
+        ${userBar}` : `<div class="text-xs text-gray-600 italic">No picks yet</div>`}
+      </div>
+
+    </div>
+  `;
+
+  if (canExpand) {
+    slot.querySelectorAll('.js-dist-btn').forEach(btn => {
+      btn.addEventListener('click', () => openDistModal(`${gameTitle} — Distributions`, pickData, matchId));
+    });
+  }
+}
+
+// --- USER MODEL: OVERLAY ALL CARDS FOR ROUND ---
+async function updateUserModelOverlays(predictions, displayRound) {
+  const result = await fetchUserPicksForRound(displayRound);
+  predictions.forEach(pred => {
+    const matchKey = `${pred.home_team}_v_${pred.away_team}`;
+    const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+    if (!card) return;
+    const pickData = findPicksForPrediction(result, pred.home_team, pred.away_team);
+    renderUserModel(card, matchKey, pickData, pred.home_score, pred.away_score);
+  });
 }
 
 // --- ROUND NAVIGATION ---
@@ -503,8 +858,7 @@ function createMatchCard(data) {
 
     <!-- DESKTOP layout (md+) -->
     <div class="hidden md:flex items-center justify-between gap-4">
-      <div class="team-tip-area flex-1 flex items-center gap-3 min-w-0 p-2 -m-2"
-           data-match-key="${matchKey}" data-team-name="${home_team}">
+      <div class="flex-1 flex items-center gap-3 min-w-0">
         <img src="${logoUrl(home_team)}" alt="${home_team} logo"
              class="w-12 h-12 object-contain shrink-0" onerror="this.style.display='none'">
         <div class="min-w-0">
@@ -527,8 +881,7 @@ function createMatchCard(data) {
         ${bar}
         <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>
       </div>
-      <div class="team-tip-area flex-1 flex items-center justify-end gap-3 min-w-0 p-2 -m-2"
-           data-match-key="${matchKey}" data-team-name="${away_team}">
+      <div class="flex-1 flex items-center justify-end gap-3 min-w-0">
         <div class="min-w-0 text-right">
           <div class="text-base font-semibold leading-tight ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
           <div class="text-xs text-gray-500 mt-0.5">Away</div>
@@ -540,11 +893,8 @@ function createMatchCard(data) {
 
     <!-- MOBILE layout (<md) -->
     <div class="flex flex-col gap-2 md:hidden">
-      <!-- Teams side by side -->
       <div class="flex items-center justify-between gap-2">
-        <!-- Home -->
-        <div class="team-tip-area flex items-center gap-2 flex-1 min-w-0 p-1 -m-1"
-             data-match-key="${matchKey}" data-team-name="${home_team}">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
           <img src="${logoUrl(home_team)}" alt="${home_team} logo"
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
           <div class="min-w-0">
@@ -552,11 +902,8 @@ function createMatchCard(data) {
             <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span> · <span class="text-gray-500">$${homeFairOdds}</span></div>
           </div>
         </div>
-        <!-- Score -->
         <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
-        <!-- Away -->
-        <div class="team-tip-area flex items-center gap-2 flex-1 min-w-0 justify-end p-1 -m-1"
-             data-match-key="${matchKey}" data-team-name="${away_team}">
+        <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
           <div class="min-w-0 text-right">
             <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
             <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span> · <span class="text-gray-500">$${awayFairOdds}</span></div>
@@ -565,27 +912,19 @@ function createMatchCard(data) {
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
         </div>
       </div>
-      <!-- Bar -->
       ${bar}
     </div>
 
-    <!-- Footer row (shared) -->
+    <!-- Footer row: tryscorer only, no tipping -->
     <div class="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
-      <!-- Desktop footer: single row -->
-      <div class="hidden md:flex items-center justify-between">
-        <span>${homeWin ? home_team : away_team} favoured</span>
+      <div class="flex items-center justify-between">
+        <span>${homeWin ? home_team : away_team} favoured · Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
         <span class="js-tryscorer-btn">${tryscorerButtonDisabled()}</span>
-        <span>Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
-      </div>
-      <!-- Mobile footer: two rows -->
-      <div class="flex flex-col gap-2 md:hidden">
-        <div class="flex items-center justify-between">
-          <span>${homeWin ? home_team : away_team} favoured</span>
-          <span>Total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
-        </div>
-        <div class="js-tryscorer-btn flex justify-center"></div>
       </div>
     </div>
+
+    <!-- User Model bar (populated async, sits above Result) -->
+    <div class="js-user-model"></div>
 
     <!-- Result line probability (populated async) -->
     <div class="js-result-prob">
@@ -596,105 +935,9 @@ function createMatchCard(data) {
     </div>
   `;
 
-  card.querySelectorAll('.team-tip-area').forEach(area => {
-    area.addEventListener('click', () => {
-      handleTip(matchKey, area.dataset.teamName, area.dataset.teamName === home_team ? home_perc : away_perc);
-    });
-  });
-
   return card;
 }
 
-// --- TIP / BETSLIP ---
-function handleTip(matchKey, team, perc) {
-  if (tips[matchKey]?.team === team) {
-    delete tips[matchKey];
-  } else {
-    tips[matchKey] = { team, perc };
-  }
-  updateTipAreas(matchKey);
-  renderBetslip();
-}
-
-function updateTipAreas(matchKey) {
-  const selected = tips[matchKey]?.team;
-  document.querySelectorAll(`.team-tip-area[data-match-key="${matchKey}"]`).forEach(area => {
-    area.classList.toggle('tip-area-selected', selected === area.dataset.teamName);
-  });
-}
-
-function renderBetslip() {
-  const betslip = document.getElementById('betslip');
-  const selections = Object.values(tips);
-
-  if (selections.length === 0) {
-    betslip.classList.remove('betslip-open');
-    betslipExpanded = false;
-    betslip.innerHTML = `
-      <div class="flex items-center justify-between md:cursor-default select-none">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Tips</span>
-        <span class="text-xs text-gray-600 md:hidden">tap a team ↑</span>
-      </div>
-      <div class="hidden md:block mt-2 text-sm text-gray-600">Tap a team to start tipping</div>
-    `;
-    return;
-  }
-
-  const combinedProb        = selections.reduce((acc, s) => acc * s.perc, 1);
-  const combinedOdds        = (1 / combinedProb).toFixed(2);
-  const combinedPercDisplay = (combinedProb * 100).toFixed(1);
-  const legLabel            = selections.length === 1 ? 'Single' : `${selections.length}-leg multi`;
-
-  const legsHtml = selections.map(s => `
-    <div class="sgm-pick flex items-center justify-between">
-      <span>${s.team}</span>
-      <div class="text-right">
-        <div class="font-bold text-white">${(s.perc * 100).toFixed(1)}%</div>
-        <div class="text-xs text-gray-500">$${(1 / s.perc).toFixed(2)}</div>
-      </div>
-    </div>
-  `).join('');
-
-  betslip.innerHTML = `
-    <div id="betslip-toggle" class="flex items-center justify-between md:cursor-default select-none">
-      <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Your Tips</span>
-      <div class="flex items-center gap-2 md:hidden">
-        <span class="text-base font-bold text-amber-400">${combinedPercDisplay}%</span>
-        <span id="betslip-chevron" class="text-gray-400 text-xs">${betslipExpanded ? '▼' : '▲'}</span>
-      </div>
-    </div>
-    <div id="betslip-body" class="${betslipExpanded ? '' : 'hidden'} md:block mt-1">
-      <div class="sgm-picks-list">${legsHtml}</div>
-      <div class="sgm-odds-row flex justify-between items-center">
-        <span class="text-sm font-semibold text-gray-300">${legLabel}</span>
-        <div class="text-right">
-          <div class="font-bold text-amber-400">${combinedPercDisplay}%</div>
-          <div class="text-xs text-gray-500">$${combinedOdds}</div>
-        </div>
-      </div>
-      <button id="clear-tips-btn" class="mt-3 w-full px-3 py-1.5 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 text-sm hover:border-red-500 hover:text-red-400 transition-colors">
-        ↺ Clear Tips
-      </button>
-    </div>
-  `;
-
-  betslip.querySelector('#betslip-toggle').addEventListener('click', () => {
-    if (window.innerWidth >= 768) return;
-    betslipExpanded = !betslipExpanded;
-    betslip.classList.toggle('betslip-open', betslipExpanded);
-    betslip.querySelector('#betslip-body').classList.toggle('hidden', !betslipExpanded);
-    betslip.querySelector('#betslip-chevron').textContent = betslipExpanded ? '▼' : '▲';
-  });
-
-  betslip.querySelector('#clear-tips-btn').addEventListener('click', () => {
-    Object.keys(tips).forEach(k => delete tips[k]);
-    document.querySelectorAll('.team-tip-area').forEach(area => {
-      area.classList.remove('tip-area-selected');
-    });
-    betslipExpanded = false;
-    renderBetslip();
-  });
-}
 
 // --- PREDICTION TRACKER ---
 
@@ -1063,10 +1306,6 @@ async function loadRound() {
       </div>
     </div>`).join('');
 
-  // Reset tips when changing rounds
-  Object.keys(tips).forEach(k => delete tips[k]);
-  renderBetslip();
-
   const predictionsPath = `../data/Round${currentRound}/Predictions.txt`;
 
   try {
@@ -1108,6 +1347,9 @@ async function loadRound() {
 
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);
+
+    // Async: overlay user model picks for this round
+    updateUserModelOverlays(predictions, currentRound + 1);
   } catch (err) {
     console.error("Failed to load predictions:", err);
     container.innerHTML = `<p class="text-gray-400">Predictions unavailable for Round ${currentRound}.</p>`;
@@ -1127,7 +1369,6 @@ async function init() {
   }
 
   renderRoundNav();
-  renderBetslip();
   loadRound();
   loadTracker();
 }

@@ -381,6 +381,25 @@ document.addEventListener("DOMContentLoaded", function () {
   function renderTeams(data, matchId) {
     teamsContainer.innerHTML = '';
     if (!allPlayerInputs[matchId]) allPlayerInputs[matchId] = { home: {}, away: {} };
+
+    // Show loading overlay unless both sides already cached
+    const cached = allTryscorerData[matchId];
+    if (!cached || !cached.home || !cached.away) {
+      const overlay = document.createElement('div');
+      overlay.id = 'prob-loading-overlay';
+      overlay.style.cssText = 'position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.75rem;background:rgba(15,17,23,0.85);border-radius:12px;';
+      overlay.innerHTML = `
+        <style>@keyframes bsm-spin{to{transform:rotate(360deg)}}</style>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style="animation:bsm-spin 0.8s linear infinite;">
+          <circle cx="12" cy="12" r="10" stroke="rgba(245,158,11,0.2)" stroke-width="3"/>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9375rem;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#8892a4;">Loading Probabilities…</span>
+      `;
+      // teamsContainer needs position:relative for the overlay to anchor correctly
+      teamsContainer.style.position = 'relative';
+      teamsContainer.appendChild(overlay);
+    }
     const inputs = allPlayerInputs[matchId];
 
     ['home', 'away'].forEach(side => {
@@ -483,7 +502,7 @@ document.addEventListener("DOMContentLoaded", function () {
       // Fetch try probabilities (use cache if already loaded)
       const teamId = players[0]?.team_id;
       if (matchId && teamId) {
-        if (!allTryscorerData[matchId]) allTryscorerData[matchId] = { home: null, away: null };
+        if (!allTryscorerData[matchId]) allTryscorerData[matchId] = { home: null, away: null, _loadingCount: 0 };
 
         const populateAnytime = (tryProbs, tryDist) => {
           players.forEach(p => {
@@ -501,6 +520,13 @@ document.addEventListener("DOMContentLoaded", function () {
           });
         };
 
+        const removeOverlay = () => {
+          if (currentMatchId === matchId) {
+            const overlay = document.getElementById('prob-loading-overlay');
+            if (overlay) overlay.remove();
+          }
+        };
+
         if (allTryscorerData[matchId][side]) {
           // Already cached — repopulate display
           const { tryProbs, tryDist } = allTryscorerData[matchId][side];
@@ -508,22 +534,28 @@ document.addEventListener("DOMContentLoaded", function () {
           if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
             downloadCsvBtn.disabled = false;
           }
+          removeOverlay();
         } else {
+          allTryscorerData[matchId]._loadingCount = (allTryscorerData[matchId]._loadingCount || 0) + 1;
           Promise.all([
             fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
             fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json())
           ]).then(([tryProbs, tryDist]) => {
             allTryscorerData[matchId][side] = { teamName, teamId, players, tryProbs, tryDist };
+            allTryscorerData[matchId]._loadingCount--;
             if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
               downloadCsvBtn.disabled = false;
             }
             populateAnytime(tryProbs, tryDist);
+            if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
           }).catch(() => {
             allTryscorerData[matchId][side] = null;
+            allTryscorerData[matchId]._loadingCount--;
             players.forEach(p => {
               const el = document.getElementById(`anytime-${side}-${p.id}`);
               if (el) { el.textContent = '–'; el.className = 'w-14 text-right text-xs font-semibold text-gray-500'; }
             });
+            if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
           });
         }
       }
@@ -597,6 +629,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     // Tryscorer picks (± margin/total)
+    // Fetch SGM dist ONCE for the whole match (not once per side)
+    const sgmDistPromise = getSgmDist(matchId, margin_type, margin_val, total_type, total_val);
+
     const sidePromises = ['home', 'away'].map(side => {
       const picked = pickedBySide[side];
       if (!picked.length) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
@@ -605,10 +640,13 @@ document.addEventListener("DOMContentLoaded", function () {
       const teamId  = players[0]?.team_id;
       if (!teamId) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
 
-      return Promise.all([
-        fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
-        getSgmDist(matchId, margin_type, margin_val, total_type, total_val)
-      ]).then(([tryProbs, sgmDist]) => {
+      // Use cached tryProbs if we already loaded them for this match/side
+      const cachedProbs = allTryscorerData[matchId]?.[side]?.tryProbs;
+      const tryProbsPromise = cachedProbs
+        ? Promise.resolve(cachedProbs)
+        : fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json());
+
+      return Promise.all([tryProbsPromise, sgmDistPromise]).then(([tryProbs, sgmDist]) => {
         if (!sgmDist || !sgmDist[side + "_try_dist"]) return { side, prob: 0, indivProbs: [], lineProb: null };
         const tryDist     = sgmDist[side + "_try_dist"];
         const sgmProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
@@ -643,15 +681,17 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
+  let _recalcTimer = null;
+
   function recalculateAllOdds() {
     updateResetAllState();
-    // Gather all matchIds that have anything to show
+
+    // Gather active match IDs immediately to decide whether to show loading
     const allIds = new Set([
       ...Object.keys(allPlayerInputs),
       ...Object.keys(matchMargins).filter(mid => matchMargins[mid]),
       ...Object.keys(matchTotals).filter(mid => matchTotals[mid])
     ]);
-
     const activeIds = [...allIds].filter(mid => {
       const inputs = allPlayerInputs[mid] || {};
       const hasPicks = Object.values(inputs.home || {}).some(v => v > 0) ||
@@ -661,12 +701,35 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     if (activeIds.length === 0) {
+      clearTimeout(_recalcTimer);
       renderBetslip([]);
       return;
     }
 
-    Promise.all(activeIds.map(mid => calculateMatchSGM(mid)))
-      .then(results => renderBetslip(results.filter(Boolean)));
+    // Show loading state immediately, then debounce the actual API call
+    renderBetslipLoading();
+    clearTimeout(_recalcTimer);
+    _recalcTimer = setTimeout(() => {
+      Promise.all(activeIds.map(mid => calculateMatchSGM(mid)))
+        .then(results => renderBetslip(results.filter(Boolean)));
+    }, 250);
+  }
+
+  function renderBetslipLoading() {
+    resultDiv.classList.remove('betslip-open');
+    betslipExpanded = false;
+    resultDiv.innerHTML = `
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Betslip</span>
+        <div class="flex items-center gap-2">
+          <svg class="animate-spin h-3.5 w-3.5 text-amber-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+          </svg>
+          <span class="text-xs text-amber-400 font-medium">Calculating…</span>
+        </div>
+      </div>
+    `;
   }
 
   // --- RENDER BETSLIP ---
