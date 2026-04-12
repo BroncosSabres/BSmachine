@@ -1,5 +1,4 @@
 // predictions.js
-import { supabase } from './supabase-client.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -157,34 +156,20 @@ const userPicksCache = {};
 async function fetchUserPicksForRound(displayRound) {
   if (userPicksCache[displayRound]) return userPicksCache[displayRound];
 
-  const { data: games } = await supabase
-    .from('games')
-    .select('game_id, home_team, away_team')
-    .eq('round_number', displayRound);
+  try {
+    const res  = await fetch(`${TRYSCORER_API}/round_picks/${displayRound}/nrl`);
+    const data = await res.json();
+    // Normalise into the same shape the rest of the code expects
+    const byGame = data.byGame || {};
+    // games list (used elsewhere as a fallback array) — derive from byGame keys
+    const games = Object.entries(byGame).map(([game_id, d]) => ({
+      game_id: Number(game_id), home_team: d.home_team, away_team: d.away_team,
+    }));
+    userPicksCache[displayRound] = { byGame, games };
+  } catch {
+    userPicksCache[displayRound] = { byGame: {}, games: [] };
+  }
 
-  if (!games?.length) { userPicksCache[displayRound] = { byGame: {}, games: [] }; return userPicksCache[displayRound]; }
-
-  const gameIds = games.map(g => g.game_id);
-  const { data: picks } = await supabase
-    .from('picks')
-    .select('game_id, home_score_pick, away_score_pick')
-    .in('game_id', gameIds);
-
-  const gameMap = {};
-  games.forEach(g => { gameMap[g.game_id] = g; });
-
-  const byGame = {};
-  (picks || []).forEach(p => {
-    if (p.home_score_pick == null || p.away_score_pick == null) return;
-    const g = gameMap[p.game_id];
-    if (!g) return;
-    const key = `${g.game_id}`;
-    if (!byGame[key]) byGame[key] = { home_team: g.home_team, away_team: g.away_team, margins: [], totals: [] };
-    byGame[key].margins.push(p.home_score_pick - p.away_score_pick);
-    byGame[key].totals.push(p.home_score_pick  + p.away_score_pick);
-  });
-
-  userPicksCache[displayRound] = { byGame, games };
   return userPicksCache[displayRound];
 }
 
@@ -594,7 +579,12 @@ async function buildSeasonRanking() {
     }
   }
 
-  const allMatches = (await Promise.all(roundFetches)).flat();
+  const seenIds = new Set();
+  const allMatches = (await Promise.all(roundFetches)).flat().filter(m => {
+    if (!m.match_id || seenIds.has(m.match_id)) return false;
+    seenIds.add(m.match_id);
+    return true;
+  });
 
   // Compute probabilities for all completed matches in parallel (cache means no double-fetch)
   const entries = await Promise.all(
@@ -645,7 +635,12 @@ async function buildTotalRanking() {
     }
   }
 
-  const allMatches = (await Promise.all(roundFetches)).flat();
+  const seenIds2 = new Set();
+  const allMatches = (await Promise.all(roundFetches)).flat().filter(m => {
+    if (!m.match_id || seenIds2.has(m.match_id)) return false;
+    seenIds2.add(m.match_id);
+    return true;
+  });
 
   const entries = await Promise.all(
     allMatches
