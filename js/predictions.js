@@ -201,6 +201,9 @@ function ensureModal() {
         <span style="display:flex;align-items:center;gap:5px;">
           <span style="width:12px;height:12px;background:rgba(96,165,250,0.45);display:inline-block;border-radius:2px;border:1px solid rgba(96,165,250,0.7);"></span>User Model
         </span>
+        <span id="dist-modal-result-legend" style="display:none;align-items:center;gap:5px;">
+          <span style="width:18px;height:2px;background:#f87171;display:inline-block;border-radius:1px;border-top:2px dashed #f87171;"></span>Result
+        </span>
       </div>
       <div id="dist-modal-loading" style="text-align:center;color:#4a5568;font-size:0.875rem;padding:2rem;">Loading distributions…</div>
       <div id="dist-modal-charts" style="display:none;">
@@ -229,7 +232,7 @@ function closeModal() {
   chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
 }
 
-async function openDistModal(title, pickData, matchId) {
+async function openDistModal(title, pickData, matchId, actualMargin = null, actualTotal = null) {
   ensureModal();
   const modal    = document.getElementById('dist-modal');
   const loading  = document.getElementById('dist-modal-loading');
@@ -247,6 +250,9 @@ async function openDistModal(title, pickData, matchId) {
 
   loading.style.display = 'none';
   charts.style.display  = 'block';
+
+  const resultLegend = document.getElementById('dist-modal-result-legend');
+  if (resultLegend) resultLegend.style.display = actualMargin !== null ? 'flex' : 'none';
 
   function makeChartOptions(xTitle) {
     return {
@@ -281,8 +287,10 @@ async function openDistModal(title, pickData, matchId) {
   const userBinT       = adaptiveBinSize(pickData.totals.length);
   const userMarginBins = binPickValues(pickData.margins, userBinM);
   const userTotalBins  = binPickValues(pickData.totals,  userBinT);
-  function makeDatasets(machineBins, userBins, machineGroupBin) {
+  function makeDatasets(machineBins, userBins, machineGroupBin, actualVal) {
     const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
+    const allY = [...machineData.map(d => d.y), ...userBins.map(d => d.y)];
+    const maxY  = allY.length ? Math.max(...allY) * 1.15 : 0.3;
     return [
       ...(machineData.length ? [{
         type: 'line',
@@ -293,7 +301,7 @@ async function openDistModal(title, pickData, matchId) {
         pointRadius: 0,
         fill: true,
         tension: 0.35,
-        order: 2,
+        order: 3,
       }] : []),
       {
         type: 'bar',
@@ -303,15 +311,26 @@ async function openDistModal(title, pickData, matchId) {
         borderWidth: 1,
         barPercentage: 0.85,
         categoryPercentage: 1,
-        order: 1,
+        order: 2,
       },
+      ...(actualVal !== null && actualVal !== undefined ? [{
+        type: 'line',
+        data: [{ x: actualVal, y: 0 }, { x: actualVal, y: maxY }],
+        borderColor: '#f87171',
+        borderWidth: 2,
+        borderDash: [5, 3],
+        pointRadius: 0,
+        fill: false,
+        tension: 0,
+        order: 1,
+      }] : []),
     ];
   }
 
   const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
   if (mCtx) {
     chartInstances['modal-margin'] = new Chart(mCtx, {
-      data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2) },
+      data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin) },
       options: makeChartOptions('Margin (home – away, pts)'),
     });
   }
@@ -319,7 +338,7 @@ async function openDistModal(title, pickData, matchId) {
   const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
   if (tCtx) {
     chartInstances['modal-total'] = new Chart(tCtx, {
-      data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2) },
+      data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal) },
       options: makeChartOptions('Total points'),
     });
   }
@@ -407,7 +426,13 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
 
   if (canExpand) {
     slot.querySelectorAll('.js-dist-btn').forEach(btn => {
-      btn.addEventListener('click', () => openDistModal(`${gameTitle} — Distributions`, pickData, matchId));
+      btn.addEventListener('click', () => {
+        const hs = typeof modelHomeScore === 'number' ? modelHomeScore : null;
+        const as = typeof modelAwayScore === 'number' ? modelAwayScore : null;
+        const aMargin = (hs !== null && as !== null) ? hs - as : null;
+        const aTotal  = (hs !== null && as !== null) ? hs + as : null;
+        openDistModal(`${gameTitle} — Distributions`, pickData, matchId, aMargin, aTotal);
+      });
     });
   }
 }
@@ -430,7 +455,7 @@ function renderRoundNav() {
   if (!nav) return;
 
   const options = [];
-  for (let r = latestRound; r >= 1; r--) {
+  for (let r = 1; r <= latestRound; r++) {
     const label = r === currentRound ? `Round ${r} (Current)` : `Round ${r}`;
     options.push(`<option value="${r}" ${r === currentRound ? 'selected' : ''}>${label}</option>`);
   }
@@ -442,7 +467,10 @@ function renderRoundNav() {
     </select>
   `;
 
-  nav.querySelector('#round-select').addEventListener('change', function () {
+  const sel = nav.querySelector('#round-select');
+  sel.value = String(currentRound);
+
+  sel.addEventListener('change', function () {
     currentRound = Number(this.value);
     loadRound();
   });
@@ -946,7 +974,7 @@ async function fetchPredictionsForRound(roundNumber) {
 
 const TRACKER_BUCKETS = ['0–10%','10–20%','20–30%','30–40%','40–50%','50–60%','60–70%','70–80%','80–90%','90–100%'];
 let trackerEntries = null; // raw entries: { roundFolder, prob, won, predictedTotal, actualTotal }
-let trackerFilter  = 'season'; // 'season' | 'last10' | 'last5'
+let trackerFilter  = 'last5'; // 'season' | 'last10' | 'last5'
 
 async function buildTrackerEntries() {
   if (trackerEntries) return trackerEntries;
@@ -1000,7 +1028,8 @@ async function buildTrackerEntries() {
 function applyTrackerFilter(entries) {
   if (trackerFilter === 'season') return entries;
   const n = trackerFilter === 'last5' ? 5 : 10;
-  return entries.filter(e => e.roundFolder >= latestRound - n + 1);
+  const maxRound = Math.max(...entries.map(e => e.roundFolder));
+  return entries.filter(e => e.roundFolder >= maxRound - n + 1);
 }
 
 function bucketEntries(entries) {
@@ -1137,7 +1166,7 @@ function renderLeastLikely(ranking) {
 // --- TOTALS TRACKER ---
 
 let totalTrackerEntries = null;
-let totalTrackerFilter  = 'season';
+let totalTrackerFilter  = 'last5';
 
 async function buildTotalTrackerEntries() {
   if (totalTrackerEntries) return totalTrackerEntries;
@@ -1192,7 +1221,8 @@ async function buildTotalTrackerEntries() {
 function applyTotalTrackerFilter(entries) {
   if (totalTrackerFilter === 'season') return entries;
   const n = totalTrackerFilter === 'last5' ? 5 : 10;
-  return entries.filter(e => e.roundFolder >= latestRound - n + 1);
+  const maxRound = Math.max(...entries.map(e => e.roundFolder));
+  return entries.filter(e => e.roundFolder >= maxRound - n + 1);
 }
 
 function renderTotalsTracker() {
