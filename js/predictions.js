@@ -228,6 +228,8 @@ function ensureModal() {
 function closeModal() {
   const modal = document.getElementById('dist-modal');
   if (modal) modal.style.display = 'none';
+  const tt = document.getElementById('dist-chart-tooltip');
+  if (tt) tt.style.display = 'none';
   chartInstances['modal-margin']?.destroy(); delete chartInstances['modal-margin'];
   chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
 }
@@ -254,11 +256,111 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const resultLegend = document.getElementById('dist-modal-result-legend');
   if (resultLegend) resultLegend.style.display = actualMargin !== null ? 'flex' : 'none';
 
-  function makeChartOptions(xTitle) {
+  // Crosshair plugin — draws a faint vertical line at the cursor
+  const crosshairPlugin = {
+    id: 'crosshair',
+    afterDraw(chart) {
+      if (chart._crosshairX == null) return;
+      const { ctx, chartArea: { top, bottom } } = chart;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(chart._crosshairX, top);
+      ctx.lineTo(chart._crosshairX, bottom);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
+  // Ensure a single shared tooltip div exists in the modal
+  function ensureTooltipEl() {
+    let el = document.getElementById('dist-chart-tooltip');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'dist-chart-tooltip';
+      el.style.cssText = `
+        position:absolute; pointer-events:none; display:none;
+        background:#0f1117; border:1px solid #2e3a4e; border-radius:8px;
+        padding:0.5rem 0.75rem; font-size:0.72rem; color:#e2e8f0;
+        line-height:1.6; white-space:nowrap; z-index:99999;
+        font-family:'Barlow',system-ui,sans-serif; box-shadow:0 4px 16px rgba(0,0,0,0.5);
+      `;
+      document.body.appendChild(el);
+    }
+    return el;
+  }
+
+  function cdf(bins, x) {
+    // bins: [{x, y}] normalised probabilities
+    let gte = 0, lte = 0;
+    for (const b of bins) {
+      if (b.x >= x) gte += b.y;
+      if (b.x <= x) lte += b.y;
+    }
+    return { gte: Math.min(gte, 1), lte: Math.min(lte, 1) };
+  }
+
+  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn) {
     return {
       responsive: true,
       animation: false,
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+      },
+      onHover: (event, _elements, chart) => {
+        const tooltipEl = ensureTooltipEl();
+        if (!event.native) { chart._crosshairX = null; chart.draw(); tooltipEl.style.display = 'none'; return; }
+        chart._crosshairX = event.x;
+        chart.draw();
+
+        // Get x value at cursor
+        const xScale = chart.scales.x;
+        if (!xScale) { tooltipEl.style.display = 'none'; return; }
+        const xVal = xScale.getValueForPixel(event.x);
+        if (xVal == null) { tooltipEl.style.display = 'none'; return; }
+
+        // Find nearest bin x in either dataset
+        const allXs = [...machineBinsRef.map(b => b.x), ...userBinsRef.map(b => b.x)];
+        if (!allXs.length) { tooltipEl.style.display = 'none'; return; }
+        const nearest = allXs.reduce((a, b) => Math.abs(b - xVal) < Math.abs(a - xVal) ? b : a);
+
+        const mc = machineBinsRef.length ? cdf(machineBinsRef, nearest) : null;
+        const uc = userBinsRef.length    ? cdf(userBinsRef,    nearest) : null;
+
+        const pct = v => `${(v * 100).toFixed(1)}%`;
+        const labels = xLabelFn ? xLabelFn(nearest) : { over: `≥${nearest}`, under: `<${nearest}` };
+        const odds = p => p > 0 ? `$${(1 / p).toFixed(2)}` : '—';
+        const row = (label, p) => `
+          <div style="display:flex;justify-content:space-between;gap:1.5rem;">
+            <span>${label}</span>
+            <span style="font-variant-numeric:tabular-nums;">${pct(p)} <span style="color:#4a5568;">${odds(p)}</span></span>
+          </div>`;
+        let html = '';
+        if (mc) html += `
+          <div style="color:#f59e0b;font-weight:600;margin-bottom:0.15rem;">BS Machine</div>
+          ${row(labels.over, mc.gte)}${row(labels.under, 1 - mc.gte)}`;
+        if (uc) html += `
+          <div style="color:#60a5fa;font-weight:600;margin-top:0.4rem;margin-bottom:0.15rem;">User Model</div>
+          ${row(labels.over, uc.gte)}${row(labels.under, 1 - uc.gte)}`;
+
+        tooltipEl.innerHTML = html;
+        tooltipEl.style.display = 'block';
+
+        const canvasRect = event.native.target.getBoundingClientRect();
+        let left = canvasRect.left + window.scrollX + event.x + 12;
+        let top  = canvasRect.top  + window.scrollY + event.y - 10;
+        // Prevent overflow off right edge
+        tooltipEl.style.left = `${left}px`;
+        tooltipEl.style.top  = `${top}px`;
+        // After render, check right edge
+        const ttRect = tooltipEl.getBoundingClientRect();
+        if (ttRect.right > window.innerWidth - 8) {
+          tooltipEl.style.left = `${left - ttRect.width - 24}px`;
+        }
+      },
       scales: {
         x: {
           type: 'linear', offset: false,
@@ -327,20 +429,44 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     ];
   }
 
+  const machineMBins = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 2) : [];
+  const machineTBins = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  2) : [];
+
+  const homeTeam = pickData?.home_team || 'Home';
+  const awayTeam = pickData?.away_team || 'Away';
+
+  const marginLabelFn = x => {
+    if (x === 0) return { over: 'Home win / Draw', under: 'Away win / Draw' };
+    const winner = x > 0 ? homeTeam : awayTeam;
+    const loser  = x > 0 ? awayTeam : homeTeam;
+    const line   = (Math.abs(x) - 0.5).toFixed(1);
+    return { over: `${winner} -${line}`, under: `${loser} +${line}` };
+  };
+  const totalLabelFn = x => {
+    const line = (x - 0.5).toFixed(1);
+    return { over: `Over ${line}`, under: `Under ${line}` };
+  };
+
+  const hideTooltip = () => { const el = document.getElementById('dist-chart-tooltip'); if (el) el.style.display = 'none'; };
+
   const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
   if (mCtx) {
     chartInstances['modal-margin'] = new Chart(mCtx, {
       data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin) },
-      options: makeChartOptions('Margin (home – away, pts)'),
+      options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn),
+      plugins: [crosshairPlugin],
     });
+    mCtx.canvas.addEventListener('mouseleave', hideTooltip);
   }
 
   const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
   if (tCtx) {
     chartInstances['modal-total'] = new Chart(tCtx, {
       data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal) },
-      options: makeChartOptions('Total points'),
+      options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn),
+      plugins: [crosshairPlugin],
     });
+    tCtx.canvas.addEventListener('mouseleave', hideTooltip);
   }
 }
 
