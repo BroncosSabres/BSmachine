@@ -194,16 +194,22 @@ function ensureModal() {
         <div id="dist-modal-title" style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.1rem;font-weight:700;color:#e2e8f0;"></div>
         <button id="dist-modal-close" style="background:none;border:none;color:#4a5568;cursor:pointer;font-size:1.25rem;line-height:1;padding:0.25rem;">✕</button>
       </div>
-      <div style="display:flex;align-items:center;gap:1.25rem;justify-content:center;font-size:0.75rem;color:#4a5568;margin-bottom:1.25rem;">
-        <span style="display:flex;align-items:center;gap:5px;">
-          <span style="width:18px;height:2px;background:#f59e0b;display:inline-block;border-radius:1px;"></span>BS Machine
-        </span>
-        <span style="display:flex;align-items:center;gap:5px;">
-          <span style="width:12px;height:12px;background:rgba(96,165,250,0.45);display:inline-block;border-radius:2px;border:1px solid rgba(96,165,250,0.7);"></span>User Model
-        </span>
-        <span id="dist-modal-result-legend" style="display:none;align-items:center;gap:5px;">
-          <span style="width:18px;height:2px;background:#f87171;display:inline-block;border-radius:1px;border-top:2px dashed #f87171;"></span>Result
-        </span>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;">
+        <div style="display:flex;align-items:center;gap:1.25rem;font-size:0.75rem;color:#4a5568;">
+          <span style="display:flex;align-items:center;gap:5px;">
+            <span style="width:18px;height:2px;background:#f59e0b;display:inline-block;border-radius:1px;"></span>BS Machine
+          </span>
+          <span style="display:flex;align-items:center;gap:5px;">
+            <span style="width:12px;height:12px;background:rgba(96,165,250,0.45);display:inline-block;border-radius:2px;border:1px solid rgba(96,165,250,0.7);"></span>User Model
+          </span>
+          <span id="dist-modal-result-legend" style="display:none;align-items:center;gap:5px;">
+            <span style="width:18px;height:2px;background:#f87171;display:inline-block;border-radius:1px;border-top:2px dashed #f87171;"></span>Result
+          </span>
+        </div>
+        <div id="dist-mode-toggle" style="display:flex;gap:2px;background:#0f1117;border:1px solid #2e3a4e;border-radius:6px;padding:2px;">
+          <button id="dist-toggle-pdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:#f59e0b;color:#0a0d14;">PDF</button>
+          <button id="dist-toggle-cdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;">CDF</button>
+        </div>
       </div>
       <div id="dist-modal-loading" style="text-align:center;color:#4a5568;font-size:0.875rem;padding:2rem;">Loading distributions…</div>
       <div id="dist-modal-charts" style="display:none;">
@@ -302,7 +308,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     return { gte: Math.min(gte, 1), lte: Math.min(lte, 1) };
   }
 
-  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn) {
+  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf') {
     return {
       responsive: true,
       animation: false,
@@ -372,10 +378,15 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         y: {
           display: true,
           min: 0,
-          title: { display: true, text: 'Relative frequency', color: '#4a5568', font: { size: 10, weight: '600' }, padding: { bottom: 4 } },
+          ...(mode === 'cdf' ? { max: 1 } : {}),
+          title: {
+            display: true,
+            text: mode === 'cdf' ? 'Cumulative probability' : 'Relative frequency',
+            color: '#4a5568', font: { size: 10, weight: '600' }, padding: { bottom: 4 },
+          },
           ticks: {
             color: '#4a5568', font: { size: 9 },
-            stepSize: 0.25,
+            ...(mode === 'cdf' ? { stepSize: 0.25 } : { stepSize: 0.25 }),
             callback: v => `${Math.round(v * 100)}%`,
           },
           grid: { color: 'rgba(255,255,255,0.04)' },
@@ -389,8 +400,63 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const userBinT       = adaptiveBinSize(pickData.totals.length);
   const userMarginBins = binPickValues(pickData.margins, userBinM);
   const userTotalBins  = binPickValues(pickData.totals,  userBinT);
-  function makeDatasets(machineBins, userBins, machineGroupBin, actualVal) {
+
+  // Build sorted cumulative bins from normalised {x,y} bins.
+  // Sentinel points anchor the curve to 0 before the first bin and 1 after the last.
+  function toCdf(bins) {
+    if (!bins.length) return [];
+    const sorted = [...bins].sort((a, b) => a.x - b.x);
+    let cum = 0;
+    const points = sorted.map(b => { cum += b.y; return { x: b.x, y: Math.min(cum, 1) }; });
+    return [
+      { x: sorted[0].x - 1, y: 0 },
+      ...points,
+      { x: points[points.length - 1].x + 1, y: 1 },
+    ];
+  }
+
+  function makeDatasets(machineBins, userBins, machineGroupBin, actualVal, mode = 'pdf') {
     const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
+    if (mode === 'cdf') {
+      const machineCdf = toCdf(machineData);
+      const userCdf    = toCdf(userBins);
+      return [
+        ...(machineCdf.length ? [{
+          type: 'line',
+          data: machineCdf,
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,0.07)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0,
+          order: 3,
+        }] : []),
+        ...(userCdf.length ? [{
+          type: 'line',
+          data: userCdf,
+          borderColor: 'rgba(96,165,250,0.9)',
+          backgroundColor: 'rgba(96,165,250,0.07)',
+          borderWidth: 2,
+          pointRadius: 0,
+          fill: true,
+          tension: 0,
+          order: 2,
+        }] : []),
+        ...(actualVal !== null && actualVal !== undefined ? [{
+          type: 'line',
+          data: [{ x: actualVal, y: 0 }, { x: actualVal, y: 1 }],
+          borderColor: '#f87171',
+          borderWidth: 2,
+          borderDash: [5, 3],
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+          order: 1,
+        }] : []),
+      ];
+    }
+    // PDF mode
     const allY = [...machineData.map(d => d.y), ...userBins.map(d => d.y)];
     const maxY  = allY.length ? Math.max(...allY) * 1.15 : 0.3;
     return [
@@ -436,11 +502,16 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const awayTeam = pickData?.away_team || 'Away';
 
   const marginLabelFn = x => {
-    if (x === 0) return { over: 'Home win / Draw', under: 'Away win / Draw' };
-    const winner = x > 0 ? homeTeam : awayTeam;
-    const loser  = x > 0 ? awayTeam : homeTeam;
-    const line   = (Math.abs(x) - 0.5).toFixed(1);
-    return { over: `${winner} -${line}`, under: `${loser} +${line}` };
+    if (x >= 0) {
+      const line = x === 0 ? '0.5' : (x - 0.5).toFixed(1);
+      return { over: `${homeTeam} -${line}`, under: `${awayTeam} +${line}` };
+    } else {
+      // Away team is winning at this margin. Keep winner-/loser+ convention:
+      // awayTeam -line = away gives points (covers only if they win by even more) → low prob → under
+      // homeTeam +line = home receives points (covers easily) → high prob → over
+      const line = (-x - 0.5).toFixed(1);
+      return { over: `${homeTeam} +${line}`, under: `${awayTeam} -${line}` };
+    }
   };
   const totalLabelFn = x => {
     const line = (x - 0.5).toFixed(1);
@@ -449,25 +520,45 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
 
   const hideTooltip = () => { const el = document.getElementById('dist-chart-tooltip'); if (el) el.style.display = 'none'; };
 
-  const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
-  if (mCtx) {
-    chartInstances['modal-margin'] = new Chart(mCtx, {
-      data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin) },
-      options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn),
-      plugins: [crosshairPlugin],
-    });
-    mCtx.canvas.addEventListener('mouseleave', hideTooltip);
+  function renderCharts(mode) {
+    chartInstances['modal-margin']?.destroy(); delete chartInstances['modal-margin'];
+    chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
+
+    const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
+    if (mCtx) {
+      chartInstances['modal-margin'] = new Chart(mCtx, {
+        data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin, mode) },
+        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode),
+        plugins: [crosshairPlugin],
+      });
+      mCtx.canvas.addEventListener('mouseleave', hideTooltip);
+    }
+
+    const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
+    if (tCtx) {
+      chartInstances['modal-total'] = new Chart(tCtx, {
+        data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal, mode) },
+        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode),
+        plugins: [crosshairPlugin],
+      });
+      tCtx.canvas.addEventListener('mouseleave', hideTooltip);
+    }
   }
 
-  const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
-  if (tCtx) {
-    chartInstances['modal-total'] = new Chart(tCtx, {
-      data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal) },
-      options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn),
-      plugins: [crosshairPlugin],
-    });
-    tCtx.canvas.addEventListener('mouseleave', hideTooltip);
+  renderCharts('pdf');
+
+  // Toggle buttons
+  const pdfBtn = document.getElementById('dist-toggle-pdf');
+  const cdfBtn = document.getElementById('dist-toggle-cdf');
+  function setMode(mode) {
+    const active   = { background: '#f59e0b', color: '#0a0d14' };
+    const inactive = { background: 'transparent', color: '#4a5568' };
+    Object.assign(pdfBtn.style, mode === 'pdf' ? active : inactive);
+    Object.assign(cdfBtn.style, mode === 'cdf' ? active : inactive);
+    renderCharts(mode);
   }
+  pdfBtn.onclick = () => setMode('pdf');
+  cdfBtn.onclick = () => setMode('cdf');
 }
 
 // --- USER MODEL: RENDER ---
@@ -1247,12 +1338,11 @@ function renderLeastLikely(ranking) {
   if (!el) return;
   const top5 = ranking.slice(0, 5);
 
-  const cardsHtml = top5.map((e, i) => {
+  const cardsHtml = top5.map(e => {
     const probPct = (e.prob * 100).toFixed(1);
     const hColor  = teamColor(e.home_team);
     const aColor  = teamColor(e.away_team);
     const homeWon = e.home_score > e.away_score;
-    const winnerColor = homeWon ? hColor : aColor;
 
     const bar = `
       <div class="flex w-full items-center mt-2" style="border:1px solid rgba(255,255,255,0.15); border-radius:4px; overflow:hidden; height:6px;">
