@@ -126,19 +126,18 @@
       const session = await getSession()
       if (!session) {
         window.location.href = '/pages/login.html'
-        throw new Error('Not authenticated')
-      }
+      } else {
+        // If they've already completed onboarding, skip this page
+        const { data: existing } = await supabase
+          .from('profiles')
+          .select('onboarding_complete')
+          .eq('id', session.user.id)
+          .maybeSingle()
 
-      // If they already have a profile, skip onboarding
-      const { data: existing } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('id', session.user.id)
-        .maybeSingle()
-
-      if (existing) {
-        const params = new URLSearchParams(window.location.search)
-        window.location.href = params.get('next') || '/pages/tipping.html'
+        if (existing?.onboarding_complete) {
+          const params = new URLSearchParams(window.location.search)
+          window.location.href = params.get('next') || '/pages/tipping.html'
+        }
       }
 
       function showError(msg) {
@@ -156,11 +155,12 @@
         btn.disabled    = true
         btn.textContent = 'Saving…'
 
-        // Check username isn't taken
+        // Check username isn't taken by someone else
         const { data: taken } = await supabase
           .from('profiles')
           .select('id')
           .eq('username', username)
+          .neq('id', session.user.id)
           .maybeSingle()
 
         if (taken) {
@@ -174,7 +174,8 @@
 
         const { error } = await supabase
           .from('profiles')
-          .insert({ id: session.user.id, username, favourite_team: team, email_reminders: emailReminders })
+          .update({ username, favourite_team: team, email_reminders: emailReminders, onboarding_complete: true })
+          .eq('id', session.user.id)
 
         if (error) {
           showError(error.message)

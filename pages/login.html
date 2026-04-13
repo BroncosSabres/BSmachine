@@ -118,6 +118,11 @@
               <input id="signin-password" type="password" class="auth-input" placeholder="••••••••" autocomplete="current-password" required />
             </div>
             <button type="submit" class="auth-btn-primary mt-1">Sign In</button>
+            <div class="text-center mt-1">
+              <button type="button" id="forgot-btn" class="text-xs" style="background:none;border:none;color:#4a5568;cursor:pointer;text-decoration:underline;padding:0;">
+                Forgot password?
+              </button>
+            </div>
           </form>
 
           <!-- SIGN UP FORM (hidden initially) -->
@@ -173,6 +178,18 @@
           </form>
 
           <!-- Divider -->
+          <div class="flex items-center gap-3 my-5">
+            <div style="flex:1;height:1px;background:#2e3a4e;"></div>
+            <span style="font-size:0.75rem;color:#4a5568;font-weight:600;">OR</span>
+            <div style="flex:1;height:1px;background:#2e3a4e;"></div>
+          </div>
+
+          <!-- Google Sign In -->
+          <button id="google-btn" type="button"
+            style="width:100%;display:flex;align-items:center;justify-content:center;gap:0.75rem;padding:0.65rem 1rem;border-radius:8px;background:#fff;color:#1f2937;font-family:'Barlow',system-ui,sans-serif;font-size:0.9375rem;font-weight:600;border:none;cursor:pointer;transition:background 0.15s ease;">
+            <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.08 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-3.59-13.46-8.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+            Continue with Google
+          </button>
         </div>
 
         <!-- Footer -->
@@ -266,6 +283,34 @@
       function getRedirect() {
         return safeNext()
       }
+
+      // --- Forgot Password ---
+      document.getElementById('forgot-btn').addEventListener('click', async () => {
+        const email = document.getElementById('signin-email').value.trim()
+        if (!email) {
+          showError('Enter your email address above first.')
+          return
+        }
+        clearMessage()
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: 'https://bsmachine.dev/pages/reset-password.html',
+        })
+        if (error) {
+          showError(error.message)
+        } else {
+          showSuccess('Password reset email sent — check your inbox.')
+        }
+      })
+
+      // --- Google Sign In ---
+      document.getElementById('google-btn').addEventListener('click', async () => {
+        await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            redirectTo: `${window.location.origin}/pages/onboarding.html`,
+          },
+        })
+      })
 
       // --- Sign In ---
       signinForm.addEventListener('submit', async (e) => {

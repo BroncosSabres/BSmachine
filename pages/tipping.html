@@ -297,6 +297,8 @@
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
       const session = await getSession()
+      const userId = session?.user?.id ?? null
+
       if (!session) {
         document.getElementById('picks-container').innerHTML = `
           <div class="pick-card text-center py-10">
@@ -312,9 +314,7 @@
             </a>
           </div>`
         document.getElementById('submit-bar').classList.add('hidden')
-        throw new Error('Not authenticated')
-      }
-      const userId = session.user.id
+      } else {
 
       // picks[gameId] = { home: int, away: int }
       const picks = {}
@@ -823,6 +823,18 @@
         return d.toLocaleString('en-AU', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' })
       }
 
+        // Explainer toggle
+        document.getElementById('explainer-toggle').addEventListener('click', () => {
+          const body    = document.getElementById('explainer-body')
+          const chevron = document.getElementById('explainer-chevron')
+          const open    = body.style.display === 'none'
+          body.style.display      = open ? 'block' : 'none'
+          chevron.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)'
+        })
+
+        init()
+      } // end else (authenticated)
+
       fetch('../components/header.html')
         .then(r => r.text())
         .then(html => {
@@ -836,17 +848,6 @@
           const menu   = document.getElementById('mobile-menu')
           if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
         })
-
-      // Explainer toggle
-      document.getElementById('explainer-toggle').addEventListener('click', () => {
-        const body    = document.getElementById('explainer-body')
-        const chevron = document.getElementById('explainer-chevron')
-        const open    = body.style.display === 'none'
-        body.style.display      = open ? 'block' : 'none'
-        chevron.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)'
-      })
-
-      init()
     </script>
   </body>
 </html>

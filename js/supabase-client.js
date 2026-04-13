@@ -38,14 +38,14 @@ export async function requireAuth() {
     return null
   }
 
-  // Check profile exists (Google OAuth users may have skipped onboarding)
+  // Check profile exists and onboarding is complete
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id')
+    .select('id, onboarding_complete')
     .eq('id', session.user.id)
     .maybeSingle()
 
-  if (!profile) {
+  if (!profile || !profile.onboarding_complete) {
     const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
     window.location.href = `/pages/onboarding.html?next=${returnTo}`
     return null
