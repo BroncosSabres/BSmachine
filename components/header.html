@@ -16,7 +16,6 @@
       <a href="/pages/tracker.html"               class="site-nav-link">Tracker</a>
       <a href="/pages/magic_numbers.html"         class="site-nav-link">Magic Numbers</a>
       <a href="/pages/tryscorer_predictions.html" class="site-nav-link">Tryscorers</a>
-      <a href="/pages/about.html"                 class="site-nav-link">About</a>
     </nav>
 
     <!-- Right: auth nav + BMC + hamburger -->
@@ -47,7 +46,23 @@
       <a href="/pages/tracker.html"               class="mobile-nav-link">Season Tracker</a>
       <a href="/pages/magic_numbers.html"         class="mobile-nav-link">Magic Numbers</a>
       <a href="/pages/tryscorer_predictions.html" class="mobile-nav-link">Tryscorer Predictions</a>
-      <a href="/pages/about.html"                 class="mobile-nav-link">About</a>
     </nav>
+    <div style="border-top:1px solid #1e2a3a; padding:0.5rem 1.5rem 0.75rem; display:flex; gap:1rem;">
+      <a href="/pages/terms.html"   style="font-size:0.75rem; color:#4a5568; text-decoration:none;" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#4a5568'">Terms &amp; Conditions</a>
+      <a href="/pages/privacy.html" style="font-size:0.75rem; color:#4a5568; text-decoration:none;" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#4a5568'">Privacy Policy</a>
+    </div>
   </div>
 </header>
+
+<!-- Prize Banner -->
+<div id="prize-banner" class="prize-banner" style="display:none;">
+  <div class="prize-banner-inner">
+    <span class="prize-banner-trophy" aria-hidden="true">&#127942;</span>
+    <span class="prize-banner-text">
+      Win the round this week and <strong>win a $50 Gift Card!</strong>
+    </span>
+    <a href="/pages/tipping.html" class="prize-banner-cta">Tip Now &rarr;</a>
+    <button class="prize-banner-close" onclick="dismissPrizeBanner()" aria-label="Dismiss">&times;</button>
+  </div>
+</div>
+

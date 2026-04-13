@@ -43,10 +43,16 @@
               <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Current data</div>
               <div id="round-badge" class="text-2xl font-bold text-white">—</div>
             </div>
-            <a href="pages/rankings.html"
-               class="text-xs font-medium transition-colors" style="color:#fbbf24;" onmouseover="this.style.color='#fde68a'" onmouseout="this.style.color='#fbbf24'">
-              View Rankings →
-            </a>
+            <div class="flex flex-col items-end gap-1.5">
+              <a href="pages/rankings.html"
+                 class="text-xs font-medium transition-colors" style="color:#fbbf24;" onmouseover="this.style.color='#fde68a'" onmouseout="this.style.color='#fbbf24'">
+                View Rankings →
+              </a>
+              <a href="pages/matchups.html"
+                 class="text-xs font-medium transition-colors" style="color:#fbbf24;" onmouseover="this.style.color='#fde68a'" onmouseout="this.style.color='#fbbf24'">
+                View Predictions →
+              </a>
+            </div>
           </div>
 
           <!-- Who's Hot -->
@@ -168,5 +174,7 @@
           }
         });
     </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
   </body>
 </html>

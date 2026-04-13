@@ -193,6 +193,126 @@ h2, h3 {
 }
 
 /* ================================================
+   Site Footer
+   ================================================ */
+
+.site-footer-bar {
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 3rem;
+  padding: 1.25rem 1rem;
+  font-family: 'Barlow', system-ui, sans-serif;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.site-footer-inner {
+  max-width: 80rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .site-footer-inner {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+}
+
+.site-footer-links {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.site-footer-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.site-footer-links a:hover {
+  color: var(--accent-bright);
+}
+
+/* ================================================
+   Prize Banner
+   ================================================ */
+
+.prize-banner {
+  background: linear-gradient(90deg, #1a1200 0%, #241a00 40%, #1a1200 100%);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.08);
+}
+
+.prize-banner-inner {
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+}
+
+.prize-banner-trophy {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.prize-banner-text {
+  font-family: 'Barlow', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  color: #d4a017;
+  flex: 1;
+  min-width: 0;
+}
+
+.prize-banner-text strong {
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+
+.prize-banner-cta {
+  font-family: 'Barlow Condensed', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0f1117;
+  background: var(--accent-bright);
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease;
+}
+
+.prize-banner-cta:hover {
+  background: #fde68a;
+}
+
+.prize-banner-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b5a1a;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.125rem 0.25rem;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.prize-banner-close:hover {
+  color: var(--accent-bright);
+}
+
+/* ================================================
    Betslip / SGM result
    ================================================ */
 .sgm-result {

@@ -308,7 +308,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     return { gte: Math.min(gte, 1), lte: Math.min(lte, 1) };
   }
 
-  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf') {
+  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf', xMin = undefined, xMax = undefined, xStepSize = undefined) {
     return {
       responsive: true,
       animation: false,
@@ -338,7 +338,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
 
         const pct = v => `${(v * 100).toFixed(1)}%`;
         const labels = xLabelFn ? xLabelFn(nearest) : { over: `≥${nearest}`, under: `<${nearest}` };
-        const odds = p => p > 0 ? `$${(1 / p).toFixed(2)}` : '—';
+        const odds = p => p >= 0.00005 ? `$${(1 / p).toFixed(2)}` : '—';
         const row = (label, p) => `
           <div style="display:flex;justify-content:space-between;gap:1.5rem;">
             <span>${label}</span>
@@ -370,8 +370,9 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
       scales: {
         x: {
           type: 'linear', offset: false,
+          min: xMin, max: xMax,
           title: { display: true, text: xTitle, color: '#4a5568', font: { size: 10, weight: '600' }, padding: { top: 4 } },
-          ticks: { maxTicksLimit: 12, color: '#4a5568', font: { size: 10 } },
+          ticks: { ...(xStepSize ? { stepSize: xStepSize } : { maxTicksLimit: 12 }), color: '#4a5568', font: { size: 10 } },
           grid: { color: 'rgba(255,255,255,0.04)' },
           border: { color: 'rgba(255,255,255,0.08)' },
         },
@@ -528,7 +529,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     if (mCtx) {
       chartInstances['modal-margin'] = new Chart(mCtx, {
         data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin, mode) },
-        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode),
+        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode, -50, 50),
         plugins: [crosshairPlugin],
       });
       mCtx.canvas.addEventListener('mouseleave', hideTooltip);
@@ -538,7 +539,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     if (tCtx) {
       chartInstances['modal-total'] = new Chart(tCtx, {
         data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal, mode) },
-        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode),
+        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode, 16, 80, 4),
         plugins: [crosshairPlugin],
       });
       tCtx.canvas.addEventListener('mouseleave', hideTooltip);

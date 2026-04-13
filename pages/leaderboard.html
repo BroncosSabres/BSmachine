@@ -39,7 +39,7 @@
       .lb-row {
         display: grid;
         align-items: center;
-        padding: 0.75rem 1rem;
+        padding: 0.625rem 0.875rem;
         border-bottom: 1px solid #1e2a3a;
         transition: background 0.1s ease;
       }
@@ -58,7 +58,7 @@
       .rank-badge.top3 { color: #c2906a; }
       .pts-display {
         font-family: 'Barlow Condensed', system-ui, sans-serif;
-        font-size: 1.1rem;
+        font-size: 1rem;
         font-weight: 700;
         color: #e2e8f0;
       }
@@ -75,12 +75,20 @@
       }
       .me-row { background: rgba(245,158,11,0.05) !important; }
       .me-row .rank-badge, .me-row .username { color: #fbbf24 !important; }
+      .lb-sidebar-panel {
+        background: #161b24;
+        border: 1px solid #2e3a4e;
+        border-radius: 12px;
+        overflow: hidden;
+        max-height: 420px;
+        overflow-y: auto;
+      }
     </style>
   </head>
   <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
     <div id="site-header"></div>
 
-    <main class="max-w-3xl mx-auto px-4 py-8">
+    <main class="max-w-screen-xl mx-auto px-4 py-8">
       <div class="flex items-baseline gap-4 mb-2">
         <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Leaderboard</h1>
       </div>
@@ -88,12 +96,10 @@
 
       <!-- Controls -->
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <!-- Tab switcher -->
         <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
           <button class="lb-tab active" data-tab="team">Team</button>
           <button class="lb-tab" data-tab="individual">Individual</button>
         </div>
-        <!-- Round filter -->
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
           <select id="round-filter" class="round-filter">
@@ -102,17 +108,41 @@
         </div>
       </div>
 
-      <!-- Leaderboard panel -->
-      <div id="lb-panel" style="background:#161b24; border:1px solid #2e3a4e; border-radius:12px; overflow:hidden;">
-        <!-- Populated by JS -->
-        <div class="p-8 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
-      </div>
+      <!-- Two-column layout -->
+      <div class="flex flex-col lg:flex-row gap-6 items-start">
 
-      <!-- Legend -->
-      <div class="mt-4 flex items-center gap-4 text-xs" style="color:#4a5568;">
-        <span>Pts = margin score + total score (max 10/game)</span>
-        <span>·</span>
-        <span>Bell curve σ=6 (one converted try)</span>
+        <!-- Match tiles — main area (left on desktop, below leaderboards on mobile) -->
+        <div class="flex-1 min-w-0 w-full">
+          <div id="lb-matches">
+            <div class="p-8 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
+          </div>
+          <div class="mt-4 flex flex-wrap items-center gap-4 text-xs" style="color:#4a5568;">
+            <span id="lb-legend-text">Pts = margin score + total score (max 10/game)</span>
+            <span>·</span>
+            <span>Bell curve σ=6 (one converted try)</span>
+          </div>
+        </div>
+
+        <!-- Leaderboard sidebar — top on mobile (order-first), right on desktop -->
+        <div class="w-full lg:w-72 xl:w-80 shrink-0 flex flex-col gap-5 order-first lg:order-last">
+
+          <!-- Season leaderboard -->
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-widest mb-2 px-1" style="color:#4a5568;">Season</div>
+            <div id="lb-season-panel" class="lb-sidebar-panel">
+              <div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
+            </div>
+          </div>
+
+          <!-- Weekly leaderboard -->
+          <div>
+            <div class="text-xs font-semibold uppercase tracking-widest mb-2 px-1" id="lb-week-label" style="color:#4a5568;">This Round</div>
+            <div id="lb-week-panel" class="lb-sidebar-panel">
+              <div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
+            </div>
+          </div>
+
+        </div>
       </div>
     </main>
 
@@ -126,13 +156,15 @@
       let myUserId    = null
       let rounds      = []
 
-      const panel = document.getElementById('lb-panel')
+      const seasonPanel = document.getElementById('lb-season-panel')
+      const weekPanel   = document.getElementById('lb-week-panel')
+      const matchesEl   = document.getElementById('lb-matches')
+      const weekLabel   = document.getElementById('lb-week-label')
 
       // --- Init ---
       const session = await getSession()
       if (session) myUserId = session.user.id
 
-      // Load available rounds from completed games (reliable even if scores table is empty)
       const { data: completedRoundRows } = await supabase
         .from('games')
         .select('round_number')
@@ -153,8 +185,6 @@
           opt.textContent = `Round ${r.round_number}`
           sel.appendChild(opt)
         })
-
-        // Default to latest completed round
         roundFilter = String(rounds[0].round_number)
         sel.value = roundFilter
       }
@@ -164,7 +194,6 @@
         loadLeaderboard()
       })
 
-      // --- Tab switching ---
       document.querySelectorAll('.lb-tab').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.lb-tab').forEach(b => b.classList.remove('active'))
@@ -174,10 +203,11 @@
         })
       })
 
-      // --- Load ---
       async function loadLeaderboard() {
-        panel.innerHTML = `<div class="p-8 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
-
+        const loading = `<div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
+        seasonPanel.innerHTML = loading
+        weekPanel.innerHTML   = loading
+        matchesEl.innerHTML   = loading
         if (activeTab === 'individual') await loadIndividual()
         else await loadTeam()
       }
@@ -186,11 +216,9 @@
         let query = supabase
           .from('scores')
           .select('user_id, game_id, points, margin_score, total_score, round_number')
-
         if (roundFilter !== 'season') {
           query = query.eq('round_number', Number(roundFilter))
         }
-
         const { data, error } = await query
         if (error) return []
         return data
@@ -198,31 +226,30 @@
 
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        // Always fetch full-season scores + profiles for the aggregate
         const [{ data: allSeasonScores }, { data: profiles }] = await Promise.all([
           supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number'),
           supabase.from('profiles').select('id, username, favourite_team'),
         ])
 
-        const aggregateHtml = buildIndividualAggregateHtml(allSeasonScores || [], profiles || [])
+        // Season sidebar panel — full season aggregate
+        seasonPanel.innerHTML = buildIndividualCompact(allSeasonScores || [], profiles || [])
 
-        if (roundFilter !== 'season') {
-          const cardsHtml = await buildMatchCardsHtml(Number(roundFilter), profiles || [])
-          panel.innerHTML = `
-            <div style="padding:0.375rem 1rem;background:#0f1117;border-bottom:2px solid #1e2a3a;">
-              <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;">Season Leaderboard</span>
-            </div>
-            ${aggregateHtml}
-            <div style="padding:0.375rem 1rem;margin-top:1px;background:#0f1117;border-top:2px solid #1e2a3a;border-bottom:1px solid #1e2a3a;">
-              <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;">Round ${roundFilter} Breakdown</span>
-            </div>
-            ${cardsHtml}`
+        // Determine active round for week panel + match cards
+        const activeRound = roundFilter !== 'season' ? Number(roundFilter) : (rounds[0]?.round_number ?? null)
+
+        if (activeRound) {
+          weekLabel.textContent = `Round ${activeRound}`
+          const roundScores = (allSeasonScores || []).filter(s => s.round_number === activeRound)
+          weekPanel.innerHTML = buildIndividualCompact(roundScores, profiles || [])
+          matchesEl.innerHTML = await buildMatchCardsHtml(activeRound, profiles || [])
         } else {
-          panel.innerHTML = aggregateHtml
+          weekPanel.innerHTML = emptyState('No rounds completed yet.')
+          matchesEl.innerHTML = emptyState('No matches to display.')
         }
       }
 
-      function buildIndividualAggregateHtml(scores, profiles) {
+      // Compact individual leaderboard for sidebar panels
+      function buildIndividualCompact(scores, profiles) {
         const userMap = {}
         scores.forEach(s => {
           if (!userMap[s.user_id]) userMap[s.user_id] = { pts: 0, games: 0 }
@@ -240,44 +267,36 @@
             team:     profileMap[uid]?.favourite_team || null,
             pts:      stats.pts,
             avg:      stats.games > 0 ? (stats.pts / stats.games).toFixed(2) : '0.00',
-            games:    stats.games,
           }))
           .sort((a, b) => b.pts - a.pts || b.avg - a.avg)
 
-        if (!rows.length) return emptyState('No scores yet this season.')
+        if (!rows.length) return emptyState('No scores yet.')
 
-        // Compute tied ranks
-        const aggRanks = []
+        const ranks = []
         rows.forEach((r, i) => {
-          if (i === 0) { aggRanks.push(1); return }
-          aggRanks.push(rows[i - 1].pts === r.pts && rows[i - 1].avg === r.avg ? aggRanks[i - 1] : i + 1)
+          if (i === 0) { ranks.push(1); return }
+          ranks.push(rows[i - 1].pts === r.pts && rows[i - 1].avg === r.avg ? ranks[i - 1] : i + 1)
         })
-        const aggRankCounts = {}
-        aggRanks.forEach(rk => { aggRankCounts[rk] = (aggRankCounts[rk] || 0) + 1 })
+        const rankCounts = {}
+        ranks.forEach(rk => { rankCounts[rk] = (rankCounts[rk] || 0) + 1 })
 
-        return `
-          <div class="lb-row" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem; background:#0f1117; border-bottom:1px solid #1e2a3a;">
-            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">#</div>
-            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">Player</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Score</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568; width:4rem;">Avg/Game</div>
-          </div>
-          ${rows.map((r, i) => {
-            const rank      = aggRanks[i]
-            const isTied    = aggRankCounts[rank] > 1
-            const rankLabel = isTied ? `=${rank}` : `${rank}`
-            const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
-            return `
-            <div class="lb-row ${r.uid === myUserId ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.75rem;">
+        return rows.map((r, i) => {
+          const rank      = ranks[i]
+          const isTied    = rankCounts[rank] > 1
+          const rankLabel = isTied ? `=${rank}` : `${rank}`
+          const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
+          const isMe      = r.uid === myUserId
+          return `
+            <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;">
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
-              <div class="flex items-center gap-2 min-w-0">
-                ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-5 h-5 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                <span class="username text-sm font-semibold truncate ${r.uid === myUserId ? 'text-amber-400' : ''}">${escapeHtml(r.username)}${r.uid === myUserId ? ' (you)' : ''}</span>
+              <div class="flex items-center gap-1.5 min-w-0">
+                ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
+                <span class="username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>
               </div>
+              <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
               <div class="pts-display text-right">${r.pts.toFixed(1)}</div>
-              <div class="text-right text-sm font-semibold w-16" style="color:#8892a4;">${r.avg}</div>
             </div>`
-          }).join('')}`
+        }).join('')
       }
 
       // --- Match cards (per-game breakdown for a specific round) ---
@@ -292,7 +311,6 @@
             .eq('round_number', roundNumber),
         ])
 
-        // Fetch picks for all games in this round so we can show predicted values
         const gameIds = games?.map(g => g.game_id) || []
         const { data: allPicks } = gameIds.length
           ? await supabase.from('picks')
@@ -300,7 +318,6 @@
               .in('game_id', gameIds)
           : { data: [] }
 
-        // Index picks by "user_id|game_id"
         const pickMap = {}
         allPicks?.forEach(p => { pickMap[`${p.user_id}|${p.game_id}`] = p })
 
@@ -309,7 +326,6 @@
         const profileMap = {}
         profiles?.forEach(p => { profileMap[p.id] = p })
 
-        // Index scores by game_id
         const scoresByGame = {}
         allScores?.forEach(s => {
           if (!scoresByGame[s.game_id]) scoresByGame[s.game_id] = []
@@ -330,12 +346,10 @@
 
           const isComplete = game.is_complete
 
-          // Score display
           const scoreDisplay = isComplete
             ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${game.home_score} – ${game.away_score}</span>`
             : `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:#4a5568;letter-spacing:0.06em;text-transform:uppercase;">Upcoming</span>`
 
-          // Row renderer
           const renderRow = (s, rank, isMe) => {
             const p    = profileMap[s.user_id]
             const name = escapeHtml(p?.username || 'Unknown')
@@ -384,7 +398,6 @@
 
           return `
             <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;margin-bottom:1rem;">
-              <!-- Match header -->
               <div style="display:flex;align-items:center;justify-content:space-between;padding:0.875rem 1rem;background:#0f1117;gap:0.5rem;">
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;justify-content:flex-end;">
                   <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
@@ -399,11 +412,9 @@
                 </div>
               </div>
               ${isComplete && pickers > 0 ? `
-              <!-- Pts summary -->
               <div style="padding:0.375rem 1rem;font-size:0.7rem;color:#4a5568;background:#0f1117;border-top:1px solid #1a2233;border-bottom:1px solid #1e2a3a;">
                 ${pickers} picker${pickers !== 1 ? 's' : ''} · ${totalPts.toFixed(1)} pts distributed
               </div>
-              <!-- Column headers -->
               <div style="display:grid;grid-template-columns:2rem 1fr 4rem 4.5rem 4.5rem 3.5rem;gap:0.5rem;padding:0.4rem 1rem;background:#0f1117;border-bottom:1px solid #1e2a3a;">
                 <div></div>
                 <div></div>
@@ -421,54 +432,47 @@
             </div>`
         }).join('')
 
-        return `<div style="padding:1rem;">${cards}</div>`
+        return `<div>${cards}</div>`
       }
 
       // --- Team model leaderboard ---
       async function loadTeam() {
-        // Scoring: for each completed game, each "team" (BS Machine, All Users, fan bases)
-        // produces a margin + total distribution. Score = min(P(X≥actual), P(X≤actual)) for each axis.
-
-        let gamesQuery = supabase
+        // Always fetch ALL completed games — needed for the full-season sidebar panel
+        const { data: allCompletedGames } = await supabase
           .from('games')
           .select('game_id, round_number, home_team, away_team, home_score, away_score, kickoff_time')
           .eq('is_complete', true)
           .not('home_score', 'is', null)
           .order('kickoff_time', { ascending: true })
 
-        if (roundFilter !== 'season') {
-          gamesQuery = gamesQuery.eq('round_number', Number(roundFilter))
-        }
-
-        const { data: completedGames } = await gamesQuery
-        if (!completedGames?.length) {
-          panel.innerHTML = emptyState('No completed games yet.')
+        if (!allCompletedGames?.length) {
+          seasonPanel.innerHTML = emptyState('No completed games yet.')
+          weekPanel.innerHTML   = emptyState('No completed games yet.')
+          matchesEl.innerHTML   = ''
           return
         }
 
-        const gameIds = completedGames.map(g => g.game_id)
+        const allGameIds = allCompletedGames.map(g => g.game_id)
 
-        // Fetch picks (with user_id) and profiles in parallel with BS Machine distributions
         const [{ data: allPicks }, { data: profiles }, ...distResults] = await Promise.all([
           supabase.from('picks')
             .select('user_id, game_id, home_score_pick, away_score_pick')
-            .in('game_id', gameIds),
+            .in('game_id', allGameIds),
           supabase.from('profiles').select('id, favourite_team'),
-          ...completedGames.map(g =>
+          ...allCompletedGames.map(g =>
             fetch(`${BACKEND}/match_score_distributions/${g.game_id}`)
               .then(r => r.ok ? r.json() : null).catch(() => null)
           ),
         ])
 
         const machineDistByGame = {}
-        completedGames.forEach((g, i) => {
+        allCompletedGames.forEach((g, i) => {
           if (distResults[i]) machineDistByGame[g.game_id] = distResults[i]
         })
 
         const profileTeamMap = {}
         profiles?.forEach(p => { profileTeamMap[p.id] = p.favourite_team || null })
 
-        // Group picks by game_id
         const picksByGame = {}
         allPicks?.forEach(p => {
           if (p.home_score_pick == null || p.away_score_pick == null) return
@@ -476,7 +480,6 @@
           picksByGame[p.game_id].push(p)
         })
 
-        // Scoring helpers
         function computeScore(distribution, actual) {
           let pGte = 0, pLte = 0
           for (const { x, prob } of distribution) {
@@ -484,7 +487,6 @@
             if (x <= actual) pLte += prob
           }
           const score = Math.min(pGte, pLte)
-          // Show which tail determined the score using half-point notation
           const label = pGte <= pLte
             ? `P(>${(actual - 0.5).toFixed(1)})`
             : `P(<${(actual + 0.5).toFixed(1)})`
@@ -504,116 +506,137 @@
           return { margins: toArr(marginCounts), totals: toArr(totalCounts) }
         }
 
-        // Accumulate scores per team key (overall) and per game
-        const teamAcc     = {}  // key -> { marginScore, totalScore, games }
-        const perGameData = {}  // game_id -> { [key]: { marginScore, marginLabel, totalScore, totalLabel } }
-
-        const addScore = (gameId, key, mResult, tResult) => {
-          if (!teamAcc[key]) teamAcc[key] = { marginScore: 0, totalScore: 0, games: 0 }
-          teamAcc[key].marginScore += mResult.score
-          teamAcc[key].totalScore  += tResult.score
-          teamAcc[key].games++
-          if (!perGameData[gameId]) perGameData[gameId] = {}
-          perGameData[gameId][key] = {
-            marginScore: mResult.score, marginLabel: mResult.label,
-            totalScore:  tResult.score, totalLabel:  tResult.label,
-          }
-        }
-
-        // All unique fan-base teams from profiles with picks
         const pickerIds = new Set(allPicks?.map(p => p.user_id) || [])
         const fanTeams  = new Set()
         pickerIds.forEach(uid => fanTeams.add(profileTeamMap[uid] || '__no_team__'))
 
-        for (const game of completedGames) {
-          const actualMargin = game.home_score - game.away_score
-          const actualTotal  = game.home_score + game.away_score
-          const gamePicks    = picksByGame[game.game_id] || []
+        // Score a set of games — returns { teamAcc, perGameData }
+        function scoreGames(games) {
+          const teamAcc = {}, perGameData = {}
 
-          // Skip games where no users tipped — BS Machine only scored on same games as users
-          if (!gamePicks.length) continue
-
-          // BS Machine
-          const machineDist = machineDistByGame[game.game_id]
-          if (machineDist?.margins?.length) {
-            addScore(game.game_id, '__machine__',
-              computeScore(machineDist.margins, actualMargin),
-              computeScore(machineDist.totals,  actualTotal))
+          function addEntry(gameId, key, mResult, tResult) {
+            if (!teamAcc[key]) teamAcc[key] = { marginScore: 0, totalScore: 0, games: 0 }
+            teamAcc[key].marginScore += mResult.score
+            teamAcc[key].totalScore  += tResult.score
+            teamAcc[key].games++
+            if (!perGameData[gameId]) perGameData[gameId] = {}
+            perGameData[gameId][key] = {
+              marginScore: mResult.score, marginLabel: mResult.label,
+              totalScore:  tResult.score, totalLabel:  tResult.label,
+            }
           }
 
-          // All Users
-          const allDist = picksToDistributions(gamePicks)
-          addScore(game.game_id, '__all__', computeScore(allDist.margins, actualMargin), computeScore(allDist.totals, actualTotal))
+          for (const game of games) {
+            const actualMargin = game.home_score - game.away_score
+            const actualTotal  = game.home_score + game.away_score
+            const gamePicks    = picksByGame[game.game_id] || []
+            if (!gamePicks.length) continue
 
-          // Per fan base
-          for (const teamKey of fanTeams) {
-            const sub = gamePicks.filter(p =>
-              teamKey === '__no_team__' ? !profileTeamMap[p.user_id] : profileTeamMap[p.user_id] === teamKey
-            )
-            if (!sub.length) continue
-            const dist = picksToDistributions(sub)
-            addScore(game.game_id, teamKey, computeScore(dist.margins, actualMargin), computeScore(dist.totals, actualTotal))
+            const machineDist = machineDistByGame[game.game_id]
+            if (machineDist?.margins?.length) {
+              addEntry(game.game_id, '__machine__',
+                computeScore(machineDist.margins, actualMargin),
+                computeScore(machineDist.totals,  actualTotal))
+            }
+
+            const allDist = picksToDistributions(gamePicks)
+            addEntry(game.game_id, '__all__',
+              computeScore(allDist.margins, actualMargin),
+              computeScore(allDist.totals,  actualTotal))
+
+            for (const teamKey of fanTeams) {
+              const sub = gamePicks.filter(p =>
+                teamKey === '__no_team__' ? !profileTeamMap[p.user_id] : profileTeamMap[p.user_id] === teamKey
+              )
+              if (!sub.length) continue
+              const dist = picksToDistributions(sub)
+              addEntry(game.game_id, teamKey,
+                computeScore(dist.margins, actualMargin),
+                computeScore(dist.totals,  actualTotal))
+            }
           }
+          return { teamAcc, perGameData }
         }
 
-        // Build display rows
-        const rows = Object.entries(teamAcc).map(([key, acc]) => ({
-          key,
-          label:     key === '__machine__' ? 'BS Machine' : key === '__all__' ? 'All Users' : key === '__no_team__' ? 'I Love My Footy' : key,
-          team:      key === '__machine__' || key === '__all__' || key === '__no_team__' ? null : key,
-          isMachine: key === '__machine__',
-          ...acc,
-          total: acc.marginScore + acc.totalScore,
-        })).sort((a, b) => b.total - a.total)
+        function buildTeamRows(teamAcc) {
+          return Object.entries(teamAcc).map(([key, acc]) => ({
+            key,
+            label:     key === '__machine__' ? 'BS Machine' : key === '__all__' ? 'All Users' : key === '__no_team__' ? 'I Love My Footy' : key,
+            team:      key === '__machine__' || key === '__all__' || key === '__no_team__' ? null : key,
+            isMachine: key === '__machine__',
+            ...acc,
+            total: acc.marginScore + acc.totalScore,
+          })).sort((a, b) => b.total - a.total)
+        }
 
-        if (!rows.length) {
-          panel.innerHTML = emptyState('No data yet.')
+        function buildCompactTeamHtml(rows) {
+          if (!rows.length) return emptyState('No data yet.')
+          const ranks = []
+          rows.forEach((r, i) => {
+            if (i === 0) { ranks.push(1); return }
+            ranks.push(rows[i - 1].total === r.total ? ranks[i - 1] : i + 1)
+          })
+          const rankCounts = {}
+          ranks.forEach(rk => { rankCounts[rk] = (rankCounts[rk] || 0) + 1 })
+          const header = `
+            <div style="display:grid;grid-template-columns:2rem 1fr 2.75rem 2.75rem 3rem;gap:0.4rem;padding:0.35rem 0.875rem;background:#0f1117;border-bottom:1px solid #1e2a3a;">
+              <div></div><div></div>
+              <div style="text-align:right;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;color:#4a5568;">Mgn</div>
+              <div style="text-align:right;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;color:#4a5568;">Tot</div>
+              <div style="text-align:right;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.06em;color:#4a5568;">Score</div>
+            </div>`
+          const bodyRows = rows.map((r, i) => {
+            const rank      = ranks[i]
+            const isTied    = rankCounts[rank] > 1
+            const rankLabel = isTied ? `=${rank}` : `${rank}`
+            const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
+            return `
+              <div style="display:grid;grid-template-columns:2rem 1fr 2.75rem 2.75rem 3rem;gap:0.4rem;align-items:center;padding:0.55rem 0.875rem;border-bottom:1px solid #1e2a3a;${r.isMachine ? 'border-top:2px solid #2e3a4e;' : ''}">
+                <div class="rank-badge ${rankClass}">${rankLabel}</div>
+                <div class="flex items-center gap-1.5 min-w-0">
+                  ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
+                  <span class="text-sm truncate" style="font-weight:600;${r.isMachine ? 'color:#f59e0b;' : ''}">${escapeHtml(r.label)}</span>
+                </div>
+                <div style="text-align:right;font-size:0.7rem;color:#8892a4;">${r.marginScore.toFixed(2)}</div>
+                <div style="text-align:right;font-size:0.7rem;color:#8892a4;">${r.totalScore.toFixed(2)}</div>
+                <div style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9rem;font-weight:700;color:${rank === 1 ? '#86efac' : '#e2e8f0'};">${r.total.toFixed(3)}</div>
+              </div>`
+          }).join('')
+          return header + bodyRows
+        }
+
+        // Season leaderboard (all games) → sidebar
+        const { teamAcc: seasonTeamAcc } = scoreGames(allCompletedGames)
+        const seasonRows = buildTeamRows(seasonTeamAcc)
+        seasonPanel.innerHTML = `
+          <div class="text-xs px-3 py-2 border-b" style="border-color:#1e2a3a;color:#4a5568;">
+            Score = min(P(margin ≥ actual), P(margin ≤ actual)) + min(P(total ≥ actual), P(total ≤ actual))
+          </div>
+          ${buildCompactTeamHtml(seasonRows)}`
+
+        // Determine active round for weekly panel + match tiles
+        const activeRound = roundFilter !== 'season' ? Number(roundFilter) : (rounds[0]?.round_number ?? null)
+        const roundGames  = activeRound
+          ? allCompletedGames.filter(g => g.round_number === activeRound)
+          : allCompletedGames.filter(g => g.round_number === allCompletedGames[allCompletedGames.length - 1]?.round_number)
+
+        if (!roundGames.length) {
+          weekPanel.innerHTML = emptyState('No games scored for this round.')
+          matchesEl.innerHTML = ''
           return
         }
 
-        const header = `
-          <div class="lb-row" style="grid-template-columns:2rem 1fr 3rem 5rem 5rem 5rem;gap:0.75rem;background:#0f1117;border-bottom:1px solid #1e2a3a;">
-            <div></div>
-            <div class="text-xs uppercase tracking-wider" style="color:#4a5568;">Model</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Games</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Margin</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Total Pts</div>
-            <div class="text-xs uppercase tracking-wider text-right" style="color:#4a5568;">Score</div>
-          </div>`
+        weekLabel.textContent = `Round ${activeRound || roundGames[0].round_number}`
+        const { teamAcc: roundTeamAcc, perGameData } = scoreGames(roundGames)
+        const roundRows = buildTeamRows(roundTeamAcc)
+        weekPanel.innerHTML = buildCompactTeamHtml(roundRows)
 
-        const overallRanks = []
-        rows.forEach((r, i) => {
-          if (i === 0) { overallRanks.push(1); return }
-          overallRanks.push(rows[i - 1].total === r.total ? overallRanks[i - 1] : i + 1)
-        })
-        const overallRankCounts = {}
-        overallRanks.forEach(rk => { overallRankCounts[rk] = (overallRankCounts[rk] || 0) + 1 })
-
-        const rowsHtml = rows.map((r, i) => {
-          const rank      = overallRanks[i]
-          const isTied    = overallRankCounts[rank] > 1
-          const rankLabel = isTied ? `=${rank}` : `${rank}`
-          const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
-          return `
-            <div class="lb-row" style="grid-template-columns:2rem 1fr 3rem 5rem 5rem 5rem;gap:0.75rem;${r.isMachine ? 'border-top:2px solid #2e3a4e;' : ''}">
-              <div class="rank-badge ${rankClass}">${rankLabel}</div>
-              <div class="flex items-center gap-2 min-w-0">
-                ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-5 h-5 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                <span class="text-sm font-semibold" style="${r.isMachine ? 'color:#f59e0b;' : ''}">${escapeHtml(r.label)}</span>
-              </div>
-              <div class="text-right text-sm" style="color:#4a5568;">${r.games}</div>
-              <div class="text-right text-sm" style="color:#8892a4;">${r.marginScore.toFixed(3)}</div>
-              <div class="text-right text-sm" style="color:#8892a4;">${r.totalScore.toFixed(3)}</div>
-              <div class="pts-display text-right" style="color:${rank === 1 ? '#86efac' : '#e2e8f0'};">${r.total.toFixed(3)}</div>
-            </div>`
-        }).join('')
-
-        // Build a key->label/team lookup from rows for use in tiles
+        // Key metadata for tiles
         const keyMeta = {}
-        rows.forEach(r => { keyMeta[r.key] = { label: r.label, team: r.team, isMachine: r.isMachine } })
+        seasonRows.forEach(r => { keyMeta[r.key] = { label: r.label, team: r.team, isMachine: r.isMachine } })
 
-        // Game tiles — ordered earliest to latest (completedGames already sorted by round ASC then game_id ASC)
-        const tilesHtml = completedGames.map(game => {
+        // Build match tiles for the active round
+        const tilesHtml = roundGames.map(game => {
           const gameEntries = perGameData[game.game_id]
           if (!gameEntries) return ''
 
@@ -629,7 +652,6 @@
             }))
             .sort((a, b) => b.total - a.total)
 
-          // Compute dense ranks accounting for ties
           const tileRanks = []
           tileRows.forEach((r, i) => {
             if (i === 0) { tileRanks.push(1); return }
@@ -663,8 +685,7 @@
           }).join('')
 
           return `
-            <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;">
-              <!-- Match header -->
+            <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;margin-bottom:1rem;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:0.875rem 1rem;background:#0f1117;gap:0.5rem;">
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;justify-content:flex-end;">
                   <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
@@ -672,14 +693,12 @@
                 </div>
                 <div style="text-align:center;flex-shrink:0;min-width:6rem;">
                   <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${game.home_score} – ${game.away_score}</span>
-                  ${roundFilter === 'season' ? `<div style="font-size:0.65rem;color:#4a5568;margin-top:2px;">Round ${game.round_number}</div>` : ''}
                 </div>
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;">
                   <img src="../logos/${teamSlug(game.away_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
                   <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
                 </div>
               </div>
-              <!-- Column headers -->
               <div style="display:grid;grid-template-columns:2rem 1fr 5.5rem 5.5rem 4rem;gap:0.5rem;padding:0.4rem 1rem;background:#0f1117;border-top:1px solid #1a2233;border-bottom:1px solid #1e2a3a;">
                 <div></div><div></div>
                 <div style="text-align:right;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:#4a5568;">Margin</div>
@@ -687,7 +706,6 @@
                 <div style="text-align:right;font-size:0.65rem;text-transform:uppercase;letter-spacing:0.05em;color:#4a5568;">Score</div>
               </div>
               ${tileRowsHtml}
-              <!-- Expand toggle -->
               <div style="border-top:1px solid #1e2a3a;padding:0.5rem 1rem;">
                 <button class="dist-toggle" data-game-id="${game.game_id}"
                   style="background:none;border:none;color:#4a5568;font-size:0.75rem;font-family:'Barlow',system-ui,sans-serif;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:0.4rem;padding:0;letter-spacing:0.04em;text-transform:uppercase;">
@@ -695,7 +713,6 @@
                   <span class="dist-toggle-arrow" style="font-size:0.6rem;">▼</span>
                 </button>
               </div>
-              <!-- Distribution charts (hidden by default) -->
               <div id="dist-container-${game.game_id}" style="display:none;padding:1rem 1rem 0.5rem;border-top:1px solid #1e2a3a;background:#0f1117;">
                 <div style="display:flex;align-items:center;gap:1.25rem;justify-content:center;font-size:0.7rem;color:#4a5568;margin-bottom:1rem;">
                   <span style="display:flex;align-items:center;gap:5px;">
@@ -720,22 +737,11 @@
             </div>`
         }).filter(Boolean)
 
-        panel.innerHTML = `
-          <div class="text-xs px-4 py-2 border-b" style="border-color:#1e2a3a;color:#4a5568;">
-            Score = min(P(margin ≥ actual), P(margin ≤ actual)) + min(P(total ≥ actual), P(total ≤ actual)) · max 1.0 per game · 0.5 = perfect prediction
-          </div>
-          <div style="padding:0.375rem 1rem;background:#0f1117;border-bottom:2px solid #1e2a3a;">
-            <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;">Overall Leaderboard</span>
-          </div>
-          ${header}${rowsHtml}
-          ${tilesHtml.length ? `
-          <div style="padding:0.375rem 1rem;margin-top:1px;background:#0f1117;border-top:2px solid #1e2a3a;border-bottom:1px solid #1e2a3a;">
-            <span style="font-size:0.65rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;">Per-Game Breakdown</span>
-          </div>
-          <div style="padding:1rem;display:flex;flex-direction:column;gap:0.75rem;">${tilesHtml.join('')}</div>
-          ` : ''}`
+        matchesEl.innerHTML = tilesHtml.length
+          ? `<div>${tilesHtml.join('')}</div>`
+          : emptyState('No game data for this round.')
 
-        // Track chart instances so we can destroy/recreate
+        // Distribution chart handlers
         const distCharts = {}
 
         function adaptiveBinSize(n) {
@@ -768,7 +774,7 @@
           const ctx = document.getElementById(canvasId)?.getContext('2d')
           if (!ctx) return null
 
-          const binSize    = adaptiveBinSize(userBins.length)
+          const binSize     = adaptiveBinSize(userBins.length)
           const machineData = machineBins ? normaliseMachineBins(machineBins, Math.max(binSize, 2)) : []
           const userData    = binPickValues(userBins, binSize)
 
@@ -797,7 +803,6 @@
               categoryPercentage: 1,
               order: 2,
             }] : []),
-            // Vertical result line
             {
               type: 'line',
               data: [{ x: actualVal, y: 0 }, { x: actualVal, y: maxY }],
@@ -837,7 +842,7 @@
           })
         }
 
-        panel.querySelectorAll('.dist-toggle').forEach(btn => {
+        matchesEl.querySelectorAll('.dist-toggle').forEach(btn => {
           btn.addEventListener('click', () => {
             const gameId    = btn.dataset.gameId
             const container = document.getElementById(`dist-container-${gameId}`)
@@ -855,7 +860,7 @@
               btn.querySelector('.dist-toggle-label').textContent = 'Hide Distributions'
               btn.querySelector('.dist-toggle-arrow').textContent = '▲'
 
-              const game        = completedGames.find(g => String(g.game_id) === String(gameId))
+              const game        = roundGames.find(g => String(g.game_id) === String(gameId))
               const machineDist = machineDistByGame[gameId]
               const gamePicks   = picksByGame[gameId] || []
 
@@ -936,5 +941,7 @@
 
       loadLeaderboard()
     </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
   </body>
 </html>
