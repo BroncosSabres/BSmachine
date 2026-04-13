@@ -4,7 +4,13 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 const SUPABASE_URL     = 'https://xjqpyyhqzatzlmlojcxv.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_5HgdhAE4ePEAF103sINpqQ_qL3a2E9W'
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession:   true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  }
+})
 
 // Returns the current session or null
 export async function getSession() {
