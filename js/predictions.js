@@ -1,4 +1,5 @@
 // predictions.js
+import { supabase } from './supabase-client.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -84,6 +85,12 @@ function teamSlug(name) {
 
 function logoUrl(teamName) {
   return `../logos/${teamSlug(teamName)}.svg`;
+}
+
+function formatKickoff(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  return d.toLocaleString('en-AU', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' });
 }
 
 // --- USER MODEL: STATS HELPERS ---
@@ -1138,7 +1145,8 @@ async function updateLiveScoreOverlays(predictions) {
 
 // --- MATCH CARD ---
 function createMatchCard(data) {
-  const { home_team, away_team, home_score, away_score, home_perc, away_perc } = data;
+  const { home_team, away_team, home_score, away_score, home_perc, away_perc, kickoff_time } = data;
+  const kickoffLabel = formatKickoff(kickoff_time);
   const matchKey = `${home_team}_v_${away_team}`;
 
   const homeWin = home_perc >= away_perc;
@@ -1163,6 +1171,7 @@ function createMatchCard(data) {
     </div>`;
 
   card.innerHTML = `
+    ${kickoffLabel ? `<span style="position:absolute;top:0.75rem;right:1rem;font-size:0.7rem;color:#4a5568;">${kickoffLabel}</span>` : ''}
 
     <!-- DESKTOP layout (md+) -->
     <div class="hidden md:flex items-center justify-between gap-4">
@@ -1637,6 +1646,22 @@ async function loadRound() {
     const allMatches  = data.predictions || [];
     const predictions = allMatches.filter(p => p.has_prediction);
 
+    // Sort by kickoff_time from Supabase games table (game_id === match_id)
+    const { data: gamesData } = await supabase
+      .from('games')
+      .select('game_id, kickoff_time')
+      .eq('round_number', currentRound)
+      .order('kickoff_time', { ascending: true });
+    const kickoffMap = {};
+    if (gamesData?.length) {
+      gamesData.forEach(g => { kickoffMap[g.game_id] = g.kickoff_time; });
+      allMatches.sort((a, b) => {
+        const ka = kickoffMap[a.match_id] ?? '';
+        const kb = kickoffMap[b.match_id] ?? '';
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+    }
+
     container.innerHTML = '';
 
     if (allMatches.length === 0) {
@@ -1651,8 +1676,9 @@ async function loadRound() {
         away_team:  match.away_team,
         home_score: match.exp_home_score ?? 0,
         away_score: match.exp_away_score ?? 0,
-        home_perc:  match.home_perc ?? 0.5,
-        away_perc:  match.away_perc ?? 0.5,
+        home_perc:    match.home_perc ?? 0.5,
+        away_perc:    match.away_perc ?? 0.5,
+        kickoff_time: kickoffMap?.[match.match_id] ?? null,
       };
       const card = createMatchCard(cardData);
       container.appendChild(card);
