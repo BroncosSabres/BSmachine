@@ -96,8 +96,70 @@ function median(arr) {
 function mean(arr) {
   return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
 }
+function stddev(arr) {
+  if (arr.length < 2) return 6; // fallback to a reasonable spread if too few picks
+  const mu = mean(arr);
+  const variance = arr.reduce((s, v) => s + (v - mu) ** 2, 0) / arr.length;
+  return Math.max(Math.sqrt(variance), 1); // floor at 1 to avoid degenerate spike
+}
 
-// Adaptive bin size: small n = exact values (bin 1), large n = grouped bins
+// Standard normal PDF
+function normPdf(x, mu, sigma) {
+  return Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
+}
+
+// Standard normal CDF via Abramowitz & Stegun approximation (error < 7.5e-8)
+function normCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  const cdf = 1 - normPdf(x, 0, 1) * poly;
+  return x >= 0 ? cdf : 1 - cdf;
+}
+
+// P(X >= actual) for a normal distribution with given mu, sigma
+function normalGte(mu, sigma, actual) {
+  return 1 - normCdf((actual - mu) / sigma);
+}
+
+// Gaussian KDE bandwidth via Silverman's rule-of-thumb
+function silvermanBandwidth(values) {
+  if (values.length < 2) return 6;
+  // Linear adjustment to spiky fit data
+  const adj = 0.5;
+  return adj * Math.max(1.06 * stddev(values) * Math.pow(values.length, -0.2), 1);
+}
+
+// P(X >= threshold) via Gaussian KDE — each pick contributes one kernel
+// Naturally handles bimodal / skewed pick distributions without forcing normality
+function kdeProbGte(values, threshold) {
+  if (!values.length) return null;
+  const h = silvermanBandwidth(values);
+  return values.reduce((sum, v) => sum + normalGte(v, h, threshold), 0) / values.length;
+}
+
+// Sample the Gaussian KDE PDF at integer x steps → [{x, y}] (same format as normalDistPoints)
+function kdePoints(values, xMin, xMax) {
+  if (!values.length) return [];
+  const h = silvermanBandwidth(values);
+  const points = [];
+  for (let x = xMin; x <= xMax; x++) {
+    const y = values.reduce((sum, v) => sum + normPdf(x, v, h), 0) / values.length;
+    points.push({ x, y });
+  }
+  return points;
+}
+
+// Sample a normal distribution at integer steps over the given x range → [{x, y}]
+function normalDistPoints(mu, sigma, xMin, xMax) {
+  const points = [];
+  for (let x = xMin; x <= xMax; x++) {
+    points.push({ x, y: normPdf(x, mu, sigma) });
+  }
+  return points;
+}
+
+
+// Adaptive bin size for discrete pick histograms
 function adaptiveBinSize(n) {
   if (n < 5)   return 1;
   if (n < 15)  return 2;
@@ -106,20 +168,16 @@ function adaptiveBinSize(n) {
   return 8;
 }
 
-// Bin raw pick values into a histogram normalised to max=1
-// Normalise pick counts to relative frequency (sum = 1, directly comparable to machine)
+// Bin raw pick values into a normalised histogram (sum = 1)
 function binPickValues(values, binSize) {
   if (!values.length) return [];
-  const min = Math.floor(Math.min(...values) / binSize) * binSize;
-  const max = Math.floor(Math.max(...values) / binSize) * binSize;
+  const lo = Math.floor(Math.min(...values) / binSize) * binSize;
+  const hi = Math.floor(Math.max(...values) / binSize) * binSize;
   const counts = {};
-  for (let b = min; b <= max; b += binSize) counts[b] = 0;
-  values.forEach(v => {
-    const b = Math.floor(v / binSize) * binSize;
-    counts[b] = (counts[b] || 0) + 1;
-  });
+  for (let b = lo; b <= hi; b += binSize) counts[b] = 0;
+  values.forEach(v => { const b = Math.floor(v / binSize) * binSize; counts[b] = (counts[b] || 0) + 1; });
   const entries = Object.entries(counts).map(([x, c]) => ({ x: Number(x), y: c })).sort((a, b) => a.x - b.x);
-  const total = entries.reduce((sum, e) => sum + e.y, 0);
+  const total = entries.reduce((s, e) => s + e.y, 0);
   return entries.map(e => ({ x: e.x, y: total > 0 ? e.y / total : 0 }));
 }
 
@@ -206,9 +264,15 @@ function ensureModal() {
             <span style="width:18px;height:2px;background:#f87171;display:inline-block;border-radius:1px;border-top:2px dashed #f87171;"></span>Result
           </span>
         </div>
-        <div id="dist-mode-toggle" style="display:flex;gap:2px;background:#0f1117;border:1px solid #2e3a4e;border-radius:6px;padding:2px;">
-          <button id="dist-toggle-pdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:#f59e0b;color:#0a0d14;">PDF</button>
-          <button id="dist-toggle-cdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;">CDF</button>
+        <div style="display:flex;align-items:center;gap:0.75rem;">
+          <div id="dist-mode-toggle" style="display:flex;gap:2px;background:#0f1117;border:1px solid #2e3a4e;border-radius:6px;padding:2px;">
+            <button id="dist-toggle-pdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:#f59e0b;color:#0a0d14;">PDF</button>
+            <button id="dist-toggle-cdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;">CDF</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#4a5568;user-select:none;">
+            <input id="dist-toggle-picks" type="checkbox" style="accent-color:#60a5fa;width:13px;height:13px;cursor:pointer;">
+            Show Discrete Picks
+          </label>
         </div>
       </div>
       <div id="dist-modal-loading" style="text-align:center;color:#4a5568;font-size:0.875rem;padding:2rem;">Loading distributions…</div>
@@ -298,17 +362,23 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     return el;
   }
 
+  // Discrete CDF over binned/sampled data (works for both machine bins and KDE points)
   function cdf(bins, x) {
-    // bins: [{x, y}] normalised probabilities
     let gte = 0, lte = 0;
-    for (const b of bins) {
+    for (const b of (bins || [])) {
       if (b.x >= x) gte += b.y;
       if (b.x <= x) lte += b.y;
     }
     return { gte: Math.min(gte, 1), lte: Math.min(lte, 1) };
   }
 
-  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf', xMin = undefined, xMax = undefined, xStepSize = undefined) {
+  function niceYStep(maxY) {
+    // Pick a step that gives 4–6 ticks for PDF mode
+    const candidates = [0.005, 0.01, 0.02, 0.025, 0.05, 0.10, 0.20];
+    return candidates.find(s => maxY / s <= 6 && maxY / s >= 3) ?? 0.05;
+  }
+
+  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf', xMin = undefined, xMax = undefined, xStepSize = undefined, userKdeBins = []) {
     return {
       responsive: true,
       animation: false,
@@ -334,7 +404,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         const nearest = allXs.reduce((a, b) => Math.abs(b - xVal) < Math.abs(a - xVal) ? b : a);
 
         const mc = machineBinsRef.length ? cdf(machineBinsRef, nearest) : null;
-        const uc = userBinsRef.length    ? cdf(userBinsRef,    nearest) : null;
+        const uc = userKdeBins.length ? cdf(userKdeBins, nearest) : null;
 
         const pct = v => `${(v * 100).toFixed(1)}%`;
         const labels = xLabelFn ? xLabelFn(nearest) : { over: `≥${nearest}`, under: `<${nearest}` };
@@ -387,7 +457,12 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
           },
           ticks: {
             color: '#4a5568', font: { size: 9 },
-            ...(mode === 'cdf' ? { stepSize: 0.25 } : { stepSize: 0.25 }),
+            stepSize: (() => {
+              if (mode === 'cdf') return 0.25;
+              const allY = [...machineBinsRef.map(b => b.y), ...userBinsRef.map(b => b.y)];
+              const maxY = allY.length ? Math.max(...allY) * 1.15 : 0.15;
+              return niceYStep(maxY);
+            })(),
             callback: v => `${Math.round(v * 100)}%`,
           },
           grid: { color: 'rgba(255,255,255,0.04)' },
@@ -397,10 +472,8 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     };
   }
 
-  const userBinM       = adaptiveBinSize(pickData.margins.length);
-  const userBinT       = adaptiveBinSize(pickData.totals.length);
-  const userMarginBins = binPickValues(pickData.margins, userBinM);
-  const userTotalBins  = binPickValues(pickData.totals,  userBinT);
+  const userMarginBins = kdePoints(pickData.margins, -80, 80);
+  const userTotalBins  = kdePoints(pickData.totals,  0,  160);
 
   // Build sorted cumulative bins from normalised {x,y} bins.
   // Sentinel points anchor the curve to 0 before the first bin and 1 after the last.
@@ -416,88 +489,79 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     ];
   }
 
-  function makeDatasets(machineBins, userBins, machineGroupBin, actualVal, mode = 'pdf') {
+  function makeDatasets(machineBins, userNormBins, machineGroupBin, actualVal, mode, showPicks, discretePickBins) {
     const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
+
     if (mode === 'cdf') {
       const machineCdf = toCdf(machineData);
-      const userCdf    = toCdf(userBins);
+      const userNormCdf = userNormBins.length ? (() => {
+        let cum = 0;
+        const total = userNormBins.reduce((s, b) => s + b.y, 0);
+        return [
+          { x: userNormBins[0].x - 1, y: 0 },
+          ...userNormBins.map(b => { cum += b.y / total; return { x: b.x, y: Math.min(cum, 1) }; }),
+        ];
+      })() : [];
+      // Discrete picks CDF (step function) for overlay
+      const picksCdf = (showPicks && discretePickBins.length) ? toCdf(discretePickBins) : [];
       return [
         ...(machineCdf.length ? [{
-          type: 'line',
-          data: machineCdf,
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245,158,11,0.07)',
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: true,
-          tension: 0,
-          order: 3,
+          type: 'line', data: machineCdf,
+          borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.07)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: 0, order: 3,
         }] : []),
-        ...(userCdf.length ? [{
-          type: 'line',
-          data: userCdf,
-          borderColor: 'rgba(96,165,250,0.9)',
-          backgroundColor: 'rgba(96,165,250,0.07)',
-          borderWidth: 2,
-          pointRadius: 0,
-          fill: true,
-          tension: 0,
-          order: 2,
+        ...(userNormCdf.length ? [{
+          type: 'line', data: userNormCdf,
+          borderColor: 'rgba(96,165,250,0.9)', backgroundColor: 'rgba(96,165,250,0.07)',
+          borderWidth: 2, pointRadius: 0, fill: true, tension: 0, order: 2,
+        }] : []),
+        ...(picksCdf.length ? [{
+          type: 'line', data: picksCdf,
+          borderColor: 'rgba(96,165,250,0.6)', backgroundColor: 'transparent',
+          borderWidth: 1.5, borderDash: [4, 3], pointRadius: 0, fill: false, tension: 0, stepped: 'before', order: 4,
         }] : []),
         ...(actualVal !== null && actualVal !== undefined ? [{
-          type: 'line',
-          data: [{ x: actualVal, y: 0 }, { x: actualVal, y: 1 }],
-          borderColor: '#f87171',
-          borderWidth: 2,
-          borderDash: [5, 3],
-          pointRadius: 0,
-          fill: false,
-          tension: 0,
-          order: 1,
+          type: 'line', data: [{ x: actualVal, y: 0 }, { x: actualVal, y: 1 }],
+          borderColor: '#f87171', borderWidth: 2, borderDash: [5, 3],
+          pointRadius: 0, fill: false, tension: 0, order: 1,
         }] : []),
       ];
     }
-    // PDF mode
-    const allY = [...machineData.map(d => d.y), ...userBins.map(d => d.y)];
+
+    // PDF mode — always show smooth normal, optionally overlay discrete bars
+    const allY = [...machineData.map(d => d.y), ...userNormBins.map(d => d.y)];
     const maxY  = allY.length ? Math.max(...allY) * 1.15 : 0.3;
     return [
       ...(machineData.length ? [{
-        type: 'line',
-        data: machineData.map(d => ({ x: d.x, y: d.y })),
-        borderColor: '#f59e0b',
-        backgroundColor: 'rgba(245,158,11,0.07)',
-        borderWidth: 2,
-        pointRadius: 0,
-        fill: true,
-        tension: 0.35,
-        order: 3,
+        type: 'line', data: machineData.map(d => ({ x: d.x, y: d.y })),
+        borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.07)',
+        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35, order: 3,
       }] : []),
-      {
-        type: 'bar',
-        data: userBins.map(d => ({ x: d.x, y: d.y })),
-        backgroundColor: 'rgba(96,165,250,0.4)',
-        borderColor: 'rgba(96,165,250,0.7)',
-        borderWidth: 1,
-        barPercentage: 0.85,
-        categoryPercentage: 1,
-        order: 2,
-      },
+      ...(userNormBins.length ? [{
+        type: 'line', data: userNormBins.map(d => ({ x: d.x, y: d.y })),
+        borderColor: 'rgba(96,165,250,0.9)', backgroundColor: 'rgba(96,165,250,0.12)',
+        borderWidth: 2, pointRadius: 0, fill: true, tension: 0.35, order: 2,
+      }] : []),
+      ...(showPicks && discretePickBins.length ? [{
+        type: 'bar', data: discretePickBins.map(d => ({ x: d.x, y: d.y })),
+        backgroundColor: 'rgba(96,165,250,0.25)', borderColor: 'rgba(96,165,250,0.5)',
+        borderWidth: 1, barPercentage: 0.85, categoryPercentage: 1, order: 4,
+      }] : []),
       ...(actualVal !== null && actualVal !== undefined ? [{
-        type: 'line',
-        data: [{ x: actualVal, y: 0 }, { x: actualVal, y: maxY }],
-        borderColor: '#f87171',
-        borderWidth: 2,
-        borderDash: [5, 3],
-        pointRadius: 0,
-        fill: false,
-        tension: 0,
-        order: 1,
+        type: 'line', data: [{ x: actualVal, y: 0 }, { x: actualVal, y: maxY }],
+        borderColor: '#f87171', borderWidth: 2, borderDash: [5, 3],
+        pointRadius: 0, fill: false, tension: 0, order: 1,
       }] : []),
     ];
   }
 
-  const machineMBins = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 2) : [];
-  const machineTBins = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  2) : [];
+  // binSize=1 so machine and user curves have the same probability-per-unit scale (equal visual areas)
+  const machineMBins = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 1) : [];
+  const machineTBins = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  1) : [];
+
+  // Discrete pick histograms (for "Picks" toggle mode)
+  const pickMarginBins = binPickValues(pickData.margins, 1);
+  const pickTotalBins  = binPickValues(pickData.totals,  1);
 
   const homeTeam = pickData?.home_team || 'Home';
   const awayTeam = pickData?.away_team || 'Away';
@@ -525,11 +589,13 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     chartInstances['modal-margin']?.destroy(); delete chartInstances['modal-margin'];
     chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
 
+    const showPicks = document.getElementById('dist-toggle-picks')?.checked ?? false;
+
     const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
     if (mCtx) {
       chartInstances['modal-margin'] = new Chart(mCtx, {
-        data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 2, actualMargin, mode) },
-        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode, -50, 50),
+        data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 1, actualMargin, mode, showPicks, pickMarginBins) },
+        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode, -50, 50, undefined, userMarginBins),
         plugins: [crosshairPlugin],
       });
       mCtx.canvas.addEventListener('mouseleave', hideTooltip);
@@ -538,28 +604,32 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
     if (tCtx) {
       chartInstances['modal-total'] = new Chart(tCtx, {
-        data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 2, actualTotal, mode) },
-        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode, 16, 80, 4),
+        data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 1, actualTotal, mode, showPicks, pickTotalBins) },
+        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode, 16, 80, 4, userTotalBins),
         plugins: [crosshairPlugin],
       });
       tCtx.canvas.addEventListener('mouseleave', hideTooltip);
     }
   }
 
+  let currentMode = 'pdf';
   renderCharts('pdf');
 
   // Toggle buttons
-  const pdfBtn = document.getElementById('dist-toggle-pdf');
-  const cdfBtn = document.getElementById('dist-toggle-cdf');
+  const pdfBtn    = document.getElementById('dist-toggle-pdf');
+  const cdfBtn    = document.getElementById('dist-toggle-cdf');
+  const picksCbox = document.getElementById('dist-toggle-picks');
   function setMode(mode) {
+    currentMode = mode;
     const active   = { background: '#f59e0b', color: '#0a0d14' };
     const inactive = { background: 'transparent', color: '#4a5568' };
     Object.assign(pdfBtn.style, mode === 'pdf' ? active : inactive);
     Object.assign(cdfBtn.style, mode === 'cdf' ? active : inactive);
     renderCharts(mode);
   }
-  pdfBtn.onclick = () => setMode('pdf');
-  cdfBtn.onclick = () => setMode('cdf');
+  pdfBtn.onclick       = () => setMode('pdf');
+  cdfBtn.onclick       = () => setMode('cdf');
+  picksCbox.onchange   = () => renderCharts(currentMode);
 }
 
 // --- USER MODEL: RENDER ---
@@ -575,14 +645,17 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
   const userHome = (medMargin !== null && medTotal !== null) ? Math.round((medTotal + medMargin) / 2) : null;
   const userAway = (medMargin !== null && medTotal !== null) ? Math.round((medTotal - medMargin) / 2) : null;
 
-  // Fraction of picks predicting home win
-  const userHomeWinFrac = n > 0 ? pickData.margins.filter(m => m > 0).length / n : null;
+  // Win probabilities via Gaussian KDE over user picks
+  // Each pick contributes its own kernel — handles bimodal/skewed pick distributions without forcing normality
+  // Threshold -0.5: continuity correction (home wins = margin ≥ 0 integers ≡ margin > -0.5 continuous)
+  // Draw probability is absorbed into home; away is complement, so home + away = 100%
+  const userHomeWinFrac = n > 0 ? kdeProbGte(pickData.margins, -0.5) : null;
   const userAwayWinFrac = userHomeWinFrac !== null ? 1 - userHomeWinFrac : null;
   const userHomeWin     = userHomeWinFrac !== null && userHomeWinFrac >= 0.5;
   const userHomePct     = userHomeWinFrac !== null ? (userHomeWinFrac * 100).toFixed(1) : null;
   const userAwayPct     = userAwayWinFrac !== null ? (userAwayWinFrac * 100).toFixed(1) : null;
-  const userHomeOdds    = userHomeWinFrac > 0 ? (1 / userHomeWinFrac).toFixed(2) : null;
-  const userAwayOdds    = userAwayWinFrac > 0 ? (1 / userAwayWinFrac).toFixed(2) : null;
+  const userHomeOdds    = userHomeWinFrac >= 1e-6 ? (1 / userHomeWinFrac).toFixed(2) : null;
+  const userAwayOdds    = userAwayWinFrac >= 1e-6 ? (1 / userAwayWinFrac).toFixed(2) : null;
 
   const homeColor = teamColor(matchKey.split('_v_')[0]);
   const awayColor = teamColor(matchKey.split('_v_')[1]);
@@ -1017,7 +1090,7 @@ async function updateLiveScoreOverlays(predictions) {
               <span class="js-season-rank text-right"></span>
               <div class="text-right leading-none">
                 <div class="text-xl font-bold ${probColor}">${probPct.toFixed(1)}%</div>
-                <div class="text-xs text-gray-500 mt-0.5">$${(1 / prob).toFixed(2)}</div>
+                ${prob >= 1e-6 ? `<div class="text-xs text-gray-500 mt-0.5">$${(1 / prob).toFixed(2)}</div>` : ''}
               </div>
             </div>` : ''}
           </div>
@@ -1073,8 +1146,8 @@ function createMatchCard(data) {
   const awayPercValue   = away_perc * 100;
   const homePercDisplay = homePercValue.toFixed(1);
   const awayPercDisplay = awayPercValue.toFixed(1);
-  const homeFairOdds    = (1 / home_perc).toFixed(2);
-  const awayFairOdds    = (1 / away_perc).toFixed(2);
+  const homeFairOdds    = home_perc >= 1e-6 ? (1 / home_perc).toFixed(2) : null;
+  const awayFairOdds    = away_perc >= 1e-6 ? (1 / away_perc).toFixed(2) : null;
   const expectedTotal   = home_score + away_score;
   const homeColor       = teamColor(home_team);
   const awayColor       = teamColor(away_team);
@@ -1105,12 +1178,12 @@ function createMatchCard(data) {
         <div class="flex items-center justify-between w-full text-sm font-bold">
           <div class="flex flex-col items-start">
             <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
-            <span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>
+            ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
           </div>
           <span class="text-gray-600 text-xs font-normal px-2">vs</span>
           <div class="flex flex-col items-end">
             <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
-            <span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>
+            ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
           </div>
         </div>
         ${bar}
@@ -1134,14 +1207,14 @@ function createMatchCard(data) {
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
           <div class="min-w-0">
             <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
-            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span> · <span class="text-gray-500">$${homeFairOdds}</span></div>
+            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
           </div>
         </div>
         <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
         <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
           <div class="min-w-0 text-right">
             <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
-            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span> · <span class="text-gray-500">$${awayFairOdds}</span></div>
+            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
           </div>
           <img src="${logoUrl(away_team)}" alt="${away_team} logo"
                class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">

@@ -480,7 +480,24 @@
           picksByGame[p.game_id].push(p)
         })
 
-        function computeScore(distribution, actual) {
+        // Normal distribution helpers
+        function lbMean(arr) {
+          return arr.reduce((s, v) => s + v, 0) / arr.length
+        }
+        function lbStddev(arr) {
+          if (arr.length < 2) return 6
+          const mu = lbMean(arr)
+          return Math.max(Math.sqrt(arr.reduce((s, v) => s + (v - mu) ** 2, 0) / arr.length), 1)
+        }
+        function lbNormCdf(x) {
+          const t = 1 / (1 + 0.2316419 * Math.abs(x))
+          const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+          const p = 1 - (Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI)) * poly
+          return x >= 0 ? p : 1 - p
+        }
+
+        // Score a machine distribution (discrete {x, prob} array) against the actual result
+        function computeMachineScore(distribution, actual) {
           let pGte = 0, pLte = 0
           for (const { x, prob } of distribution) {
             if (x >= actual) pGte += prob
@@ -493,17 +510,25 @@
           return { score, label }
         }
 
+        // Score a user normal distribution ({mu, sigma}) against the actual result
+        function computeScore(dist, actual) {
+          const pGte  = 1 - lbNormCdf((actual - dist.mu) / dist.sigma)
+          const pLte  = lbNormCdf((actual - dist.mu) / dist.sigma)
+          const score = Math.min(pGte, pLte)
+          const label = pGte <= pLte
+            ? `P(>${(actual - 0.5).toFixed(1)})`
+            : `P(<${(actual + 0.5).toFixed(1)})`
+          return { score, label }
+        }
+
+        // Fit normal distributions to margin and total picks
         function picksToDistributions(picks) {
-          const marginCounts = {}, totalCounts = {}
-          for (const p of picks) {
-            const m = p.home_score_pick - p.away_score_pick
-            const t = p.home_score_pick + p.away_score_pick
-            marginCounts[m] = (marginCounts[m] || 0) + 1
-            totalCounts[t]  = (totalCounts[t]  || 0) + 1
+          const margins = picks.map(p => p.home_score_pick - p.away_score_pick)
+          const totals  = picks.map(p => p.home_score_pick + p.away_score_pick)
+          return {
+            margins: { mu: lbMean(margins), sigma: lbStddev(margins) },
+            totals:  { mu: lbMean(totals),  sigma: lbStddev(totals)  },
           }
-          const n = picks.length
-          const toArr = obj => Object.entries(obj).map(([x, c]) => ({ x: Number(x), prob: c / n }))
-          return { margins: toArr(marginCounts), totals: toArr(totalCounts) }
         }
 
         const pickerIds = new Set(allPicks?.map(p => p.user_id) || [])
@@ -535,8 +560,8 @@
             const machineDist = machineDistByGame[game.game_id]
             if (machineDist?.margins?.length) {
               addEntry(game.game_id, '__machine__',
-                computeScore(machineDist.margins, actualMargin),
-                computeScore(machineDist.totals,  actualTotal))
+                computeMachineScore(machineDist.margins, actualMargin),
+                computeMachineScore(machineDist.totals,  actualTotal))
             }
 
             const allDist = picksToDistributions(gamePicks)
