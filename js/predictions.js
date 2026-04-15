@@ -115,45 +115,56 @@ function normPdf(x, mu, sigma) {
   return Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
 }
 
-// Standard normal CDF via Abramowitz & Stegun approximation (error < 7.5e-8)
-function normCdf(x) {
-  const t = 1 / (1 + 0.2316419 * Math.abs(x));
-  const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
-  const cdf = 1 - normPdf(x, 0, 1) * poly;
-  return x >= 0 ? cdf : 1 - cdf;
-}
 
-// P(X >= actual) for a normal distribution with given mu, sigma
-function normalGte(mu, sigma, actual) {
-  return 1 - normCdf((actual - mu) / sigma);
-}
 
 // Gaussian KDE bandwidth via Silverman's rule-of-thumb
 function silvermanBandwidth(values) {
   if (values.length < 2) return 6;
-  // Linear adjustment to spiky fit data
-  const adj = 0.5;
-  return adj * Math.max(1.06 * stddev(values) * Math.pow(values.length, -0.2), 1);
+  return Math.max(1.06 * stddev(values) * Math.pow(values.length, -0.2), 1);
 }
 
-// P(X >= threshold) via Gaussian KDE — each pick contributes one kernel
-// Naturally handles bimodal / skewed pick distributions without forcing normality
-function kdeProbGte(values, threshold) {
+// Weighted stddev from normalised bins [{x, y}] where y values sum to ~1
+// Call this on the already-clamped machineMBins/machineTBins so extreme outlier
+// bins don't inflate σ and over-widen the user KDE
+function machineSigma(normBins) {
+  if (!normBins?.length) return null;
+  const total = normBins.reduce((s, b) => s + b.y, 0);
+  if (!total) return null;
+  const mu = normBins.reduce((s, b) => s + b.x * b.y, 0) / total;
+  const variance = normBins.reduce((s, b) => s + b.y * (b.x - mu) ** 2, 0) / total;
+  return Math.sqrt(variance);
+}
+
+// Effective KDE kernel width such that Var(KDE) = σ_model²:
+//   Var(KDE) = σ_picks² + h²  →  h = sqrt(max(0, σ_model² - σ_picks²))
+// Falls back to Silverman when no model sigma is available (e.g. card win %
+// before the modal has been opened and the machine dist cached).
+// A minimum floor of 1 prevents degenerate zero-width kernels.
+function calibratedBandwidth(values, modelSigma) {
+  if (!modelSigma) return silvermanBandwidth(values);
+  const sigmaU = stddev(values);
+  return Math.max(1, Math.sqrt(Math.max(0, modelSigma ** 2 - sigmaU ** 2)));
+}
+
+// P(X >= threshold) summed over the renormalised integer KDE bins — consistent with the chart
+function kdeProbGte(values, threshold, modelSigma = null) {
   if (!values.length) return null;
-  const h = silvermanBandwidth(values);
-  return values.reduce((sum, v) => sum + normalGte(v, h, threshold), 0) / values.length;
+  const bins = kdePoints(values, -100, 100, modelSigma);
+  return bins.filter(b => b.x >= threshold).reduce((s, b) => s + b.y, 0);
 }
 
-// Sample the Gaussian KDE PDF at integer x steps → [{x, y}] (same format as normalDistPoints)
-function kdePoints(values, xMin, xMax) {
+// Sample the Gaussian KDE PDF at integer x steps, clamped to [xMin, xMax] and renormalised
+// so the area under the visible curve always integrates to 1 (step size = 1).
+function kdePoints(values, xMin, xMax, modelSigma = null) {
   if (!values.length) return [];
-  const h = silvermanBandwidth(values);
+  const h = calibratedBandwidth(values, modelSigma);
   const points = [];
   for (let x = xMin; x <= xMax; x++) {
     const y = values.reduce((sum, v) => sum + normPdf(x, v, h), 0) / values.length;
     points.push({ x, y });
   }
-  return points;
+  const total = points.reduce((s, p) => s + p.y, 0);
+  return total > 0 ? points.map(p => ({ x: p.x, y: p.y / total })) : points;
 }
 
 // Sample a normal distribution at integer steps over the given x range → [{x, y}]
@@ -188,16 +199,19 @@ function binPickValues(values, binSize) {
   return entries.map(e => ({ x: e.x, y: total > 0 ? e.y / total : 0 }));
 }
 
-// Group machine bins into the same bin size, preserving prob values (sum ≈ 1)
-function normaliseMachineBins(rawBins, binSize) {
+// Group machine bins into the same bin size, clamped to realistic range, renormalised to sum=1
+function normaliseMachineBins(rawBins, binSize, xMin = -Infinity, xMax = Infinity) {
   const grouped = {};
   rawBins.forEach(({ x, prob }) => {
+    if (x < xMin || x > xMax) return;
     const b = Math.floor(x / binSize) * binSize;
     grouped[b] = (grouped[b] || 0) + prob;
   });
-  return Object.entries(grouped)
+  const entries = Object.entries(grouped)
     .map(([x, p]) => ({ x: Number(x), y: p }))
     .sort((a, b) => a.x - b.x);
+  const total = entries.reduce((s, e) => s + e.y, 0);
+  return total > 0 ? entries.map(e => ({ x: e.x, y: e.y / total })) : entries;
 }
 
 // --- USER MODEL: MACHINE DISTRIBUTION FETCH ---
@@ -385,7 +399,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     return candidates.find(s => maxY / s <= 6 && maxY / s >= 3) ?? 0.05;
   }
 
-  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf', xMin = undefined, xMax = undefined, xStepSize = undefined, userKdeBins = []) {
+  function makeChartOptions(xTitle, machineBinsRef, userBinsRef, xLabelFn, mode = 'pdf', xMin = undefined, xMax = undefined, xStepSize = undefined, userKdeBins = [], probFn = null) {
     return {
       responsive: true,
       animation: false,
@@ -410,24 +424,30 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         if (!allXs.length) { tooltipEl.style.display = 'none'; return; }
         const nearest = allXs.reduce((a, b) => Math.abs(b - xVal) < Math.abs(a - xVal) ? b : a);
 
-        const mc = machineBinsRef.length ? cdf(machineBinsRef, nearest) : null;
-        const uc = userKdeBins.length ? cdf(userKdeBins, nearest) : null;
+        const getProbs = (bins) => probFn ? probFn(bins, nearest) : (() => {
+          const g = cdf(bins, nearest).gte; return { over: g, under: 1 - g };
+        })();
+        const mc = machineBinsRef.length ? getProbs(machineBinsRef) : null;
+        const uc = userKdeBins.length   ? getProbs(userKdeBins)    : null;
 
-        const pct = v => `${(v * 100).toFixed(1)}%`;
-        const labels = xLabelFn ? xLabelFn(nearest) : { over: `≥${nearest}`, under: `<${nearest}` };
+        const pct  = v => `${(v * 100).toFixed(1)}%`;
         const odds = p => p >= 0.00005 ? `$${(1 / p).toFixed(2)}` : '—';
+        const labels = xLabelFn ? xLabelFn(nearest) : { over: `≥${nearest}`, under: `<${nearest}` };
         const row = (label, p) => `
           <div style="display:flex;justify-content:space-between;gap:1.5rem;">
             <span>${label}</span>
             <span style="font-variant-numeric:tabular-nums;">${pct(p)} <span style="color:#4a5568;">${odds(p)}</span></span>
           </div>`;
+        const renderProbs = (probs) => probs.under === null
+          ? row(labels.over, probs.over)
+          : `${row(labels.over, probs.over)}${row(labels.under, probs.under)}`;
         let html = '';
         if (mc) html += `
           <div style="color:#f59e0b;font-weight:600;margin-bottom:0.15rem;">BS Machine</div>
-          ${row(labels.over, mc.gte)}${row(labels.under, 1 - mc.gte)}`;
+          ${renderProbs(mc)}`;
         if (uc) html += `
           <div style="color:#60a5fa;font-weight:600;margin-top:0.4rem;margin-bottom:0.15rem;">User Model</div>
-          ${row(labels.over, uc.gte)}${row(labels.under, 1 - uc.gte)}`;
+          ${renderProbs(uc)}`;
 
         tooltipEl.innerHTML = html;
         tooltipEl.style.display = 'block';
@@ -479,8 +499,15 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     };
   }
 
-  const userMarginBins = kdePoints(pickData.margins, -80, 80);
-  const userTotalBins  = kdePoints(pickData.totals,  0,  160);
+  // Compute clamped machine bins first so sigma is derived from the same
+  // bounded, renormalised distribution that gets displayed — not inflated by outlier bins
+  const machineMBins   = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 1, -100, 100) : [];
+  const machineTBins   = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  1,    0, 100) : [];
+
+  const sigmaMargin    = machineSigma(machineMBins);
+  const sigmaTotal     = machineSigma(machineTBins);
+  const userMarginBins = kdePoints(pickData.margins, -100, 100, sigmaMargin);
+  const userTotalBins  = kdePoints(pickData.totals,    0, 100,  sigmaTotal);
 
   // Build sorted cumulative bins from normalised {x,y} bins.
   // Sentinel points anchor the curve to 0 before the first bin and 1 after the last.
@@ -496,8 +523,8 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     ];
   }
 
-  function makeDatasets(machineBins, userNormBins, machineGroupBin, actualVal, mode, showPicks, discretePickBins) {
-    const machineData = machineBins ? normaliseMachineBins(machineBins, machineGroupBin) : [];
+  function makeDatasets(machineData, userNormBins, actualVal, mode, showPicks, discretePickBins) {
+    machineData = machineData ?? [];
 
     if (mode === 'cdf') {
       const machineCdf = toCdf(machineData);
@@ -562,10 +589,6 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     ];
   }
 
-  // binSize=1 so machine and user curves have the same probability-per-unit scale (equal visual areas)
-  const machineMBins = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 1) : [];
-  const machineTBins = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  1) : [];
-
   // Discrete pick histograms (for "Picks" toggle mode)
   const pickMarginBins = binPickValues(pickData.margins, 1);
   const pickTotalBins  = binPickValues(pickData.totals,  1);
@@ -573,22 +596,33 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const homeTeam = pickData?.home_team || 'Home';
   const awayTeam = pickData?.away_team || 'Away';
 
+  // Labels: the implied half-integer line sits between x and its neighbour toward zero
+  // x=0 → Draw; x=1 → line at 0.5; x=-1 → line at -0.5; x=2 → line at 1.5 etc.
   const marginLabelFn = x => {
-    if (x >= 0) {
-      const line = x === 0 ? '0.5' : (x - 0.5).toFixed(1);
-      return { over: `${homeTeam} -${line}`, under: `${awayTeam} +${line}` };
-    } else {
-      // Away team is winning at this margin. Keep winner-/loser+ convention:
-      // awayTeam -line = away gives points (covers only if they win by even more) → low prob → under
-      // homeTeam +line = home receives points (covers easily) → high prob → over
-      const line = (-x - 0.5).toFixed(1);
-      return { over: `${homeTeam} +${line}`, under: `${awayTeam} -${line}` };
-    }
+    if (x === 0) return { over: 'Draw', under: null };
+    if (x > 0)   return { over: `${homeTeam} -${(x - 0.5).toFixed(1)}`, under: `${awayTeam} +${(x - 0.5).toFixed(1)}` };
+    /* x < 0 */  return { over: `${homeTeam} +${(-x - 0.5).toFixed(1)}`, under: `${awayTeam} -${(-x - 0.5).toFixed(1)}` };
   };
-  const totalLabelFn = x => {
-    const line = (x - 0.5).toFixed(1);
-    return { over: `Over ${line}`, under: `Under ${line}` };
+  // Margin probabilities: line sits between integers, so each side maps cleanly
+  // x=0: P(margin=0) as draw; x>0: over=P(≥x), under=P(≤x-1); x<0: over=P(≥x+1), under=P(≤x)
+  const marginProbFn = (bins, x) => {
+    const sumGte = n => Math.min(bins.filter(b => b.x >= n).reduce((s, b) => s + b.y, 0), 1);
+    const sumLte = n => Math.min(bins.filter(b => b.x <= n).reduce((s, b) => s + b.y, 0), 1);
+    if (x === 0) return { over: bins.find(b => b.x === 0)?.y ?? 0, under: null };
+    if (x > 0)   return { over: sumGte(x),     under: sumLte(x - 1) };
+    /* x < 0 */  return { over: sumGte(x + 1), under: sumLte(x) };
   };
+
+  const totalLabelFn = x => ({
+    over:  `Over ${(x - 0.5).toFixed(1)}`,
+    under: `Under ${(x + 0.5).toFixed(1)}`,
+  });
+  // Total probabilities: over=P(≥x), under=P(≤x) — these overlap at x but that's correct
+  // (you're seeing the probability each side of the nearest half-integer line)
+  const totalProbFn = (bins, x) => ({
+    over:  Math.min(bins.filter(b => b.x >= x).reduce((s, b) => s + b.y, 0), 1),
+    under: Math.min(bins.filter(b => b.x <= x).reduce((s, b) => s + b.y, 0), 1),
+  });
 
   const hideTooltip = () => { const el = document.getElementById('dist-chart-tooltip'); if (el) el.style.display = 'none'; };
 
@@ -601,8 +635,8 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     const mCtx = document.getElementById('dist-modal-margin')?.getContext('2d');
     if (mCtx) {
       chartInstances['modal-margin'] = new Chart(mCtx, {
-        data: { datasets: makeDatasets(machineDist?.margins, userMarginBins, 1, actualMargin, mode, showPicks, pickMarginBins) },
-        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode, -50, 50, undefined, userMarginBins),
+        data: { datasets: makeDatasets(machineMBins, userMarginBins, actualMargin, mode, showPicks, pickMarginBins) },
+        options: makeChartOptions('Margin (home – away, pts)', machineMBins, userMarginBins, marginLabelFn, mode, -100, 100, undefined, userMarginBins, marginProbFn),
         plugins: [crosshairPlugin],
       });
       mCtx.canvas.addEventListener('mouseleave', hideTooltip);
@@ -611,8 +645,8 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
     if (tCtx) {
       chartInstances['modal-total'] = new Chart(tCtx, {
-        data: { datasets: makeDatasets(machineDist?.totals, userTotalBins, 1, actualTotal, mode, showPicks, pickTotalBins) },
-        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode, 16, 80, 4, userTotalBins),
+        data: { datasets: makeDatasets(machineTBins, userTotalBins, actualTotal, mode, showPicks, pickTotalBins) },
+        options: makeChartOptions('Total points', machineTBins, userTotalBins, totalLabelFn, mode, 0, 100, 4, userTotalBins, totalProbFn),
         plugins: [crosshairPlugin],
       });
       tCtx.canvas.addEventListener('mouseleave', hideTooltip);
@@ -656,8 +690,11 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
   // Each pick contributes its own kernel — handles bimodal/skewed pick distributions without forcing normality
   // Threshold -0.5: continuity correction (home wins = margin ≥ 0 integers ≡ margin > -0.5 continuous)
   // Draw probability is absorbed into home; away is complement, so home + away = 100%
-  const userHomeWinFrac = n > 0 ? kdeProbGte(pickData.margins, -0.5) : null;
-  const userAwayWinFrac = userHomeWinFrac !== null ? 1 - userHomeWinFrac : null;
+  const cachedMachineDist  = matchId ? machineDistCache[matchId] : null;
+  const cachedMarginBins   = cachedMachineDist?.margins ? normaliseMachineBins(cachedMachineDist.margins, 1, -100, 100) : null;
+  const marginModelSigma   = machineSigma(cachedMarginBins);
+  const userHomeWinFrac    = n > 0 ? kdeProbGte(pickData.margins, +0.5, marginModelSigma) : null;
+  const userAwayWinFrac = n > 0 ? 1 - kdeProbGte(pickData.margins, -0.5, marginModelSigma) : null;//userHomeWinFrac !== null ? 1 - userHomeWinFrac : null;
   const userHomeWin     = userHomeWinFrac !== null && userHomeWinFrac >= 0.5;
   const userHomePct     = userHomeWinFrac !== null ? (userHomeWinFrac * 100).toFixed(1) : null;
   const userAwayPct     = userAwayWinFrac !== null ? (userAwayWinFrac * 100).toFixed(1) : null;
@@ -1700,6 +1737,13 @@ async function loadRound() {
 
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);
+
+    // Prefetch machine distributions for all matches so card win probabilities
+    // use calibrated sigma from the start, not Silverman fallback
+    await Promise.all(allMatches
+      .filter(m => m.match_id)
+      .map(m => fetchMachineDistributions(m.match_id))
+    );
 
     // Async: overlay user model picks for this round — pass ALL matches so rounds
     // without model predictions (no SGM bins) still show user picks
