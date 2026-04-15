@@ -1,26 +1,6 @@
 // pages/tryscorer_predictions.js
 
 document.addEventListener("DOMContentLoaded", function () {
-  // --- HEADER ---
-  fetch('/components/header.html')
-    .then(res => res.text())
-    .then(html => {
-      document.getElementById('site-header').innerHTML = html;
-      const bmcDiv = document.getElementById("bmc-button");
-      if (bmcDiv) {
-        bmcDiv.innerHTML = `
-          <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-            <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
-                 alt="Buy Me a Coffee" style="height: 45px; width: 162px;">
-          </a>`;
-      }
-      const menuToggle = document.getElementById("menu-toggle");
-      const mobileMenu = document.getElementById("mobile-menu");
-      if (menuToggle && mobileMenu) {
-        menuToggle.addEventListener("click", () => mobileMenu.classList.toggle("hidden"));
-      }
-    });
-
   // --- CONFIG ---
   const API_BASE = 'https://bsmachine-backend.onrender.com/api';
 

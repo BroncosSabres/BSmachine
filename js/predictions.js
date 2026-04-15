@@ -153,6 +153,39 @@ function kdeProbGte(values, threshold, modelSigma = null) {
   return bins.filter(b => b.x >= threshold).reduce((s, b) => s + b.y, 0);
 }
 
+// Collapse probability mass from NRL-invalid score values into their adjacent valid neighbours,
+// then renormalise.  This aligns the user KDE with the BS machine's score support.
+//
+//   Margins: valid = even numbers ∪ {-1, +1}
+//            (all other odd margins are physically impossible in NRL)
+//   Totals:  valid = even numbers
+//            (odd totals only arise from golden point games, captured in the margin dist)
+//
+// Each invalid bin x contributes y/2 to x-1 and y/2 to x+1.  Because odd margin bins
+// always neighbour even bins, and same-sign mass stays on the same side of zero, win
+// probabilities derived from a binary threshold at ±0.5 are unaffected.
+function collapseToNRLValid(bins, type) {
+  const isValid = type === 'margin'
+    ? x => x % 2 === 0 || x === 1 || x === -1
+    : x => x % 2 === 0;
+
+  const map = new Map(bins.map(b => [b.x, b.y]));
+
+  for (const { x, y } of bins) {
+    if (!isValid(x) && y > 0) {
+      map.set(x - 1, (map.get(x - 1) ?? 0) + y / 2);
+      map.set(x + 1, (map.get(x + 1) ?? 0) + y / 2);
+      map.set(x, 0);
+    }
+  }
+
+  const entries = [...map.entries()]
+    .filter(([, y]) => y > 0)
+    .sort(([a], [b]) => a - b);
+  const total = entries.reduce((s, [, y]) => s + y, 0);
+  return total > 0 ? entries.map(([x, y]) => ({ x, y: y / total })) : entries.map(([x, y]) => ({ x, y }));
+}
+
 // Sample the Gaussian KDE PDF at integer x steps, clamped to [xMin, xMax] and renormalised
 // so the area under the visible curve always integrates to 1 (step size = 1).
 function kdePoints(values, xMin, xMax, modelSigma = null) {
@@ -217,6 +250,12 @@ function normaliseMachineBins(rawBins, binSize, xMin = -Infinity, xMax = Infinit
 // --- USER MODEL: MACHINE DISTRIBUTION FETCH ---
 const machineDistCache = {};
 const chartInstances   = {};
+
+// Round-level sigma scaling: R = mean(σ_machine) / mean(σ_user_picks) across all
+// matches in the current round that have both machine dists and enough user picks.
+// Applied as: σ_target_match = stddev(picks_match) * R
+// This preserves inter-match variance differences while aligning the overall spread level.
+let roundSigmaScale = { margin: null, total: null };
 
 async function fetchMachineDistributions(matchId) {
   if (machineDistCache[matchId]) return machineDistCache[matchId];
@@ -294,6 +333,7 @@ function ensureModal() {
             <input id="dist-toggle-picks" type="checkbox" style="accent-color:#60a5fa;width:13px;height:13px;cursor:pointer;">
             Show Discrete Picks
           </label>
+          <button id="dist-download-csv" style="padding:3px 10px;border-radius:4px;border:1px solid #2e3a4e;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;" title="Download distribution data as CSV">&#8595; CSV</button>
         </div>
       </div>
       <div id="dist-modal-loading" style="text-align:center;color:#4a5568;font-size:0.875rem;padding:2rem;">Loading distributions…</div>
@@ -504,10 +544,15 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const machineMBins   = machineDist?.margins ? normaliseMachineBins(machineDist.margins, 1, -100, 100) : [];
   const machineTBins   = machineDist?.totals  ? normaliseMachineBins(machineDist.totals,  1,    0, 100) : [];
 
-  const sigmaMargin    = machineSigma(machineMBins);
-  const sigmaTotal     = machineSigma(machineTBins);
-  const userMarginBins = kdePoints(pickData.margins, -100, 100, sigmaMargin);
-  const userTotalBins  = kdePoints(pickData.totals,    0, 100,  sigmaTotal);
+  const nPicks     = pickData.margins?.length ?? 0;
+  const sigmaMargin = (nPicks >= 2 && roundSigmaScale.margin)
+    ? stddev(pickData.margins) * roundSigmaScale.margin
+    : machineSigma(machineMBins);
+  const sigmaTotal  = (nPicks >= 2 && roundSigmaScale.total)
+    ? stddev(pickData.totals ?? []) * roundSigmaScale.total
+    : machineSigma(machineTBins);
+  const userMarginBins = collapseToNRLValid(kdePoints(pickData.margins, -100, 100, sigmaMargin), 'margin');
+  const userTotalBins  = collapseToNRLValid(kdePoints(pickData.totals,    0, 100,  sigmaTotal),  'total');
 
   // Build sorted cumulative bins from normalised {x,y} bins.
   // Sentinel points anchor the curve to 0 before the first bin and 1 after the last.
@@ -587,6 +632,44 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         pointRadius: 0, fill: false, tension: 0, order: 1,
       }] : []),
     ];
+  }
+
+  // Download CSV handler — exports relative probabilities for both distributions
+  const csvBtn = document.getElementById('dist-download-csv');
+  if (csvBtn) {
+    csvBtn.onclick = () => {
+      // Build a lookup map from {x,y} bins for quick access
+      const lookup = bins => {
+        const map = new Map();
+        bins.forEach(b => map.set(b.x, b.y));
+        return map;
+      };
+      const mMach = lookup(machineMBins);
+      const mUser = lookup(userMarginBins);
+      const tMach = lookup(machineTBins);
+      const tUser = lookup(userTotalBins);
+
+      // Collect all unique x values for each chart
+      const marginXs = [...new Set([...machineMBins.map(b => b.x), ...userMarginBins.map(b => b.x)])].sort((a, b) => a - b);
+      const totalXs  = [...new Set([...machineTBins.map(b => b.x),  ...userTotalBins.map(b => b.x)])].sort((a, b) => a - b);
+
+      const fmt = v => v != null ? v.toFixed(6) : '0.000000';
+      const rows = ['Margin (home-away),BS Machine,User Model'];
+      marginXs.forEach(x => rows.push(`${x},${fmt(mMach.get(x))},${fmt(mUser.get(x))}`));
+      rows.push('');
+      rows.push('Total Points,BS Machine,User Model');
+      totalXs.forEach(x => rows.push(`${x},${fmt(tMach.get(x))},${fmt(tUser.get(x))}`));
+
+      const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      // Sanitise title for use as filename
+      const safeName = (title || 'distributions').replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_');
+      a.href     = url;
+      a.download = `${safeName}_distributions.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
   }
 
   // Discrete pick histograms (for "Picks" toggle mode)
@@ -690,14 +773,21 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
   // Each pick contributes its own kernel — handles bimodal/skewed pick distributions without forcing normality
   // Threshold -0.5: continuity correction (home wins = margin ≥ 0 integers ≡ margin > -0.5 continuous)
   // Draw probability is absorbed into home; away is complement, so home + away = 100%
+  // Scale the KDE bandwidth so the round-average user spread matches the round-average
+  // machine spread, while preserving relative differences between matches.
+  // Falls back to per-match machine sigma when the round ratio isn't available.
   const cachedMachineDist  = matchId ? machineDistCache[matchId] : null;
   const cachedMarginBins   = cachedMachineDist?.margins ? normaliseMachineBins(cachedMachineDist.margins, 1, -100, 100) : null;
-  const marginModelSigma   = machineSigma(cachedMarginBins);
+  const marginModelSigma   = (n >= 2 && roundSigmaScale.margin)
+    ? stddev(pickData.margins) * roundSigmaScale.margin
+    : machineSigma(cachedMarginBins);
   const userHomeWinFrac    = n > 0 ? kdeProbGte(pickData.margins, +0.5, marginModelSigma) : null;
-  const userAwayWinFrac = n > 0 ? 1 - kdeProbGte(pickData.margins, -0.5, marginModelSigma) : null;//userHomeWinFrac !== null ? 1 - userHomeWinFrac : null;
+  const userAwayWinFrac = n > 0 ? 1 - kdeProbGte(pickData.margins, -0.5, marginModelSigma) : null;
+  const userDrawFrac    = (userHomeWinFrac !== null && userAwayWinFrac !== null) ? Math.max(0, 1 - userHomeWinFrac - userAwayWinFrac) : 0;
   const userHomeWin     = userHomeWinFrac !== null && userHomeWinFrac >= 0.5;
   const userHomePct     = userHomeWinFrac !== null ? (userHomeWinFrac * 100).toFixed(1) : null;
   const userAwayPct     = userAwayWinFrac !== null ? (userAwayWinFrac * 100).toFixed(1) : null;
+  const userDrawPct     = (userDrawFrac * 100).toFixed(1);
   const userHomeOdds    = userHomeWinFrac >= 1e-6 ? (1 / userHomeWinFrac).toFixed(2) : null;
   const userAwayOdds    = userAwayWinFrac >= 1e-6 ? (1 / userAwayWinFrac).toFixed(2) : null;
 
@@ -708,7 +798,8 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
 
   const userBar = n > 0 ? `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
-      <div style="width:${userHomePct}%; background:${homeColor}; height:8px; opacity:${userHomeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6); transition:width 0.6s ease;"></div>
+      <div style="width:${userHomePct}%; background:${homeColor}; height:8px; opacity:${userHomeWin ? '1' : '0.4'}; transition:width 0.6s ease;"></div>
+      <div style="width:${userDrawPct}%; background:rgba(255,255,255,0.08); height:8px; transition:width 0.6s ease;"></div>
       <div style="width:${userAwayPct}%; background:${awayColor}; height:8px; opacity:${userHomeWin ? '0.4' : '1'}; transition:width 0.6s ease;"></div>
     </div>` : `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.1); border-radius:5px; overflow:hidden; height:8px; background:rgba(255,255,255,0.05);"></div>`;
@@ -775,6 +866,35 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
 // --- USER MODEL: OVERLAY ALL CARDS FOR ROUND ---
 async function updateUserModelOverlays(predictions, displayRound) {
   const result = await fetchUserPicksForRound(displayRound);
+
+  // Compute round-level sigma scaling ratio before rendering any cards.
+  // Machine dists are already prefetched by loadRound() so machineDistCache is warm.
+  const machMargSigmas = [], machTotSigmas = [];
+  const userMargSigmas = [], userTotSigmas = [];
+
+  predictions.forEach(pred => {
+    const pickData = findPicksForMatch(result, pred.match_id);
+    if ((pickData?.margins?.length ?? 0) < 2) return;
+    const dist = machineDistCache[pred.match_id];
+    if (!dist) return;
+
+    const mBins = dist.margins ? normaliseMachineBins(dist.margins, 1, -100, 100) : [];
+    const tBins = dist.totals  ? normaliseMachineBins(dist.totals,  1,    0, 100) : [];
+    const σM = machineSigma(mBins);
+    const σT = machineSigma(tBins);
+    const σUm = stddev(pickData.margins);
+    const σUt = stddev(pickData.totals ?? []);
+
+    if (σM && σUm > 0) { machMargSigmas.push(σM); userMargSigmas.push(σUm); }
+    if (σT && σUt > 0) { machTotSigmas.push(σT);  userTotSigmas.push(σUt);  }
+  });
+
+  const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+  roundSigmaScale = {
+    margin: machMargSigmas.length ? avg(machMargSigmas) / avg(userMargSigmas) : null,
+    total:  machTotSigmas.length  ? avg(machTotSigmas)  / avg(userTotSigmas)  : null,
+  };
+
   predictions.forEach(pred => {
     const matchKey = `${pred.home_team}_v_${pred.away_team}`;
     const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
@@ -1189,6 +1309,7 @@ function createMatchCard(data) {
   const homeWin = home_perc >= away_perc;
   const homePercValue   = home_perc * 100;
   const awayPercValue   = away_perc * 100;
+  const drawPercValue   = Math.max(0, 100 - homePercValue - awayPercValue);
   const homePercDisplay = homePercValue.toFixed(1);
   const awayPercDisplay = awayPercValue.toFixed(1);
   const homeFairOdds    = home_perc >= 1e-6 ? (1 / home_perc).toFixed(2) : null;
@@ -1203,7 +1324,8 @@ function createMatchCard(data) {
 
   const bar = `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
-      <div class="prob-bar-home" style="width:${homePercValue}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}; border-right:1px solid rgba(255,255,255,0.6)"></div>
+      <div class="prob-bar-home" style="width:${homePercValue}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}"></div>
+      <div style="width:${drawPercValue}%; background:rgba(255,255,255,0.08); height:8px;"></div>
       <div class="prob-bar-away" style="width:${awayPercValue}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
     </div>`;
 
@@ -1720,19 +1842,13 @@ async function loadRound() {
       const card = createMatchCard(cardData);
       container.appendChild(card);
 
-      if (currentRound === latestRound) {
-        checkTryscorerAvailable(match.home_team, match.away_team).then(({ available, matchId }) => {
-          card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
-            slot.innerHTML = available
-              ? tryscorerButtonEnabled(matchId)
-              : tryscorerButtonDisabled();
-          });
-        });
-      } else {
+      checkTryscorerAvailable(match.home_team, match.away_team).then(({ available, matchId }) => {
         card.querySelectorAll('.js-tryscorer-btn').forEach(slot => {
-          slot.innerHTML = '';
+          slot.innerHTML = available
+            ? tryscorerButtonEnabled(matchId)
+            : tryscorerButtonDisabled();
         });
-      }
+      });
     }
 
     // Async: overlay result line probability for all rounds
