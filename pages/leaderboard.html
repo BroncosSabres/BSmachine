@@ -151,10 +151,13 @@
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
-      let activeTab   = 'team'
-      let roundFilter = 'season'
-      let myUserId    = null
-      let rounds      = []
+      let activeTab       = 'team'
+      let roundFilter     = 'season'
+      let myUserId        = null
+      let rounds          = []
+      let liveRoundData   = null   // { round_number, games: [...] }
+      let liveRoundNumber = null   // current active round number
+      let liveGameMap     = {}     // { [game_id]: game enriched with live scores }
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -187,6 +190,57 @@
         })
         roundFilter = String(rounds[0].round_number)
         sel.value = roundFilter
+      }
+
+      // Fetch live round data using the same endpoints as the matchups page
+      const BACKEND_ROOT = 'https://bsmachine-backend.onrender.com'
+      try {
+        const [crResp, lrResp] = await Promise.all([
+          fetch(`${BACKEND}/current_round_matches/nrl`),
+          fetch(`${BACKEND_ROOT}/latest-results`),
+        ])
+        const currentRoundMatches = crResp.ok ? await crResp.json() : []
+        const liveResults         = lrResp.ok  ? await lrResp.json()  : []
+
+        liveRoundNumber = currentRoundMatches?.[0]?.round_number ?? null
+
+        if (liveRoundNumber) {
+          const { data: sbRoundGames } = await supabase
+            .from('games')
+            .select('game_id, home_team, away_team, home_score, away_score, is_complete, kickoff_time, round_number')
+            .eq('round_number', liveRoundNumber)
+
+          sbRoundGames?.forEach(g => {
+            const lr = liveResults.find(l =>
+              teamSlug(g.home_team) === teamSlug(l.home) &&
+              teamSlug(g.away_team) === teamSlug(l.away)
+            )
+            liveGameMap[g.game_id] = {
+              ...g,
+              home_score: lr?.home_score ?? g.home_score,
+              away_score: lr?.away_score ?? g.away_score,
+              is_live: lr != null && !g.is_complete,
+            }
+          })
+
+          liveRoundData = { round_number: liveRoundNumber, games: Object.values(liveGameMap) }
+
+          // Add current round to dropdown if it isn't there yet (new live round)
+          const sel2 = document.getElementById('round-filter')
+          if (!rounds.some(r => r.round_number === liveRoundNumber)) {
+            const opt = document.createElement('option')
+            opt.value       = liveRoundNumber
+            opt.textContent = `Round ${liveRoundNumber}`
+            if (sel2.options.length > 1) sel2.insertBefore(opt, sel2.options[1])
+            else                         sel2.appendChild(opt)
+            rounds.unshift({ round_number: liveRoundNumber })
+          }
+          // Default to live round
+          roundFilter   = String(liveRoundNumber)
+          sel2.value    = roundFilter
+        }
+      } catch (e) {
+        console.warn('[leaderboard] live round fetch failed:', e)
       }
 
       document.getElementById('round-filter').addEventListener('change', function () {
@@ -224,6 +278,25 @@
         return data
       }
 
+      // --- Individual scoring helpers (mirrors backend bell_score: 5×exp(−err²/72), σ=6) ---
+      function bellScore(error) {
+        return 5.0 * Math.exp(-(error * error) / 72.0)
+      }
+
+      function computeLiveIndividualScores(games, picks) {
+        const gameMap = {}
+        games.forEach(g => { if (g.home_score != null && g.away_score != null) gameMap[g.game_id] = g })
+        return picks
+          .filter(p => p.home_score_pick != null && p.away_score_pick != null && gameMap[p.game_id])
+          .map(p => {
+            const g  = gameMap[p.game_id]
+            const ms = bellScore((g.home_score - g.away_score) - (p.home_score_pick - p.away_score_pick))
+            const ts = bellScore((g.home_score + g.away_score) - (p.home_score_pick + p.away_score_pick))
+            return { user_id: p.user_id, game_id: p.game_id, round_number: g.round_number,
+                     margin_score: ms, total_score: ts, points: ms + ts }
+          })
+      }
+
       // --- Individual leaderboard ---
       async function loadIndividual() {
         const [{ data: allSeasonScores }, { data: profiles }] = await Promise.all([
@@ -231,15 +304,46 @@
           supabase.from('profiles').select('id, username, favourite_team'),
         ])
 
-        // Season sidebar panel — full season aggregate
-        seasonPanel.innerHTML = buildIndividualCompact(allSeasonScores || [], profiles || [])
+        // Compute live scores for current-round games not yet in the scores table
+        let liveComputedScores = []
+        const liveGamesWithScores = Object.values(liveGameMap)
+          .filter(g => g.home_score != null && g.away_score != null)
+        if (liveGamesWithScores.length) {
+          const scoredIds       = new Set((allSeasonScores || []).map(s => s.game_id))
+          const unscoredLiveIds = liveGamesWithScores
+            .filter(g => !scoredIds.has(g.game_id))
+            .map(g => g.game_id)
+          if (unscoredLiveIds.length) {
+            const { data: livePicks } = await supabase
+              .from('picks')
+              .select('user_id, game_id, home_score_pick, away_score_pick')
+              .in('game_id', unscoredLiveIds)
+            liveComputedScores = computeLiveIndividualScores(
+              liveGamesWithScores.filter(g => unscoredLiveIds.includes(g.game_id)),
+              livePicks || []
+            )
+          }
+        }
+
+        // Merge: scores table for already-scored games + computed scores for live games
+        const liveComputedIds = new Set(liveComputedScores.map(s => s.game_id))
+        const allMergedScores = [
+          ...(allSeasonScores || []).filter(s => !liveComputedIds.has(s.game_id)),
+          ...liveComputedScores,
+        ]
+
+        // Season sidebar panel — full season aggregate (includes live partial scores)
+        seasonPanel.innerHTML = buildIndividualCompact(allMergedScores, profiles || [])
 
         // Determine active round for week panel + match cards
-        const activeRound = roundFilter !== 'season' ? Number(roundFilter) : (rounds[0]?.round_number ?? null)
+        const activeRound = roundFilter !== 'season'
+          ? Number(roundFilter)
+          : (liveRoundNumber ?? rounds[0]?.round_number ?? null)
 
         if (activeRound) {
-          weekLabel.textContent = `Round ${activeRound}`
-          const roundScores = (allSeasonScores || []).filter(s => s.round_number === activeRound)
+          const isLive = liveRoundNumber != null && activeRound === liveRoundNumber
+          weekLabel.textContent = `Round ${activeRound}${isLive ? ' — Live' : ''}`
+          const roundScores = allMergedScores.filter(s => s.round_number === activeRound)
           weekPanel.innerHTML = buildIndividualCompact(roundScores, profiles || [])
           matchesEl.innerHTML = await buildMatchCardsHtml(activeRound, profiles || [])
         } else {
@@ -332,6 +436,19 @@
           scoresByGame[s.game_id].push(s)
         })
 
+        // For live games in this round that have scores but aren't in the scores table yet,
+        // compute bell-curve scores on-the-fly from picks
+        if (liveRoundNumber === roundNumber) {
+          for (const game of (games || [])) {
+            if (scoresByGame[game.game_id]?.length) continue  // already scored
+            const lg = liveGameMap[game.game_id]
+            if (!lg || lg.home_score == null) continue
+            const gamePicks = (allPicks || []).filter(p => p.game_id === game.game_id)
+            const computed  = computeLiveIndividualScores([lg], gamePicks)
+            if (computed.length) scoresByGame[game.game_id] = computed
+          }
+        }
+
         const cards = games.map(game => {
           const gameScores = (scoresByGame[game.game_id] || [])
             .sort((a, b) => b.points - a.points)
@@ -344,10 +461,15 @@
           const myRank    = myEntry  ? gameScores.indexOf(myEntry) + 1 : null
           const myInTop5  = myRank !== null && myRank <= 5
 
-          const isComplete = game.is_complete
+          const isComplete  = game.is_complete
+          const lg          = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
+          const liveHome    = lg?.home_score ?? game.home_score
+          const liveAway    = lg?.away_score ?? game.away_score
+          const hasScore    = liveHome != null && liveAway != null
+          const isGameLive  = lg?.is_live === true
 
-          const scoreDisplay = isComplete
-            ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${game.home_score} – ${game.away_score}</span>`
+          const scoreDisplay = hasScore
+            ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${liveHome} – ${liveAway}</span>${isGameLive ? '<br><span style="font-size:0.6rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}`
             : `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:#4a5568;letter-spacing:0.06em;text-transform:uppercase;">Upcoming</span>`
 
           const renderRow = (s, rank, isMe) => {
@@ -390,7 +512,7 @@
             ? renderRow(myEntry, myRank, true)
             : ''
 
-          const noPicks = !isComplete
+          const noPicks = !(isComplete || hasScore)
             ? ''
             : (!myInTop5 && !myEntry && myUserId)
               ? `<div style="padding:0.5rem 1rem;font-size:0.75rem;color:#4a5568;border-top:1px solid rgba(245,158,11,0.15);background:rgba(245,158,11,0.03);">You didn't submit a pick for this game.</div>`
@@ -411,9 +533,9 @@
                   <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
                 </div>
               </div>
-              ${isComplete && pickers > 0 ? `
+              ${(isComplete || hasScore) && pickers > 0 ? `
               <div style="padding:0.375rem 1rem;font-size:0.7rem;color:#4a5568;background:#0f1117;border-top:1px solid #1a2233;border-bottom:1px solid #1e2a3a;">
-                ${pickers} picker${pickers !== 1 ? 's' : ''} · ${totalPts.toFixed(1)} pts distributed
+                ${pickers} picker${pickers !== 1 ? 's' : ''} · ${totalPts.toFixed(1)} pts distributed${isGameLive ? ' · <span style="color:#f87171;">live</span>' : ''}
               </div>
               <div style="display:grid;grid-template-columns:2rem 1fr 4rem 4.5rem 4.5rem 3.5rem;gap:0.5rem;padding:0.4rem 1rem;background:#0f1117;border-bottom:1px solid #1e2a3a;">
                 <div></div>
@@ -426,7 +548,7 @@
               ${top5Html}
               ${meHtml}
               ${noPicks}
-              ` : isComplete ? `
+              ` : (isComplete || hasScore) ? `
               <div style="padding:0.75rem 1rem;font-size:0.8125rem;color:#4a5568;border-top:1px solid #1e2a3a;">No picks submitted for this game.</div>
               ` : ''}
             </div>`
@@ -438,14 +560,27 @@
       // --- Team model leaderboard ---
       async function loadTeam() {
         // Always fetch ALL completed games — needed for the full-season sidebar panel
-        const { data: allCompletedGames } = await supabase
+        const { data: rawCompletedGames } = await supabase
           .from('games')
           .select('game_id, round_number, home_team, away_team, home_score, away_score, kickoff_time')
           .eq('is_complete', true)
           .not('home_score', 'is', null)
           .order('kickoff_time', { ascending: true })
 
-        if (!allCompletedGames?.length) {
+        // Inject live games that have scores but aren't marked complete yet
+        let allCompletedGames = rawCompletedGames || []
+        if (liveRoundData?.games?.length) {
+          const completedIds = new Set(allCompletedGames.map(g => g.game_id))
+          const liveToAdd = liveRoundData.games.filter(
+            g => !completedIds.has(g.game_id) && g.home_score != null && g.away_score != null
+          )
+          if (liveToAdd.length) {
+            allCompletedGames = [...allCompletedGames, ...liveToAdd]
+              .sort((a, b) => (a.kickoff_time || '') < (b.kickoff_time || '') ? -1 : 1)
+          }
+        }
+
+        if (!allCompletedGames.length) {
           seasonPanel.innerHTML = emptyState('No completed games yet.')
           weekPanel.innerHTML   = emptyState('No completed games yet.')
           matchesEl.innerHTML   = ''
@@ -458,7 +593,7 @@
           supabase.from('picks')
             .select('user_id, game_id, home_score_pick, away_score_pick')
             .in('game_id', allGameIds),
-          supabase.from('profiles').select('id, favourite_team'),
+          supabase.from('profiles').select('id, username, favourite_team'),
           ...allCompletedGames.map(g =>
             fetch(`${BACKEND}/match_score_distributions/${g.game_id}`)
               .then(r => r.ok ? r.json() : null).catch(() => null)
@@ -739,12 +874,20 @@
           : allCompletedGames.filter(g => g.round_number === allCompletedGames[allCompletedGames.length - 1]?.round_number)
 
         if (!roundGames.length) {
-          weekPanel.innerHTML = emptyState('No games scored for this round.')
-          matchesEl.innerHTML = ''
+          if (activeRound === liveRoundNumber) {
+            // Live round hasn't kicked off yet — show upcoming game tiles so pickers can see fixtures
+            weekPanel.innerHTML   = emptyState('Scoring begins at kickoff.')
+            weekLabel.textContent = `Round ${activeRound} — Upcoming`
+            matchesEl.innerHTML   = await buildMatchCardsHtml(activeRound, profiles || [])
+          } else {
+            weekPanel.innerHTML = emptyState('No games scored for this round.')
+            matchesEl.innerHTML = ''
+          }
           return
         }
 
-        weekLabel.textContent = `Round ${activeRound || roundGames[0].round_number}`
+        const isTeamRoundLive = liveRoundNumber != null && (activeRound === liveRoundNumber || roundGames[0]?.round_number === liveRoundNumber)
+        weekLabel.textContent = `Round ${activeRound || roundGames[0].round_number}${isTeamRoundLive ? ' — Live' : ''}`
         const { teamAcc: roundTeamAcc, perGameData } = scoreGames(roundGames)
         const roundRows = buildTeamRows(roundTeamAcc)
         weekPanel.innerHTML = buildCompactTeamHtml(roundRows)
@@ -811,6 +954,7 @@
                 </div>
                 <div style="text-align:center;flex-shrink:0;min-width:6rem;">
                   <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${game.home_score} – ${game.away_score}</span>
+                  ${liveGameMap[game.game_id]?.is_live ? '<br><span style="font-size:0.6rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}
                 </div>
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;">
                   <img src="../logos/${teamSlug(game.away_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
