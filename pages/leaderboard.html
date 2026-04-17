@@ -1200,7 +1200,7 @@
                 // Snap to nearest integer bin present in either dataset
                 const allXs = [...machineData.map(b => b.x), ...subsetDatasets.flatMap(s => s.kdeBins.map(b => b.x))]
                 if (!allXs.length) { tooltipEl.style.display = 'none'; return }
-                const nearest = allXs.reduce((a, b) => Math.abs(b - xVal) < Math.abs(a - xVal) ? b : a)
+                const nearest = Math.round(Math.max(xMin, Math.min(xMax, xVal)))
 
                 const pct  = v => `${(v * 100).toFixed(1)}%`
                 const odds = p => p >= 0.00005 ? `$${(1 / p).toFixed(2)}` : '—'
@@ -1255,12 +1255,17 @@
             },
           })
 
-          ctx.canvas.addEventListener('mouseleave', () => {
+          function hideLbTooltip() {
             const el = document.getElementById('lb-dist-tooltip')
             if (el) el.style.display = 'none'
             chart._crosshairX = null
             chart.draw()
-          })
+          }
+
+          ctx.canvas.addEventListener('mouseleave', hideLbTooltip)
+          ctx.canvas.addEventListener('pointerleave', hideLbTooltip)
+          ctx.canvas.style.touchAction = 'pan-y'
+          ctx.canvas.style.userSelect = 'none'
 
           return chart
         }

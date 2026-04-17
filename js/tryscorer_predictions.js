@@ -1,4 +1,6 @@
 // pages/tryscorer_predictions.js
+const _SB_URL = 'https://xjqpyyhqzatzlmlojcxv.supabase.co';
+const _SB_KEY = 'sb_publishable_5HgdhAE4ePEAF103sINpqQ_qL3a2E9W';
 
 document.addEventListener("DOMContentLoaded", function () {
   // --- CONFIG ---
@@ -64,6 +66,13 @@ document.addEventListener("DOMContentLoaded", function () {
   let matchMarginLabels = {};         // { matchId: display label string }
   let matchTotalLabels  = {};         // { matchId: display label string }
   let betslipExpanded   = false;
+  let blendT            = 0;          // 0 = pure machine, 1 = pure crowd
+  let userPicksCache    = {};         // { matchId: [{home_score_pick, away_score_pick}] }
+
+  // --- BLEND SLIDER ELEMENTS ---
+  const blendSlider   = document.getElementById('model-blend-slider');
+  const blendPctLabel = document.getElementById('blend-pct-label');
+  const blendInfoEl   = document.getElementById('blend-info');
 
   // --- CONTROLS ENABLE/DISABLE ---
   function setControlsEnabled(enabled) {
@@ -100,31 +109,53 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- FETCH MATCHES ---
-  function fetchMatchesAndPopulate() {
+  async function fetchMatchesAndPopulate() {
     matchSelect.innerHTML = `<option value="">Loading...</option>`;
     teamsContainer.innerHTML = '';
     resultDiv.innerHTML = '';
     matchList = []; currentMatchId = null; selectedMatch = null;
     teamListCache = {}; allPlayerInputs = {}; allTryscorerData = {};
     matchMargins = {}; matchTotals = {}; matchMarginLabels = {}; matchTotalLabels = {};
+    userPicksCache = {};
     betslipExpanded = false;
     setControlsEnabled(false);
     populateFixedLines();
 
-    return fetch(`${API_BASE}/current_round_matches/${competition}`)
-      .then(res => res.json())
-      .then(matches => {
-        matchList = matches;
-        matchSelect.innerHTML = `<option value="">-- Select a Match --</option>`;
-        (matches || []).forEach(match => {
-          const opt = document.createElement('option');
-          opt.value = match.match_id;
-          const label = `${match.home_team} vs ${match.away_team} (${formatDateString(match.date)})`;
-          opt.textContent = label;
-          opt.dataset.label = label;
-          matchSelect.appendChild(opt);
-        });
-      });
+    const res     = await fetch(`${API_BASE}/current_round_matches/${competition}`);
+    const matches = await res.json();
+    const matchIds = (matches || []).map(m => m.match_id).filter(Boolean);
+
+    // Fetch kickoff times from Supabase games table (match_id === game_id)
+    let kickoffMap = {};
+    if (matchIds.length) {
+      try {
+        const sbRes = await fetch(
+          `${_SB_URL}/rest/v1/games?select=game_id,kickoff_time&game_id=in.(${matchIds.join(',')})`,
+          { headers: { apikey: _SB_KEY, Authorization: `Bearer ${_SB_KEY}` } }
+        );
+        const gamesData = await sbRes.json();
+        if (Array.isArray(gamesData)) {
+          gamesData.forEach(g => { kickoffMap[g.game_id] = g.kickoff_time; });
+        }
+      } catch {}
+    }
+
+    const sorted = (matches || []).slice().sort((a, b) => {
+      const ka = kickoffMap[a.match_id] ?? a.date ?? '';
+      const kb = kickoffMap[b.match_id] ?? b.date ?? '';
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+
+    matchList = sorted;
+    matchSelect.innerHTML = `<option value="">-- Select a Match --</option>`;
+    sorted.forEach(match => {
+      const opt = document.createElement('option');
+      opt.value = match.match_id;
+      const label = `${match.home_team} vs ${match.away_team} (${formatDateString(match.date)})`;
+      opt.textContent = label;
+      opt.dataset.label = label;
+      matchSelect.appendChild(opt);
+    });
   }
 
   fetchMatchesAndPopulate().then(() => {
@@ -166,6 +197,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function loadMatch(matchId) {
     currentMatchId = matchId;
+    updateBlendInfo(matchId);
 
     // Restore margin/total selects for this match
     marginSelect.value = matchMargins[matchId] || '';
@@ -542,6 +574,91 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // --- BLEND SLIDER ---
+  function updateBlendLabel() {
+    const pct = Math.round(blendT * 100);
+    if (!blendPctLabel) return;
+    if (pct === 0)   blendPctLabel.textContent = '100% Machine Model';
+    else if (pct === 100) blendPctLabel.textContent = '100% Crowd Model';
+    else blendPctLabel.textContent = `${100 - pct}% Machine · ${pct}% Crowd`;
+  }
+
+  if (blendSlider) {
+    blendSlider.addEventListener('input', () => {
+      blendT = blendSlider.valueAsNumber / 100;
+      updateBlendLabel();
+      recalculateAllOdds();
+    });
+  }
+
+  const blendDecBtn = document.getElementById('blend-dec');
+  const blendIncBtn = document.getElementById('blend-inc');
+  if (blendDecBtn) {
+    blendDecBtn.addEventListener('click', () => {
+      if (!blendSlider) return;
+      blendSlider.value = Math.max(0, blendSlider.valueAsNumber - 5);
+      blendSlider.dispatchEvent(new Event('input'));
+    });
+  }
+  if (blendIncBtn) {
+    blendIncBtn.addEventListener('click', () => {
+      if (!blendSlider) return;
+      blendSlider.value = Math.min(100, blendSlider.valueAsNumber + 5);
+      blendSlider.dispatchEvent(new Event('input'));
+    });
+  }
+
+  // Fetch crowd pick distributions for a match via the backend round_picks endpoint.
+  // Returns { margins: [...], totals: [...] } — parallel arrays (index i = same pick).
+  async function fetchUserPicksForMatch(matchId) {
+    if (userPicksCache[matchId] !== undefined) return userPicksCache[matchId];
+    const empty = { margins: [], totals: [] };
+    const match = matchList.find(m => String(m.match_id) === String(matchId));
+    if (!match || !match.round_number) { userPicksCache[matchId] = empty; return empty; }
+    try {
+      const res  = await fetch(`${API_BASE}/round_picks/${match.round_number}/${competition}`);
+      const data = await res.json();
+      const game = (data.byGame || {})[String(matchId)];
+      userPicksCache[matchId] = game
+        ? { margins: game.margins || [], totals: game.totals || [] }
+        : empty;
+    } catch {
+      userPicksCache[matchId] = empty;
+    }
+    return userPicksCache[matchId];
+  }
+
+  // Fraction of crowd picks satisfying the given margin/total line.
+  // picks = { margins: [...], totals: [...] } — parallel arrays from fetchUserPicksForMatch.
+  function computeUserLineProb(picks, marginType, marginVal, totalType, totalVal) {
+    const { margins, totals } = picks;
+    const n = margins.length;
+    if (!n) return null;
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      const m = margins[i];
+      const t = totals[i];
+      let pass = true;
+      if (marginType === 'over')  pass = pass && (m >= marginVal);
+      if (marginType === 'under') pass = pass && (m <= marginVal - 1);
+      if (totalType  === 'over')  pass = pass && (t >= totalVal);
+      if (totalType  === 'under') pass = pass && (t <= totalVal - 1);
+      if (pass) count++;
+    }
+    return count / n;
+  }
+
+  // Update pick-count label near blend slider (called when match changes)
+  async function updateBlendInfo(matchId) {
+    if (!blendInfoEl || !matchId) return;
+    blendInfoEl.textContent = '...';
+    const picks = await fetchUserPicksForMatch(matchId);
+    const n = picks.margins.length;
+    blendInfoEl.textContent = n
+      ? `${n} crowd pick${n !== 1 ? 's' : ''}`
+      : 'No crowd picks';
+  }
+
   // --- PROBABILITY HELPERS ---
   function anytimeTryscorerProbability(p, tryDist, maxN = 20) {
     let prob = 0;
@@ -563,13 +680,13 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // Calculate SGM for one match — returns Promise<result|null>
-  function calculateMatchSGM(matchId) {
+  async function calculateMatchSGM(matchId) {
     const data = teamListCache[matchId];
-    if (!data) return Promise.resolve(null);
+    if (!data) return null;
 
-    const inputs     = allPlayerInputs[matchId] || { home: {}, away: {} };
-    const marginVal  = matchMargins[matchId] || '';
-    const totalVal   = matchTotals[matchId]  || '';
+    const inputs      = allPlayerInputs[matchId] || { home: {}, away: {} };
+    const marginVal   = matchMargins[matchId] || '';
+    const totalVal    = matchTotals[matchId]  || '';
     const marginLabel = matchMarginLabels[matchId] || '';
     const totalLabel  = matchTotalLabels[matchId]  || '';
 
@@ -577,87 +694,98 @@ document.addEventListener("DOMContentLoaded", function () {
     if (marginVal) { [margin_type, margin_val] = marginVal.split('_'); margin_val = Number(margin_val); }
     if (totalVal)  { [total_type,  total_val]  = totalVal.split('_');  total_val  = Number(total_val); }
 
-    const matchLabel = `${data.home_team} vs ${data.away_team}`;
+    const matchLabel       = `${data.home_team} vs ${data.away_team}`;
     const hasMarginOrTotal = !!(marginVal || totalVal);
-    const lineLabel = [marginLabel, totalLabel].filter(Boolean).join(' + ');
+    const lineLabel        = [marginLabel, totalLabel].filter(Boolean).join(' + ');
 
     // Collect per-side picks
     const pickedBySide = {};
     let hasAnyPicks = false;
     ['home', 'away'].forEach(side => {
       const players = data[`${side}_players`] || [];
-      const picks = inputs[side] || {};
+      const picks   = inputs[side] || {};
       pickedBySide[side] = players
         .filter(p => (picks[p.id] || 0) > 0)
         .map(p => ({ ...p, n: picks[p.id] || 0 }));
       if (pickedBySide[side].length) hasAnyPicks = true;
     });
 
-    if (!hasAnyPicks && !hasMarginOrTotal) return Promise.resolve(null);
+    if (!hasAnyPicks && !hasMarginOrTotal) return null;
+
+    // Fetch crowd pick distributions for blending
+    const userPicks = await fetchUserPicksForMatch(matchId);
+    const userPickCount = userPicks.margins.length;
+
+    // Blend machine line probability with crowd empirical probability
+    function blendedLineProb(machineProb) {
+      if (blendT === 0 || !hasMarginOrTotal || !userPickCount) return machineProb;
+      const crowdProb = computeUserLineProb(userPicks, margin_type, margin_val, total_type, total_val);
+      if (crowdProb === null) return machineProb;
+      return (1 - blendT) * machineProb + blendT * crowdProb;
+    }
 
     // Line-only (no tryscorer picks)
     if (!hasAnyPicks) {
-      return getSgmDist(matchId, margin_type, margin_val, total_type, total_val)
-        .then(sgmDist => ({
-          matchId, matchLabel,
-          picks: [],
-          prob: typeof sgmDist.prob === 'number' ? sgmDist.prob : 0,
-          lineOnly: true,
-          lineLabel
-        }))
-        .catch(() => null);
+      try {
+        const sgmDist    = await getSgmDist(matchId, margin_type, margin_val, total_type, total_val);
+        const machProb   = typeof sgmDist.prob === 'number' ? sgmDist.prob : 0;
+        return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineLabel, userPickCount };
+      } catch { return null; }
     }
 
     // Tryscorer picks (± margin/total)
-    // Fetch SGM dist ONCE for the whole match (not once per side)
-    const sgmDistPromise = getSgmDist(matchId, margin_type, margin_val, total_type, total_val);
+    // Fetch SGM dist once; both sides share it
+    let sgmDist;
+    try { sgmDist = await getSgmDist(matchId, margin_type, margin_val, total_type, total_val); }
+    catch { return null; }
 
-    const sidePromises = ['home', 'away'].map(side => {
+    const machLineProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
+    const effectiveLineProb = hasMarginOrTotal ? blendedLineProb(machLineProb) : 1;
+
+    const sideResults = await Promise.all(['home', 'away'].map(async side => {
       const picked = pickedBySide[side];
-      if (!picked.length) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
+      if (!picked.length) return { side, prob: 1, indivProbs: [], lineProb: null };
 
       const players = data[`${side}_players`] || [];
       const teamId  = players[0]?.team_id;
-      if (!teamId) return Promise.resolve({ side, prob: 1, indivProbs: [], lineProb: null });
+      if (!teamId)  return { side, prob: 1, indivProbs: [], lineProb: null };
 
-      // Use cached tryProbs if we already loaded them for this match/side
       const cachedProbs = allTryscorerData[matchId]?.[side]?.tryProbs;
-      const tryProbsPromise = cachedProbs
-        ? Promise.resolve(cachedProbs)
-        : fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json());
+      let tryProbs;
+      try {
+        tryProbs = cachedProbs
+          ?? await fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json());
+      } catch { return { side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }; }
 
-      return Promise.all([tryProbsPromise, sgmDistPromise]).then(([tryProbs, sgmDist]) => {
-        if (!sgmDist || !sgmDist[side + "_try_dist"]) return { side, prob: 0, indivProbs: [], lineProb: null };
-        const tryDist     = sgmDist[side + "_try_dist"];
-        const sgmProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
-        const tryProbsArr = picked.map(p => tryProbs[p.id] ?? tryProbs[String(p.id)]);
-        const minTriesArr = picked.map(p => p.n);
-        const indivProbs  = tryProbsArr.map(p => p != null ? anytimeTryscorerProbability(p, tryDist, 20) : null);
-        const lineProb    = hasMarginOrTotal ? sgmProb : null;
+      if (!sgmDist[side + '_try_dist']) return { side, prob: 0, indivProbs: [], lineProb: null };
+      const tryDist     = sgmDist[side + '_try_dist'];
+      const tryProbsArr = picked.map(p => tryProbs[p.id] ?? tryProbs[String(p.id)]);
+      const minTriesArr = picked.map(p => p.n);
+      const indivProbs  = tryProbsArr.map(p => p != null ? anytimeTryscorerProbability(p, tryDist, 20) : null);
+      const lineProb    = hasMarginOrTotal ? effectiveLineProb : null;
 
-        return fetch(`${API_BASE}/sgm_probability`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ try_dist: tryDist, player_probs: tryProbsArr, min_tries: minTriesArr })
-        })
-          .then(r => r.json())
-          .then(d => ({ side, prob: (d.probability ?? 1) * sgmProb, indivProbs, lineProb }))
-          .catch(() => ({ side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }));
-      }).catch(() => ({ side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }));
-    });
+      try {
+        const d = await fetch(`${API_BASE}/sgm_probability`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ try_dist: tryDist, player_probs: tryProbsArr, min_tries: minTriesArr }),
+        }).then(r => r.json());
+        return { side, prob: (d.probability ?? 1) * effectiveLineProb, indivProbs, lineProb };
+      } catch {
+        return { side, prob: 1, indivProbs: picked.map(() => null), lineProb: null };
+      }
+    }));
 
-    return Promise.all(sidePromises).then(sideResults => {
-      const combined = sideResults.reduce((acc, r) => acc * r.prob, 1);
-      const allPicks = [];
-      ['home', 'away'].forEach(side => {
-        const sr = sideResults.find(r => r.side === side);
-        pickedBySide[side].forEach((p, i) => {
-          allPicks.push({ name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
-        });
+    const combined = sideResults.reduce((acc, r) => acc * r.prob, 1);
+    const allPicks = [];
+    ['home', 'away'].forEach(side => {
+      const sr = sideResults.find(r => r.side === side);
+      pickedBySide[side].forEach((p, i) => {
+        allPicks.push({ name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
       });
-      const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
-      return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb };
     });
+    const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
+    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb, userPickCount };
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
@@ -809,9 +937,17 @@ document.addEventListener("DOMContentLoaded", function () {
     const summaryLegs = totalLegs > 0 ? `${totalLegs} leg${totalLegs !== 1 ? 's' : ''} · ` : '';
     const summaryText = `${summaryLegs}${summaryOdds}`;
 
+    const maxPickCount = results.reduce((mx, r) => Math.max(mx, r.userPickCount || 0), 0);
+    const blendBadge = blendT > 0 && maxPickCount > 0
+      ? `<span class="text-xs text-blue-400 font-medium">⚡ ${Math.round(blendT * 100)}% crowd · ${maxPickCount} pick${maxPickCount !== 1 ? 's' : ''}</span>`
+      : '';
+
     resultDiv.innerHTML = `
       <div id="betslip-toggle" class="flex items-center justify-between md:cursor-default select-none">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Betslip</span>
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Betslip</span>
+          ${blendBadge}
+        </div>
         <div class="flex items-center gap-2 md:hidden">
           <span class="text-base font-bold text-amber-400">${summaryText}</span>
           <span id="betslip-chevron" class="text-gray-400 text-xs">▲</span>

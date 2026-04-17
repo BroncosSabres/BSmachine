@@ -459,10 +459,12 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         const xVal = xScale.getValueForPixel(event.x);
         if (xVal == null) { tooltipEl.style.display = 'none'; return; }
 
-        // Find nearest bin x in either dataset
+        // Snap to nearest integer within chart bounds
         const allXs = [...machineBinsRef.map(b => b.x), ...userBinsRef.map(b => b.x)];
         if (!allXs.length) { tooltipEl.style.display = 'none'; return; }
-        const nearest = allXs.reduce((a, b) => Math.abs(b - xVal) < Math.abs(a - xVal) ? b : a);
+        const xLo = xMin != null ? xMin : Math.min(...allXs);
+        const xHi = xMax != null ? xMax : Math.max(...allXs);
+        const nearest = Math.round(Math.max(xLo, Math.min(xHi, xVal)));
 
         const getProbs = (bins) => probFn ? probFn(bins, nearest) : (() => {
           const g = cdf(bins, nearest).gte; return { over: g, under: 1 - g };
@@ -723,6 +725,9 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         plugins: [crosshairPlugin],
       });
       mCtx.canvas.addEventListener('mouseleave', hideTooltip);
+      mCtx.canvas.addEventListener('pointerleave', hideTooltip);
+      mCtx.canvas.style.touchAction = 'pan-y';
+      mCtx.canvas.style.userSelect = 'none';
     }
 
     const tCtx = document.getElementById('dist-modal-total')?.getContext('2d');
@@ -733,6 +738,9 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
         plugins: [crosshairPlugin],
       });
       tCtx.canvas.addEventListener('mouseleave', hideTooltip);
+      tCtx.canvas.addEventListener('pointerleave', hideTooltip);
+      tCtx.canvas.style.touchAction = 'pan-y';
+      tCtx.canvas.style.userSelect = 'none';
     }
   }
 

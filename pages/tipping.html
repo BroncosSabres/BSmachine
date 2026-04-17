@@ -202,6 +202,29 @@
         font-size: 0.68rem;
         color: #374151;
       }
+      .slider-step-btn {
+        width: 30px;
+        height: 30px;
+        border-radius: 6px;
+        background: #1c2a3a;
+        border: 1px solid #2e3a4e;
+        color: #e2e8f0;
+        font-size: 1.15rem;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        line-height: 1;
+        transition: background 0.1s ease, border-color 0.1s ease;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      .slider-step-btn:hover { background: #253448; border-color: #435168; }
+      .slider-step-btn:active { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #f59e0b; }
+      .slider-step-btn:disabled { opacity: 0.3; cursor: not-allowed; }
     </style>
   </head>
   <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
@@ -595,8 +618,12 @@
                 <span class="slider-value-label js-margin-label">${marginLabelStr}</span>
                 <span class="slider-team-name" style="text-align:right;">${game.away_team}</span>
               </div>
-              <input type="range" class="slider js-margin-slider"
-                     min="-44" max="44" step="1" value="${initMarginVal}">
+              <div style="display:flex;align-items:center;gap:0.4rem;">
+                <button class="slider-step-btn js-margin-dec" type="button" aria-label="Decrease margin">−</button>
+                <input type="range" class="slider js-margin-slider"
+                       min="-44" max="44" step="1" value="${initMarginVal}">
+                <button class="slider-step-btn js-margin-inc" type="button" aria-label="Increase margin">+</button>
+              </div>
               <div class="slider-hint-row">
                 <span>← Home wins</span>
                 <span>Away wins →</span>
@@ -610,8 +637,12 @@
                 <span class="slider-value-label js-total-label">${initTotalVal} pts</span>
                 <span></span>
               </div>
-              <input type="range" class="slider js-total-slider"
-                     min="8" max="88" step="1" value="${initTotalVal}">
+              <div style="display:flex;align-items:center;gap:0.4rem;">
+                <button class="slider-step-btn js-total-dec" type="button" aria-label="Decrease total">−</button>
+                <input type="range" class="slider js-total-slider"
+                       min="8" max="88" step="1" value="${initTotalVal}">
+                <button class="slider-step-btn js-total-inc" type="button" aria-label="Increase total">+</button>
+              </div>
               <div class="slider-hint-row">
                 <span>← Lower</span>
                 <span>Higher →</span>
@@ -677,6 +708,12 @@
 
             marginSlider.addEventListener('input', onSlide)
             totalSlider.addEventListener('input', onSlide)
+
+            // +/- step buttons
+            card.querySelector('.js-margin-dec').addEventListener('click', () => { marginSlider.value = Math.max(-44, +marginSlider.value - 1); marginSlider.dispatchEvent(new Event('input')); })
+            card.querySelector('.js-margin-inc').addEventListener('click', () => { marginSlider.value = Math.min( 44, +marginSlider.value + 1); marginSlider.dispatchEvent(new Event('input')); })
+            card.querySelector('.js-total-dec').addEventListener('click',  () => { totalSlider.value  = Math.max(  8, +totalSlider.value  - 1); totalSlider.dispatchEvent(new Event('input'));  })
+            card.querySelector('.js-total-inc').addEventListener('click',  () => { totalSlider.value  = Math.min( 88, +totalSlider.value  + 1); totalSlider.dispatchEvent(new Event('input'));  })
 
             // Wire up score inputs → sliders (two-way binding)
             function onScoreInput() {
