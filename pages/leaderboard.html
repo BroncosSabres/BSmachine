@@ -149,8 +149,8 @@
       <!-- Controls -->
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
-          <button class="lb-tab active" data-tab="team">Team</button>
-          <button class="lb-tab" data-tab="individual">Individual</button>
+          <button class="lb-tab active" data-tab="individual">Individual</button>
+          <button class="lb-tab" data-tab="team">Team</button>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
@@ -203,7 +203,7 @@
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
-      let activeTab       = 'team'
+      let activeTab       = 'individual'
       let roundFilter     = 'season'
       let myUserId        = null
       let rounds          = []
@@ -442,7 +442,7 @@
         const rankCounts = {}
         ranks.forEach(rk => { rankCounts[rk] = (rankCounts[rk] || 0) + 1 })
 
-        return rows.map((r, i) => {
+        const rowsHtml = rows.map((r, i) => {
           const rank      = ranks[i]
           const isTied    = rankCounts[rank] > 1
           const rankLabel = isTied ? `=${rank}` : `${rank}`
@@ -459,6 +459,30 @@
               <div class="pts-display text-right">${r.pts.toFixed(1)}</div>
             </div>`
         }).join('')
+
+        // Sticky "you" footer — always visible at the bottom of the panel
+        if (myUserId) {
+          const meIdx = rows.findIndex(r => r.uid === myUserId)
+          if (meIdx >= 0) {
+            const r         = rows[meIdx]
+            const meRank    = ranks[meIdx]
+            const isTied    = rankCounts[meRank] > 1
+            const rankLabel = isTied ? `=${meRank}` : `${meRank}`
+            const rankClass = meRank === 1 ? 'top1' : meRank === 2 ? 'top2' : meRank === 3 ? 'top3' : ''
+            const meFooter  = `
+              <div class="lb-row" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem; position:sticky; bottom:0; border-top:1px solid rgba(245,158,11,0.25); background:#161b24;">
+                <div class="rank-badge ${rankClass}" style="color:#fbbf24;">${rankLabel}</div>
+                <div class="flex items-center gap-1.5 min-w-0">
+                  ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
+                  <span class="username text-sm font-semibold truncate" style="color:#fbbf24;">${escapeHtml(r.username)} (you)</span>
+                </div>
+                <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
+                <div class="pts-display text-right" style="color:#fbbf24;">${r.pts.toFixed(1)}</div>
+              </div>`
+            return rowsHtml + meFooter
+          }
+        }
+        return rowsHtml
       }
 
       // --- Match cards (per-game breakdown for a specific round) ---
@@ -515,9 +539,19 @@
           const pickers   = gameScores.length
           const top5      = gameScores.slice(0, 5)
 
+          // Compute tied ranks for all scorers in this game
+          const gameRanks = []
+          gameScores.forEach((s, i) => {
+            if (i === 0) { gameRanks.push(1); return }
+            gameRanks.push(gameScores[i - 1].points === s.points ? gameRanks[i - 1] : i + 1)
+          })
+          const gameRankCounts = {}
+          gameRanks.forEach(rk => { gameRankCounts[rk] = (gameRankCounts[rk] || 0) + 1 })
+          const gameRankLabels = gameRanks.map(rk => gameRankCounts[rk] > 1 ? `=${rk}` : `${rk}`)
+
           const myEntry   = myUserId ? gameScores.find(s => s.user_id === myUserId) : null
-          const myRank    = myEntry  ? gameScores.indexOf(myEntry) + 1 : null
-          const myInTop5  = myRank !== null && myRank <= 5
+          const myIdx     = myEntry  ? gameScores.indexOf(myEntry) : -1
+          const myInTop5  = myIdx >= 0 && myIdx < 5
 
           const isComplete  = game.is_complete
           const lg          = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
@@ -530,7 +564,7 @@
             ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;color:#e2e8f0;letter-spacing:0.04em;">${liveHome} – ${liveAway}</span>${isGameLive ? '<br><span style="font-size:0.6rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}`
             : `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:#4a5568;letter-spacing:0.06em;text-transform:uppercase;">Upcoming</span>`
 
-          const renderRow = (s, rank, isMe) => {
+          const renderRow = (s, rank, rankLabel, isMe) => {
             const p    = profileMap[s.user_id]
             const name = escapeHtml(p?.username || 'Unknown')
             const team = p?.favourite_team || null
@@ -554,7 +588,7 @@
             ].filter(Boolean).join('<span style="color:#2e3a4e;margin:0 3px;">·</span>')
             return `
               <div class="lb-ind-row" style="${isMe ? 'background:rgba(245,158,11,0.06);border-top:1px solid rgba(245,158,11,0.15);' : 'border-top:1px solid #1e2a3a;'}">
-                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMe ? 'color:#fbbf24;' : ''}">${rank}</div>
+                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
                 <div class="lb-ind-name flex items-center gap-2 min-w-0">
                   ${team ? `<img src="../logos/${teamSlug(team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-60" onerror="this.style.display='none'">` : ''}
                   <span style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}">${name}${isMe ? ' (you)' : ''}</span>
@@ -568,12 +602,12 @@
           }
 
           const top5Html = top5.length
-            ? top5.map((s, i) => renderRow(s, i + 1, s.user_id === myUserId)).join('')
+            ? top5.map((s, i) => renderRow(s, gameRanks[i], gameRankLabels[i], s.user_id === myUserId)).join('')
             : `<div style="padding:0.75rem 1rem;font-size:0.8125rem;color:#4a5568;border-top:1px solid #1e2a3a;">No picks scored yet.</div>`
 
           const extraScores = gameScores.slice(5)
           const showMoreHtml = extraScores.length ? `
-            <div id="lb-more-rows-${game.game_id}" style="display:none;">${extraScores.map((s, i) => renderRow(s, i + 6, s.user_id === myUserId)).join('')}</div>
+            <div id="lb-more-rows-${game.game_id}" style="display:none;">${extraScores.map((s, i) => renderRow(s, gameRanks[i + 5], gameRankLabels[i + 5], s.user_id === myUserId)).join('')}</div>
             <div style="text-align:center;padding:0.375rem 1rem;border-top:1px solid #1e2a3a;">
               <button class="lb-ind-show-more-btn" data-game-id="${game.game_id}" data-total="${gameScores.length}"
                 style="background:none;border:none;color:#4a5568;font-size:0.7rem;cursor:pointer;font-family:'Barlow',system-ui,sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.15rem 0;">
@@ -582,7 +616,7 @@
             </div>` : ''
 
           const meHtml = (!myInTop5 && myEntry)
-            ? `<div id="lb-me-row-${game.game_id}">${renderRow(myEntry, myRank, true)}</div>`
+            ? `<div id="lb-me-row-${game.game_id}">${renderRow(myEntry, gameRanks[myIdx], gameRankLabels[myIdx], true)}</div>`
             : ''
 
           const noPicks = !(isComplete || hasScore)
@@ -595,7 +629,7 @@
             <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;margin-bottom:1rem;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:0.875rem 1rem;background:#0f1117;gap:0.5rem;">
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;justify-content:flex-end;">
-                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
+                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;overflow-wrap:break-word;">${escapeHtml(game.home_team)}</span>
                   <img src="../logos/${teamSlug(game.home_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
                 </div>
                 <div style="text-align:center;flex-shrink:0;min-width:6rem;">
@@ -603,7 +637,7 @@
                 </div>
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;">
                   <img src="../logos/${teamSlug(game.away_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
-                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
+                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;overflow-wrap:break-word;">${escapeHtml(game.away_team)}</span>
                 </div>
               </div>
               ${(isComplete || hasScore) && pickers > 0 ? `
@@ -1035,7 +1069,7 @@
             <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;margin-bottom:1rem;">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:0.875rem 1rem;background:#0f1117;gap:0.5rem;">
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;justify-content:flex-end;">
-                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
+                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;text-align:right;overflow-wrap:break-word;">${escapeHtml(game.home_team)}</span>
                   <img src="../logos/${teamSlug(game.home_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
                 </div>
                 <div style="text-align:center;flex-shrink:0;min-width:6rem;">
@@ -1044,7 +1078,7 @@
                 </div>
                 <div class="flex items-center gap-2 min-w-0" style="flex:1;">
                   <img src="../logos/${teamSlug(game.away_team)}.svg" class="w-7 h-7 object-contain shrink-0" onerror="this.style.display='none'">
-                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
+                  <span style="font-size:0.875rem;font-weight:600;color:#e2e8f0;overflow-wrap:break-word;">${escapeHtml(game.away_team)}</span>
                 </div>
               </div>
               <div class="lb-team-tile-header" style="display:grid;grid-template-columns:2rem 1fr 5.5rem 5.5rem 4rem;gap:0.5rem;padding:0.4rem 1rem;background:#0f1117;border-top:1px solid #1a2233;border-bottom:1px solid #1e2a3a;">
