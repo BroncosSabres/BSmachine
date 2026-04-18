@@ -9,6 +9,8 @@ const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
 let latestRound  = 1;  // highest round with matches in current season
 let currentRound = 1;  // currently selected round
 let tryscorerMatchCache = null;
+let blendT = 0;           // 0 = pure machine, 1 = pure crowd
+const cardDataCache = {}; // matchKey → { machine: {...}, user: {...} }
 
 const teamColors = {
   "Broncos":   "#760135",
@@ -764,11 +766,154 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   picksCbox.onchange   = () => renderCharts(currentMode);
 }
 
-// --- USER MODEL: RENDER ---
-function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScore) {
-  const slot = card.querySelector('.js-user-model');
-  if (!slot) return;
+// --- BLENDED DISPLAY ---
+function renderBlendedDisplay(matchKey) {
+  const cache = cardDataCache[matchKey];
+  if (!cache?.machine) return;
+  const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
+  if (!card) return;
 
+  const { machine, user } = cache;
+  const hasUser = user && user.pickCount > 0;
+  const t = hasUser ? blendT : 0;
+
+  const bHomeWin   = (1 - t) * machine.homeWinFrac + t * (hasUser ? user.homeWinFrac : machine.homeWinFrac);
+  const bAwayWin   = (1 - t) * machine.awayWinFrac + t * (hasUser ? user.awayWinFrac : machine.awayWinFrac);
+  const bDraw      = Math.max(0, 1 - bHomeWin - bAwayWin);
+  const bHomeScore = Math.round((1 - t) * machine.homeScore + t * (hasUser ? user.homeScore : machine.homeScore));
+  const bAwayScore = Math.round((1 - t) * machine.awayScore + t * (hasUser ? user.awayScore : machine.awayScore));
+
+  const homeWin      = bHomeWin >= bAwayWin;
+  const homePct      = (bHomeWin * 100).toFixed(1);
+  const awayPct      = (bAwayWin * 100).toFixed(1);
+  const drawPct      = (bDraw * 100).toFixed(1);
+  const homeFairOdds = bHomeWin >= 1e-6 ? (1 / bHomeWin).toFixed(2) : null;
+  const awayFairOdds = bAwayWin >= 1e-6 ? (1 / bAwayWin).toFixed(2) : null;
+  const { homeColor, awayColor, homeTeam, awayTeam } = machine;
+
+  const bar = `
+    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
+      <div class="prob-bar-home" style="width:${homePct}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}"></div>
+      <div style="width:${drawPct}%; background:rgba(255,255,255,0.08); height:8px;"></div>
+      <div class="prob-bar-away" style="width:${awayPct}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
+    </div>`;
+
+  // Compact summary (shown once user data has loaded)
+  let summaryHtml = '';
+  if (user !== null) {
+    const mH = (machine.homeWinFrac * 100).toFixed(0);
+    const mA = (machine.awayWinFrac * 100).toFixed(0);
+    const uH = hasUser ? (user.homeWinFrac * 100).toFixed(0) : null;
+    const uA = hasUser ? (user.awayWinFrac * 100).toFixed(0) : null;
+    const prominentDistBtn = (hasUser && user.matchId) ? `
+      <button class="js-dist-btn w-full flex items-center justify-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-400 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;">
+        <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>
+        ${user.pickCount} pick${user.pickCount !== 1 ? 's' : ''} · Show Probability Distributions
+      </button>` : '';
+    summaryHtml = `
+      <div class="w-full mt-1.5 pt-1.5 border-t border-gray-700/40">
+        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-600">
+          <div><span class="text-amber-500/60 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${mH}%/${mA}%</div>
+          <div>${hasUser
+            ? `<span class="text-blue-400/60 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${uH}%/${uA}%`
+            : `<span class="italic text-gray-700">No crowd picks</span>`}</div>
+        </div>
+        ${prominentDistBtn}
+      </div>`;
+  }
+
+  const centerContent = `
+    <div class="flex items-center justify-between w-full text-sm font-bold">
+      <div class="flex flex-col items-start">
+        <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePct}%</span>
+        ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
+      </div>
+      <span class="text-gray-600 text-xs font-normal px-2">vs</span>
+      <div class="flex flex-col items-end">
+        <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPct}%</span>
+        ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
+      </div>
+    </div>
+    ${bar}
+    <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${bHomeScore} – ${bAwayScore}</div>
+    ${summaryHtml}`;
+
+  // Update desktop center
+  const desktopCenter = card.querySelector('.js-blend-center');
+  if (desktopCenter) {
+    desktopCenter.innerHTML = centerContent;
+    if (hasUser && user.matchId) {
+      const gameTitle = matchKey.replace('_v_', ' vs ').replace(/_/g, ' ');
+      desktopCenter.querySelectorAll('.js-dist-btn').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          const hs = user.actualHomeScore, as = user.actualAwayScore;
+          openDistModal(`${gameTitle} — Distributions`, user.pickData, user.matchId,
+            (hs !== null && as !== null) ? hs - as : null,
+            (hs !== null && as !== null) ? hs + as : null);
+        });
+      });
+    }
+  }
+
+  // Update mobile section
+  const mobileSection = card.querySelector('.js-blend-mobile');
+  if (mobileSection) {
+    const mobileSummary = user !== null ? `
+      <div class="mt-1.5 pt-1.5 border-t border-gray-700/40">
+        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-600">
+          <div><span class="text-amber-500/60 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${(machine.homeWinFrac * 100).toFixed(0)}%/${(machine.awayWinFrac * 100).toFixed(0)}%</div>
+          <div>${hasUser
+            ? `<span class="text-blue-400/60 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${(user.homeWinFrac * 100).toFixed(0)}%/${(user.awayWinFrac * 100).toFixed(0)}%`
+            : `<span class="italic text-gray-700">No crowd picks</span>`}</div>
+        </div>
+        ${hasUser && user.matchId ? `<button class="js-dist-btn-mobile w-full flex items-center justify-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-400 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;"><svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${user.pickCount} pick${user.pickCount !== 1 ? 's' : ''} · Show Probability Distributions</button>` : ''}
+      </div>` : '';
+    mobileSection.innerHTML = `
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <img src="${logoUrl(homeTeam)}" alt="${homeTeam} logo" class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+          <div class="min-w-0">
+            <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${homeTeam}</div>
+            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePct}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
+          </div>
+        </div>
+        <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${bHomeScore}–${bAwayScore}</div>
+        <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
+          <div class="min-w-0 text-right">
+            <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${awayTeam}</div>
+            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPct}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
+          </div>
+          <img src="${logoUrl(awayTeam)}" alt="${awayTeam} logo" class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+        </div>
+      </div>
+      ${bar}
+      ${mobileSummary}`;
+
+    // Wire up mobile dist button
+    if (hasUser && user.matchId) {
+      const gameTitle = matchKey.replace('_v_', ' vs ').replace(/_/g, ' ');
+      mobileSection.querySelectorAll('.js-dist-btn-mobile').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          const hs = user.actualHomeScore, as = user.actualAwayScore;
+          openDistModal(`${gameTitle} — Distributions`, user.pickData, user.matchId,
+            (hs !== null && as !== null) ? hs - as : null,
+            (hs !== null && as !== null) ? hs + as : null);
+        });
+      });
+    }
+  }
+
+  // Update footer favoured text + expected total
+  const footerFavored = card.querySelector('.js-favored-text');
+  if (footerFavored) footerFavored.textContent = `${homeWin ? homeTeam : awayTeam} favoured · Expected total: `;
+  const footerTotal = card.querySelector('.js-expected-total');
+  if (footerTotal) footerTotal.textContent = `${bHomeScore + bAwayScore} pts`;
+}
+
+// --- USER MODEL: RENDER ---
+function renderUserModel(matchKey, pickData, modelHomeScore, modelAwayScore) {
   const n         = pickData?.margins?.length ?? 0;
   const medMargin = n > 0 ? median(pickData.margins) : null;
   const medTotal  = n > 0 ? median(pickData.totals)  : null;
@@ -777,97 +922,29 @@ function renderUserModel(card, matchKey, pickData, modelHomeScore, modelAwayScor
   const userHome = (medMargin !== null && medTotal !== null) ? Math.round((medTotal + medMargin) / 2) : null;
   const userAway = (medMargin !== null && medTotal !== null) ? Math.round((medTotal - medMargin) / 2) : null;
 
-  // Win probabilities via Gaussian KDE over user picks
-  // Each pick contributes its own kernel — handles bimodal/skewed pick distributions without forcing normality
-  // Threshold -0.5: continuity correction (home wins = margin ≥ 0 integers ≡ margin > -0.5 continuous)
-  // Draw probability is absorbed into home; away is complement, so home + away = 100%
-  // Scale the KDE bandwidth so the round-average user spread matches the round-average
-  // machine spread, while preserving relative differences between matches.
-  // Falls back to per-match machine sigma when the round ratio isn't available.
-  const cachedMachineDist  = matchId ? machineDistCache[matchId] : null;
-  const cachedMarginBins   = cachedMachineDist?.margins ? normaliseMachineBins(cachedMachineDist.margins, 1, -100, 100) : null;
-  const marginModelSigma   = (n >= 2 && roundSigmaScale.margin)
+  const cachedMachineDist = matchId ? machineDistCache[matchId] : null;
+  const cachedMarginBins  = cachedMachineDist?.margins ? normaliseMachineBins(cachedMachineDist.margins, 1, -100, 100) : null;
+  const marginModelSigma  = (n >= 2 && roundSigmaScale.margin)
     ? stddev(pickData.margins) * roundSigmaScale.margin
     : machineSigma(cachedMarginBins);
-  const userHomeWinFrac    = n > 0 ? kdeProbGte(pickData.margins, +0.5, marginModelSigma) : null;
+  const userHomeWinFrac = n > 0 ? kdeProbGte(pickData.margins, +0.5, marginModelSigma) : null;
   const userAwayWinFrac = n > 0 ? 1 - kdeProbGte(pickData.margins, -0.5, marginModelSigma) : null;
-  const userDrawFrac    = (userHomeWinFrac !== null && userAwayWinFrac !== null) ? Math.max(0, 1 - userHomeWinFrac - userAwayWinFrac) : 0;
-  const userHomeWin     = userHomeWinFrac !== null && userHomeWinFrac >= 0.5;
-  const userHomePct     = userHomeWinFrac !== null ? (userHomeWinFrac * 100).toFixed(1) : null;
-  const userAwayPct     = userAwayWinFrac !== null ? (userAwayWinFrac * 100).toFixed(1) : null;
-  const userDrawPct     = (userDrawFrac * 100).toFixed(1);
-  const userHomeOdds    = userHomeWinFrac >= 1e-6 ? (1 / userHomeWinFrac).toFixed(2) : null;
-  const userAwayOdds    = userAwayWinFrac >= 1e-6 ? (1 / userAwayWinFrac).toFixed(2) : null;
 
-  const homeColor = teamColor(matchKey.split('_v_')[0]);
-  const awayColor = teamColor(matchKey.split('_v_')[1]);
-  const canExpand = n > 0 && matchId !== null;
-  const gameTitle = matchKey.replace('_v_', ' vs ').replace(/_/g, ' ');
-
-  const userBar = n > 0 ? `
-    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
-      <div style="width:${userHomePct}%; background:${homeColor}; height:8px; opacity:${userHomeWin ? '1' : '0.4'}; transition:width 0.6s ease;"></div>
-      <div style="width:${userDrawPct}%; background:rgba(255,255,255,0.08); height:8px; transition:width 0.6s ease;"></div>
-      <div style="width:${userAwayPct}%; background:${awayColor}; height:8px; opacity:${userHomeWin ? '0.4' : '1'}; transition:width 0.6s ease;"></div>
-    </div>` : `
-    <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.1); border-radius:5px; overflow:hidden; height:8px; background:rgba(255,255,255,0.05);"></div>`;
-
-  slot.innerHTML = `
-    <div class="mt-3 pt-3 border-t border-gray-700">
-
-      <!-- DESKTOP layout — mirrors BS model exactly -->
-      <div class="hidden md:flex items-center justify-between gap-4">
-        <div class="flex-1 min-w-0">
-          <div class="text-xs text-gray-500">User Model</div>
-        </div>
-        <div class="flex flex-col items-center gap-1.5 w-64">
-          ${n > 0 ? `
-          <div class="flex items-center justify-between w-full text-sm font-bold">
-            <div class="flex flex-col items-start">
-              <span class="${userHomeWin ? 'text-white' : 'text-gray-500'}">${userHomePct}%</span>
-              <span class="text-xs font-normal text-gray-500">${userHomeOdds ? '$' + userHomeOdds : ''}</span>
-            </div>
-            <span class="text-gray-600 text-xs font-normal px-2">vs</span>
-            <div class="flex flex-col items-end">
-              <span class="${!userHomeWin ? 'text-white' : 'text-gray-500'}">${userAwayPct}%</span>
-              <span class="text-xs font-normal text-gray-500">${userAwayOdds ? '$' + userAwayOdds : ''}</span>
-            </div>
-          </div>` : `<div class="text-xs text-gray-600 italic w-full text-center pb-1">No picks yet</div>`}
-          ${userBar}
-          ${userHome !== null ? `<div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${userHome} – ${userAway}</div>` : ''}
-          ${canExpand ? `<button class="js-dist-btn flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-300 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;"><svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${n} pick${n !== 1 ? 's' : ''} · Show Probability Distributions</button>` : `<div class="text-xs text-gray-700 mt-0.5">${n} pick${n !== 1 ? 's' : ''}</div>`}
-        </div>
-        <div class="flex-1 min-w-0"></div>
-      </div>
-
-      <!-- MOBILE layout -->
-      <div class="flex flex-col gap-1 md:hidden">
-        <div class="flex items-center justify-between text-xs">
-          <span class="text-gray-500 font-semibold uppercase tracking-wider">User Model</span>
-          ${canExpand ? `<button class="js-dist-btn flex items-center gap-1 px-2 py-0.5 rounded border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-gray-300 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;font-size:0.7rem;"><svg width="11" height="11" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${n} pick${n !== 1 ? 's' : ''}</button>` : `<span class="text-gray-700 text-xs">${n} pick${n !== 1 ? 's' : ''}</span>`}
-        </div>
-        ${n > 0 ? `
-        <div class="flex items-center justify-between text-sm font-bold">
-          <span class="${userHomeWin ? 'text-white' : 'text-gray-500'}">${userHomePct}%</span>
-          ${userHome !== null ? `<span class="font-mono font-bold text-white">${userHome}–${userAway}</span>` : ''}
-          <span class="${!userHomeWin ? 'text-white' : 'text-gray-500'}">${userAwayPct}%</span>
-        </div>
-        ${userBar}` : `<div class="text-xs text-gray-600 italic">No picks yet</div>`}
-      </div>
-
-    </div>
-  `;
-
-  if (canExpand) {
-    slot.querySelectorAll('.js-dist-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const hs = typeof modelHomeScore === 'number' ? modelHomeScore : null;
-        const as = typeof modelAwayScore === 'number' ? modelAwayScore : null;
-        const aMargin = (hs !== null && as !== null) ? hs - as : null;
-        const aTotal  = (hs !== null && as !== null) ? hs + as : null;
-        openDistModal(`${gameTitle} — Distributions`, pickData, matchId, aMargin, aTotal);
-      });
-    });
+  // Store user data in cache and re-render the blended display
+  if (cardDataCache[matchKey]) {
+    const mach = cardDataCache[matchKey].machine;
+    cardDataCache[matchKey].user = {
+      pickCount:  n,
+      homeWinFrac: userHomeWinFrac ?? mach?.homeWinFrac ?? 0.5,
+      awayWinFrac: userAwayWinFrac ?? mach?.awayWinFrac ?? 0.5,
+      homeScore:   userHome ?? mach?.homeScore ?? 0,
+      awayScore:   userAway ?? mach?.awayScore ?? 0,
+      matchId,
+      pickData,
+      actualHomeScore: typeof modelHomeScore === 'number' ? modelHomeScore : null,
+      actualAwayScore: typeof modelAwayScore === 'number' ? modelAwayScore : null,
+    };
+    renderBlendedDisplay(matchKey);
   }
 }
 
@@ -908,7 +985,7 @@ async function updateUserModelOverlays(predictions, displayRound) {
     const card = container.querySelector(`.match-card[data-match-key="${matchKey}"]`);
     if (!card) return;
     const pickData = findPicksForMatch(result, pred.match_id);
-    renderUserModel(card, matchKey, pickData, pred.home_score, pred.away_score);
+    renderUserModel(matchKey, pickData, pred.home_score, pred.away_score);
   });
 }
 
@@ -1330,12 +1407,64 @@ function createMatchCard(data) {
   card.className = "match-card";
   card.dataset.matchKey = matchKey;
 
-  const bar = `
+  // Store machine data in cache for blended display
+  cardDataCache[matchKey] = {
+    machine: {
+      homeWinFrac: home_perc,
+      awayWinFrac: away_perc,
+      homeScore:   home_score,
+      awayScore:   away_score,
+      homeColor,
+      awayColor,
+      homeTeam:    home_team,
+      awayTeam:    away_team,
+    },
+    user: null,
+  };
+
+  const initialBar = `
     <div class="flex w-full items-center" style="border:1px solid rgba(255,255,255,0.25); border-radius:5px; overflow:hidden;">
       <div class="prob-bar-home" style="width:${homePercValue}%; background:${homeColor}; height:8px; opacity:${homeWin ? '1' : '0.4'}"></div>
       <div style="width:${drawPercValue}%; background:rgba(255,255,255,0.08); height:8px;"></div>
       <div class="prob-bar-away" style="width:${awayPercValue}%; background:${awayColor}; height:8px; opacity:${homeWin ? '0.4' : '1'}"></div>
     </div>`;
+
+  const initialCenter = `
+    <div class="flex items-center justify-between w-full text-sm font-bold">
+      <div class="flex flex-col items-start">
+        <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
+        ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
+      </div>
+      <span class="text-gray-600 text-xs font-normal px-2">vs</span>
+      <div class="flex flex-col items-end">
+        <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
+        ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
+      </div>
+    </div>
+    ${initialBar}
+    <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>`;
+
+  const initialMobile = `
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 flex-1 min-w-0">
+        <img src="${logoUrl(home_team)}" alt="${home_team} logo"
+             class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+        <div class="min-w-0">
+          <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
+          <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
+        </div>
+      </div>
+      <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
+      <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
+        <div class="min-w-0 text-right">
+          <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
+          <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
+        </div>
+        <img src="${logoUrl(away_team)}" alt="${away_team} logo"
+             class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
+      </div>
+    </div>
+    ${initialBar}`;
 
   card.innerHTML = `
     ${kickoffLabel ? `<span style="position:absolute;top:0.75rem;right:1rem;font-size:0.7rem;color:#4a5568;">${kickoffLabel}</span>` : ''}
@@ -1350,21 +1479,7 @@ function createMatchCard(data) {
           <div class="text-xs text-gray-500 mt-0.5">Home</div>
         </div>
       </div>
-      <div class="flex flex-col items-center gap-1.5 w-64">
-        <div class="flex items-center justify-between w-full text-sm font-bold">
-          <div class="flex flex-col items-start">
-            <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
-            ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
-          </div>
-          <span class="text-gray-600 text-xs font-normal px-2">vs</span>
-          <div class="flex flex-col items-end">
-            <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
-            ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
-          </div>
-        </div>
-        ${bar}
-        <div class="text-2xl font-bold font-mono text-white tracking-wide mt-1">${home_score} – ${away_score}</div>
-      </div>
+      <div class="js-blend-center flex flex-col items-center gap-1.5 w-64">${initialCenter}</div>
       <div class="flex-1 flex items-center justify-end gap-3 min-w-0">
         <div class="min-w-0 text-right">
           <div class="text-base font-semibold leading-tight ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
@@ -1376,39 +1491,15 @@ function createMatchCard(data) {
     </div>
 
     <!-- MOBILE layout (<md) -->
-    <div class="flex flex-col gap-2 md:hidden">
-      <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center gap-2 flex-1 min-w-0">
-          <img src="${logoUrl(home_team)}" alt="${home_team} logo"
-               class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
-          <div class="min-w-0">
-            <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
-            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
-          </div>
-        </div>
-        <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
-        <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
-          <div class="min-w-0 text-right">
-            <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
-            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
-          </div>
-          <img src="${logoUrl(away_team)}" alt="${away_team} logo"
-               class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
-        </div>
-      </div>
-      ${bar}
-    </div>
+    <div class="js-blend-mobile flex flex-col gap-2 md:hidden">${initialMobile}</div>
 
     <!-- Footer row: tryscorer only, no tipping -->
     <div class="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
       <div class="flex items-center justify-between">
-        <span>${homeWin ? home_team : away_team} favoured · Expected total: <span class="text-gray-300 font-medium">${expectedTotal} pts</span></span>
+        <span><span class="js-favored-text">${homeWin ? home_team : away_team} favoured · Expected total: </span><span class="js-expected-total text-gray-300 font-medium">${expectedTotal} pts</span></span>
         <span class="js-tryscorer-btn">${tryscorerButtonDisabled()}</span>
       </div>
     </div>
-
-    <!-- User Model bar (populated async, sits above Result) -->
-    <div class="js-user-model"></div>
 
     <!-- Result line probability (populated async) -->
     <div class="js-result-prob">
@@ -1830,6 +1921,7 @@ async function loadRound() {
     }
 
     container.innerHTML = '';
+    Object.keys(cardDataCache).forEach(k => delete cardDataCache[k]);
 
     if (allMatches.length === 0) {
       container.innerHTML = `<p class="text-gray-400">No matches found for Round ${currentRound}.</p>`;
@@ -1903,6 +1995,43 @@ async function init() {
   renderRoundNav();
   loadRound();
   loadTracker();
+}
+
+// --- MATCHUP BLEND SLIDER ---
+const matchupBlendSlider = document.getElementById('matchup-blend-slider');
+const matchupBlendLabel  = document.getElementById('matchup-blend-label');
+
+function updateMatchupBlendLabel() {
+  if (!matchupBlendLabel) return;
+  const pct = Math.round(blendT * 100);
+  if (pct === 0)        matchupBlendLabel.textContent = '100% Machine Model';
+  else if (pct === 100) matchupBlendLabel.textContent = '100% Crowd Model';
+  else                  matchupBlendLabel.textContent = `${100 - pct}% Machine · ${pct}% Crowd`;
+}
+
+if (matchupBlendSlider) {
+  matchupBlendSlider.addEventListener('input', () => {
+    blendT = matchupBlendSlider.valueAsNumber / 100;
+    updateMatchupBlendLabel();
+    Object.keys(cardDataCache).forEach(mk => renderBlendedDisplay(mk));
+  });
+}
+
+const matchupBlendDecBtn = document.getElementById('matchup-blend-dec');
+const matchupBlendIncBtn = document.getElementById('matchup-blend-inc');
+if (matchupBlendDecBtn) {
+  matchupBlendDecBtn.addEventListener('click', () => {
+    if (!matchupBlendSlider) return;
+    matchupBlendSlider.value = Math.max(0, matchupBlendSlider.valueAsNumber - 5);
+    matchupBlendSlider.dispatchEvent(new Event('input'));
+  });
+}
+if (matchupBlendIncBtn) {
+  matchupBlendIncBtn.addEventListener('click', () => {
+    if (!matchupBlendSlider) return;
+    matchupBlendSlider.value = Math.min(100, matchupBlendSlider.valueAsNumber + 5);
+    matchupBlendSlider.dispatchEvent(new Event('input'));
+  });
 }
 
 init();
