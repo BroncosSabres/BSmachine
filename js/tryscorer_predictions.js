@@ -2,6 +2,90 @@
 const _SB_URL = 'https://xjqpyyhqzatzlmlojcxv.supabase.co';
 const _SB_KEY = 'sb_publishable_5HgdhAE4ePEAF103sINpqQ_qL3a2E9W';
 
+// --- KDE helpers (mirrors predictions.js) ---
+function _normPdf(x, mu, sigma) {
+  return Math.exp(-0.5 * ((x - mu) / sigma) ** 2) / (sigma * Math.sqrt(2 * Math.PI));
+}
+function _stddev(arr) {
+  if (arr.length < 2) return 6;
+  const mu = arr.reduce((s, v) => s + v, 0) / arr.length;
+  const variance = arr.reduce((s, v) => s + (v - mu) ** 2, 0) / arr.length;
+  return Math.max(Math.sqrt(variance), 1);
+}
+// Silverman's rule-of-thumb bandwidth
+function _silvermanBw(values) {
+  if (values.length < 2) return 6;
+  return Math.max(1.06 * _stddev(values) * Math.pow(values.length, -0.2), 1);
+}
+// Calibrated bandwidth: matches machine spread — same formula as predictions.js calibratedBandwidth()
+function _calibratedBw(values, modelSigma) {
+  if (!modelSigma) return _silvermanBw(values);
+  const sigmaU = _stddev(values);
+  return Math.max(1, Math.sqrt(Math.max(0, modelSigma ** 2 - sigmaU ** 2)));
+}
+// Sigma of a machine distribution from [{x, prob}] bins
+function _machineSigmaFromBins(bins) {
+  if (!bins?.length) return null;
+  const total = bins.reduce((s, b) => s + b.prob, 0);
+  if (!total) return null;
+  const mu = bins.reduce((s, b) => s + b.x * b.prob, 0) / total;
+  const variance = bins.reduce((s, b) => s + b.prob * (b.x - mu) ** 2, 0) / total;
+  return Math.sqrt(variance);
+}
+// P(X >= threshold) from a Gaussian KDE over `values`, evaluated on the integer grid [xMin, xMax]
+function _kdeLineProbGte(values, xMin, xMax, threshold, modelSigma) {
+  if (!values.length) return null;
+  const h = _calibratedBw(values, modelSigma);
+  let total = 0, above = 0;
+  for (let x = xMin; x <= xMax; x++) {
+    const y = values.reduce((s, v) => s + _normPdf(x, v, h), 0) / values.length;
+    total += y;
+    if (x >= threshold) above += y;
+  }
+  return total > 0 ? above / total : null;
+}
+// KDE density at a single point x — used for per-bin crowd weighting
+function _kdeDensityAt(values, x, modelSigma) {
+  if (!values.length) return 0;
+  const h = _calibratedBw(values, modelSigma);
+  return values.reduce((s, v) => s + _normPdf(x, v, h), 0) / values.length;
+}
+// Blend machine-weighted and crowd-weighted try distributions from raw sgmDist bins.
+// bins: [{m, t, h, a, c}] — from sgmDist.bins (margin, total, home_try_dist, away_try_dist, count)
+// Returns { home_try_dist, away_try_dist } — blended distributions ready for sgm_probability
+function _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT) {
+  const bins = sgmDist.bins;
+  // Fall back to machine aggregate if no blending needed or no raw bins available
+  if (!blendT || !bins?.length || !userPicks.margins.length) {
+    return { home_try_dist: sgmDist.home_try_dist, away_try_dist: sgmDist.away_try_dist };
+  }
+
+  const totalMachine = bins.reduce((s, b) => s + b.c, 0) || 1;
+
+  // Crowd weight for each bin = joint density approximated as product of marginal KDE densities
+  const crowdW = bins.map(b =>
+    _kdeDensityAt(userPicks.margins, b.m, marginSigma) *
+    _kdeDensityAt(userPicks.totals,  b.t, totalSigma)
+  );
+  const totalCrowd = crowdW.reduce((s, w) => s + w, 0) || null;
+
+  // If crowd has no density near any bin (picks wildly outside model range), fall back
+  if (!totalCrowd) {
+    return { home_try_dist: sgmDist.home_try_dist, away_try_dist: sgmDist.away_try_dist };
+  }
+
+  const aggHome = {}, aggAway = {};
+  bins.forEach((bin, i) => {
+    const wMachine = bin.c / totalMachine;
+    const wCrowd   = crowdW[i] / totalCrowd;
+    const w = (1 - blendT) * wMachine + blendT * wCrowd;
+    for (const [k, v] of Object.entries(bin.h)) aggHome[k] = (aggHome[k] || 0) + v * w;
+    for (const [k, v] of Object.entries(bin.a)) aggAway[k] = (aggAway[k] || 0) + v * w;
+  });
+
+  return { home_try_dist: aggHome, away_try_dist: aggAway };
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   // --- CONFIG ---
   const API_BASE = 'https://bsmachine-backend.onrender.com/api';
@@ -66,8 +150,10 @@ document.addEventListener("DOMContentLoaded", function () {
   let matchMarginLabels = {};         // { matchId: display label string }
   let matchTotalLabels  = {};         // { matchId: display label string }
   let betslipExpanded   = false;
-  let blendT            = 0;          // 0 = pure machine, 1 = pure crowd
-  let userPicksCache    = {};         // { matchId: [{home_score_pick, away_score_pick}] }
+  let blendT               = 0;        // 0 = pure machine, 1 = pure crowd
+  let userPicksCache       = {};       // { matchId: { margins: [], totals: [] } }
+  let machineScoreDistCache = {};      // { matchId: { margins: [{x,prob}], totals: [{x,prob}] } }
+  let roundSigmaScale      = { margin: null, total: null }; // round-level σ ratio (machine/crowd)
 
   // --- BLEND SLIDER ELEMENTS ---
   const blendSlider   = document.getElementById('model-blend-slider');
@@ -117,6 +203,8 @@ document.addEventListener("DOMContentLoaded", function () {
     teamListCache = {}; allPlayerInputs = {}; allTryscorerData = {};
     matchMargins = {}; matchTotals = {}; matchMarginLabels = {}; matchTotalLabels = {};
     userPicksCache = {};
+    machineScoreDistCache = {};
+    roundSigmaScale = { margin: null, total: null };
     betslipExpanded = false;
     setControlsEnabled(false);
     populateFixedLines();
@@ -156,6 +244,9 @@ document.addEventListener("DOMContentLoaded", function () {
       opt.dataset.label = label;
       matchSelect.appendChild(opt);
     });
+
+    // Compute round sigma scale in background so KDE bandwidth matches predictions page
+    computeRoundSigmaScale();
   }
 
   fetchMatchesAndPopulate().then(() => {
@@ -435,7 +526,7 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 px-1">
           <span class="flex-1">Player</span>
-          <span class="w-14 text-right">Anytime</span>
+          <span class="w-20 text-right">Anytime</span>
           <span class="w-20 text-center">Tries</span>
         </div>
         <div class="flex flex-col divide-y divide-gray-700/50">
@@ -447,7 +538,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <span class="text-sm">${p.name}</span>
                 <span class="text-xs text-gray-500 ml-1">(${p.position})</span>
               </div>
-              <span id="anytime-${side}-${p.id}" class="w-14 text-right text-xs font-semibold text-gray-600">·</span>
+              <div id="anytime-${side}-${p.id}" class="w-20 text-right shrink-0"><div class="text-xs font-semibold text-gray-600">·</div></div>
               <div class="flex items-center gap-1">
                 <button type="button"
                   class="sgm-minus-btn w-6 h-6 border border-gray-700 text-gray-600 rounded flex items-center justify-center text-sm font-bold transition-colors"
@@ -523,11 +614,9 @@ document.addEventListener("DOMContentLoaded", function () {
             const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
             if (playerProb !== undefined && tryDist) {
               const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-              el.textContent = (prob * 100).toFixed(1) + '%';
-              el.className = 'w-14 text-right text-xs font-semibold text-gray-300';
+              el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
             } else {
-              el.textContent = '–';
-              el.className = 'w-14 text-right text-xs font-semibold text-gray-500';
+              el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
             }
           });
         };
@@ -565,7 +654,7 @@ document.addEventListener("DOMContentLoaded", function () {
             allTryscorerData[matchId]._loadingCount--;
             players.forEach(p => {
               const el = document.getElementById(`anytime-${side}-${p.id}`);
-              if (el) { el.textContent = '–'; el.className = 'w-14 text-right text-xs font-semibold text-gray-500'; }
+              if (el) el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
             });
             if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
           });
@@ -608,6 +697,56 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  // Compute round-level sigma scale R = mean(σ_machine) / mean(σ_crowd) across all matches —
+  // mirrors predictions.js updateUserModelOverlays(). Runs in background after matchList loads.
+  async function computeRoundSigmaScale() {
+    if (!matchList.length) return;
+    const roundNumber = matchList[0]?.round_number;
+    if (!roundNumber) return;
+
+    // Fetch all round picks and all machine dists in parallel
+    let roundPicksByGame = {};
+    try {
+      const res  = await fetch(`${API_BASE}/round_picks/${roundNumber}/${competition}`);
+      const data = await res.json();
+      roundPicksByGame = data.byGame || {};
+      // Warm the picks cache for all matches in this round
+      Object.entries(roundPicksByGame).forEach(([gameId, game]) => {
+        if (userPicksCache[gameId] === undefined) {
+          userPicksCache[gameId] = { margins: game.margins || [], totals: game.totals || [] };
+        }
+      });
+    } catch { return; }
+
+    const matchDists = await Promise.all(matchList.map(m => fetchMachineScoreDist(m.match_id)));
+
+    const machMargSigmas = [], machTotSigmas = [];
+    const userMargSigmas = [], userTotSigmas = [];
+
+    matchList.forEach((match, i) => {
+      const game = roundPicksByGame[String(match.match_id)];
+      const dist = matchDists[i];
+      if (!game || !dist) return;
+      const margins = game.margins || [];
+      const totals  = game.totals  || [];
+      if (margins.length < 2) return;
+
+      const σM  = _machineSigmaFromBins(dist.margins);
+      const σT  = _machineSigmaFromBins(dist.totals);
+      const σUm = _stddev(margins);
+      const σUt = _stddev(totals);
+
+      if (σM && σUm > 0) { machMargSigmas.push(σM); userMargSigmas.push(σUm); }
+      if (σT && σUt > 0) { machTotSigmas.push(σT);  userTotSigmas.push(σUt); }
+    });
+
+    const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
+    roundSigmaScale = {
+      margin: machMargSigmas.length >= 2 ? avg(machMargSigmas) / avg(userMargSigmas) : null,
+      total:  machTotSigmas.length  >= 2 ? avg(machTotSigmas)  / avg(userTotSigmas)  : null,
+    };
+  }
+
   // Fetch crowd pick distributions for a match via the backend round_picks endpoint.
   // Returns { margins: [...], totals: [...] } — parallel arrays (index i = same pick).
   async function fetchUserPicksForMatch(matchId) {
@@ -628,24 +767,50 @@ document.addEventListener("DOMContentLoaded", function () {
     return userPicksCache[matchId];
   }
 
-  // Fraction of crowd picks satisfying the given margin/total line.
-  // picks = { margins: [...], totals: [...] } — parallel arrays from fetchUserPicksForMatch.
-  function computeUserLineProb(picks, marginType, marginVal, totalType, totalVal) {
-    const { margins, totals } = picks;
-    const n = margins.length;
-    if (!n) return null;
-    let count = 0;
-    for (let i = 0; i < n; i++) {
-      const m = margins[i];
-      const t = totals[i];
-      let pass = true;
-      if (marginType === 'over')  pass = pass && (m >= marginVal);
-      if (marginType === 'under') pass = pass && (m <= marginVal - 1);
-      if (totalType  === 'over')  pass = pass && (t >= totalVal);
-      if (totalType  === 'under') pass = pass && (t <= totalVal - 1);
-      if (pass) count++;
+  // Fetch machine score distributions (margins + totals) for calibrated KDE bandwidth
+  async function fetchMachineScoreDist(matchId) {
+    if (machineScoreDistCache[matchId] !== undefined) return machineScoreDistCache[matchId];
+    try {
+      const res  = await fetch(`${API_BASE}/match_score_distributions/${matchId}`);
+      const data = await res.json();
+      machineScoreDistCache[matchId] = data.error ? null : data;
+    } catch {
+      machineScoreDistCache[matchId] = null;
     }
-    return count / n;
+    return machineScoreDistCache[matchId];
+  }
+
+  // P(crowd satisfies margin/total line) using Gaussian KDE — matches predictions.js crowd model.
+  // marginSigma / totalSigma: machine distribution sigma for calibrated bandwidth (may be null).
+  function computeUserLineProb(picks, marginType, marginVal, totalType, totalVal, marginSigma, totalSigma) {
+    const { margins, totals } = picks;
+    if (!margins.length) return null;
+
+    let prob = 1;
+
+    if (marginType === 'over') {
+      // P(home margin >= marginVal)
+      const p = _kdeLineProbGte(margins, -80, 80, marginVal, marginSigma);
+      if (p === null) return null;
+      prob *= p;
+    } else if (marginType === 'under') {
+      // P(home margin <= marginVal - 1)  =  1 - P(>= marginVal)
+      const p = _kdeLineProbGte(margins, -80, 80, marginVal, marginSigma);
+      if (p === null) return null;
+      prob *= (1 - p);
+    }
+
+    if (totalType === 'over') {
+      const p = _kdeLineProbGte(totals, 0, 120, totalVal, totalSigma);
+      if (p === null) return null;
+      prob *= p;
+    } else if (totalType === 'under') {
+      const p = _kdeLineProbGte(totals, 0, 120, totalVal, totalSigma);
+      if (p === null) return null;
+      prob *= (1 - p);
+    }
+
+    return prob;
   }
 
   // Update pick-count label near blend slider (called when match changes)
@@ -659,6 +824,44 @@ document.addEventListener("DOMContentLoaded", function () {
       : 'No crowd picks';
   }
 
+  // Background anytime update when slider moves but no bets are active for the current match
+  let _anytimeTimer = null;
+  function _scheduleAnytimeUpdate() {
+    clearTimeout(_anytimeTimer);
+    _anytimeTimer = setTimeout(updateAnytimeForCurrentMatch, 300);
+  }
+
+  async function updateAnytimeForCurrentMatch() {
+    const matchId = currentMatchId;
+    if (!matchId) return;
+    // Only proceed if tryscorer data is loaded (we need tryProbs)
+    const cached = allTryscorerData[matchId];
+    if (!cached?.home || !cached?.away) return;
+
+    const marginVal = matchMargins[matchId] || '';
+    const totalVal  = matchTotals[matchId]  || '';
+    let margin_type = null, margin_val = null, total_type = null, total_val = null;
+    if (marginVal) { [margin_type, margin_val] = marginVal.split('_'); margin_val = Number(margin_val); }
+    if (totalVal)  { [total_type,  total_val]  = totalVal.split('_');  total_val  = Number(total_val); }
+
+    try {
+      const [userPicks, machineScoreDist, sgmDist] = await Promise.all([
+        fetchUserPicksForMatch(matchId),
+        fetchMachineScoreDist(matchId),
+        getSgmDist(matchId, margin_type, margin_val, total_type, total_val),
+      ]);
+      if (currentMatchId !== matchId) return; // stale — match changed while fetching
+      const userPickCount = userPicks.margins.length;
+      const marginSigma = (userPickCount >= 2 && roundSigmaScale.margin)
+        ? _stddev(userPicks.margins) * roundSigmaScale.margin
+        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins) : null);
+      const totalSigma = (userPickCount >= 2 && roundSigmaScale.total)
+        ? _stddev(userPicks.totals) * roundSigmaScale.total
+        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals) : null);
+      updateAnytimeDisplay(matchId, _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT));
+    } catch { /* silently fail */ }
+  }
+
   // --- PROBABILITY HELPERS ---
   function anytimeTryscorerProbability(p, tryDist, maxN = 20) {
     let prob = 0;
@@ -667,6 +870,29 @@ document.addEventListener("DOMContentLoaded", function () {
       prob += pn * (1 - Math.pow(1 - p, n));
     }
     return prob;
+  }
+
+  // Update the Anytime column for all players in the current match using blended try distributions.
+  // blendedDists: { home_try_dist, away_try_dist } — as returned by _blendedTryDists()
+  function updateAnytimeDisplay(matchId, blendedDists) {
+    if (!matchId || matchId !== currentMatchId) return;
+    const data = teamListCache[matchId];
+    if (!data) return;
+    ['home', 'away'].forEach(side => {
+      const tryDist = blendedDists[side + '_try_dist'];
+      if (!tryDist) return;
+      const cached = allTryscorerData[matchId]?.[side];
+      if (!cached?.tryProbs) return;
+      cached.players.forEach(p => {
+        const el = document.getElementById(`anytime-${side}-${p.id}`);
+        if (!el) return;
+        const playerProb = cached.tryProbs[p.id] ?? cached.tryProbs[String(p.id)];
+        if (playerProb !== undefined) {
+          const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
+          el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+        }
+      });
+    });
   }
 
   function getSgmDist(matchId, marginType, marginVal, totalType, totalVal) {
@@ -712,14 +938,24 @@ document.addEventListener("DOMContentLoaded", function () {
 
     if (!hasAnyPicks && !hasMarginOrTotal) return null;
 
-    // Fetch crowd pick distributions for blending
-    const userPicks = await fetchUserPicksForMatch(matchId);
+    // Fetch crowd picks + machine score distributions in parallel (for calibrated KDE bandwidth)
+    const [userPicks, machineScoreDist] = await Promise.all([
+      fetchUserPicksForMatch(matchId),
+      fetchMachineScoreDist(matchId),
+    ]);
     const userPickCount = userPicks.margins.length;
+    // Mirror predictions.js: use round sigma scale when available (n >= 2), else per-match machine sigma
+    const marginSigma = (userPickCount >= 2 && roundSigmaScale.margin)
+      ? _stddev(userPicks.margins) * roundSigmaScale.margin
+      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins) : null);
+    const totalSigma  = (userPickCount >= 2 && roundSigmaScale.total)
+      ? _stddev(userPicks.totals) * roundSigmaScale.total
+      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals)  : null);
 
-    // Blend machine line probability with crowd empirical probability
+    // Blend machine line probability with crowd KDE probability
     function blendedLineProb(machineProb) {
       if (blendT === 0 || !hasMarginOrTotal || !userPickCount) return machineProb;
-      const crowdProb = computeUserLineProb(userPicks, margin_type, margin_val, total_type, total_val);
+      const crowdProb = computeUserLineProb(userPicks, margin_type, margin_val, total_type, total_val, marginSigma, totalSigma);
       if (crowdProb === null) return machineProb;
       return (1 - blendT) * machineProb + blendT * crowdProb;
     }
@@ -729,6 +965,10 @@ document.addEventListener("DOMContentLoaded", function () {
       try {
         const sgmDist    = await getSgmDist(matchId, margin_type, margin_val, total_type, total_val);
         const machProb   = typeof sgmDist.prob === 'number' ? sgmDist.prob : 0;
+        // Update anytime column with blended distributions for this margin/total filter
+        if (matchId === currentMatchId) {
+          updateAnytimeDisplay(matchId, _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT));
+        }
         return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineLabel, userPickCount };
       } catch { return null; }
     }
@@ -741,6 +981,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const machLineProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
     const effectiveLineProb = hasMarginOrTotal ? blendedLineProb(machLineProb) : 1;
+
+    // Blend try distributions using crowd KDE density at each (margin, total) bin
+    const blendedDists = _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT);
+
+    // Update anytime column with blended distributions (does nothing if different match is showing)
+    if (matchId === currentMatchId) {
+      updateAnytimeDisplay(matchId, blendedDists);
+    }
 
     const sideResults = await Promise.all(['home', 'away'].map(async side => {
       const picked = pickedBySide[side];
@@ -757,8 +1005,8 @@ document.addEventListener("DOMContentLoaded", function () {
           ?? await fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json());
       } catch { return { side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }; }
 
-      if (!sgmDist[side + '_try_dist']) return { side, prob: 0, indivProbs: [], lineProb: null };
-      const tryDist     = sgmDist[side + '_try_dist'];
+      const tryDist = blendedDists[side + '_try_dist'];
+      if (!tryDist) return { side, prob: 0, indivProbs: [], lineProb: null };
       const tryProbsArr = picked.map(p => tryProbs[p.id] ?? tryProbs[String(p.id)]);
       const minTriesArr = picked.map(p => p.n);
       const indivProbs  = tryProbsArr.map(p => p != null ? anytimeTryscorerProbability(p, tryDist, 20) : null);
@@ -811,6 +1059,8 @@ document.addEventListener("DOMContentLoaded", function () {
     if (activeIds.length === 0) {
       clearTimeout(_recalcTimer);
       renderBetslip([]);
+      // No active bets — still update anytime column if match is loaded
+      _scheduleAnytimeUpdate();
       return;
     }
 
@@ -819,7 +1069,13 @@ document.addEventListener("DOMContentLoaded", function () {
     clearTimeout(_recalcTimer);
     _recalcTimer = setTimeout(() => {
       Promise.all(activeIds.map(mid => calculateMatchSGM(mid)))
-        .then(results => renderBetslip(results.filter(Boolean)));
+        .then(results => {
+          renderBetslip(results.filter(Boolean));
+          // If current match has no active bets (different match selected), update its anytime
+          if (currentMatchId && !activeIds.includes(currentMatchId)) {
+            _scheduleAnytimeUpdate();
+          }
+        });
     }, 250);
   }
 
