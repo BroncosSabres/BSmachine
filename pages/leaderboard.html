@@ -109,6 +109,27 @@
         .lb-ind-header .lb-th-margin,
         .lb-ind-header .lb-th-total { display: none; }
       }
+      /* User tips modal */
+      #user-tips-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: rgba(0,0,0,0.72);
+        backdrop-filter: blur(3px);
+      }
+      #user-tips-modal.open { display: flex; }
+      .user-tip-link, .team-tip-link {
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .user-tip-link:hover, .team-tip-link:hover {
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
       /* Team tile rows - responsive */
       .lb-team-tile-row {
         display: grid;
@@ -198,18 +219,31 @@
       </div>
     </main>
 
+    <!-- User tips modal -->
+    <div id="user-tips-modal" role="dialog" aria-modal="true">
+      <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:16px;width:100%;max-width:540px;max-height:88vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 24px 48px rgba(0,0,0,0.6);">
+        <div id="user-tips-header" style="padding:1rem 1.25rem 0.875rem;border-bottom:1px solid #1e2a3a;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;flex-shrink:0;">
+          <!-- Populated by JS -->
+        </div>
+        <div id="user-tips-body" style="overflow-y:auto;flex:1;min-height:0;">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
     <script type="module">
       import { supabase, getSession, getProfile, updateAuthNav } from '../js/supabase-client.js'
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
-      let activeTab       = 'individual'
-      let roundFilter     = 'season'
-      let myUserId        = null
-      let rounds          = []
-      let liveRoundData   = null   // { round_number, games: [...] }
-      let liveRoundNumber = null   // current active round number
-      let liveGameMap     = {}     // { [game_id]: game enriched with live scores }
+      let activeTab          = 'individual'
+      let roundFilter        = 'season'
+      let myUserId           = null
+      let rounds             = []
+      let liveRoundData      = null   // { round_number, games: [...] }
+      let liveRoundNumber    = null   // current active round number
+      let liveGameMap        = {}     // { [game_id]: game enriched with live scores }
+      let currentDisplayRound = null  // round currently shown in the match tiles
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -397,6 +431,7 @@
         const activeRound = roundFilter !== 'season'
           ? Number(roundFilter)
           : (liveRoundNumber ?? rounds[0]?.round_number ?? null)
+        currentDisplayRound = activeRound
 
         if (activeRound) {
           const isLive = liveRoundNumber != null && activeRound === liveRoundNumber
@@ -453,7 +488,7 @@
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
               <div class="flex items-center gap-1.5 min-w-0">
                 ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                <span class="username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>
+                <span class="user-tip-link username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}" data-uid="${r.uid}" data-username="${escapeHtml(r.username)}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>
               </div>
               <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
               <div class="pts-display text-right">${r.pts.toFixed(1)}</div>
@@ -474,7 +509,7 @@
                 <div class="rank-badge ${rankClass}" style="color:#fbbf24;">${rankLabel}</div>
                 <div class="flex items-center gap-1.5 min-w-0">
                   ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                  <span class="username text-sm font-semibold truncate" style="color:#fbbf24;">${escapeHtml(r.username)} (you)</span>
+                  <span class="user-tip-link username text-sm font-semibold truncate" data-uid="${r.uid}" data-username="${escapeHtml(r.username)}" style="color:#fbbf24;">${escapeHtml(r.username)} (you)</span>
                 </div>
                 <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
                 <div class="pts-display text-right" style="color:#fbbf24;">${r.pts.toFixed(1)}</div>
@@ -591,7 +626,7 @@
                 <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
                 <div class="lb-ind-name flex items-center gap-2 min-w-0">
                   ${team ? `<img src="../logos/${teamSlug(team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-60" onerror="this.style.display='none'">` : ''}
-                  <span style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}">${name}${isMe ? ' (you)' : ''}</span>
+                  <span class="user-tip-link" data-uid="${s.user_id}" data-username="${name}" style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}cursor:pointer;">${name}${isMe ? ' (you)' : ''}</span>
                 </div>
                 <div class="lb-ind-pick" style="text-align:right;">${predictedScore}</div>
                 <div class="lb-ind-margin" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.margin_score?.toFixed(1) ?? '—'} ${marginPick}</div>
@@ -926,12 +961,31 @@
           return { teamAcc, perGameData }
         }
 
-        function buildTeamRows(teamAcc) {
+        // Count distinct pickers per team key across a set of games
+        function countTeamUsers(games) {
+          const sets = {}
+          for (const game of games) {
+            const picks = picksByGame[game.game_id] || []
+            for (const p of picks) {
+              const team = profileTeamMap[p.user_id] || '__no_team__'
+              if (!sets[team])    sets[team]    = new Set()
+              if (!sets.__all__)  sets.__all__  = new Set()
+              sets[team].add(p.user_id)
+              sets.__all__.add(p.user_id)
+            }
+          }
+          const result = { __machine__: null }
+          for (const [k, v] of Object.entries(sets)) result[k] = v.size
+          return result
+        }
+
+        function buildTeamRows(teamAcc, userCounts = {}) {
           return Object.entries(teamAcc).map(([key, acc]) => ({
             key,
             label:     key === '__machine__' ? 'BS Machine' : key === '__all__' ? 'All Users' : key === '__no_team__' ? 'I Love My Footy' : key,
             team:      key === '__machine__' || key === '__all__' || key === '__no_team__' ? null : key,
             isMachine: key === '__machine__',
+            userCount: key === '__machine__' ? null : (userCounts[key] ?? null),
             ...acc,
             total: acc.marginScore + acc.totalScore,
           })).sort((a, b) => b.total - a.total)
@@ -963,7 +1017,10 @@
                 <div class="rank-badge ${rankClass}">${rankLabel}</div>
                 <div class="flex items-center gap-1.5 min-w-0">
                   ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                  <span class="text-sm truncate" style="font-weight:600;${r.isMachine ? 'color:#f59e0b;' : ''}">${escapeHtml(r.label)}</span>
+                  <div class="min-w-0">
+                    <div class="text-sm truncate team-tip-link" data-teamkey="${escapeHtml(r.key)}" data-teamlabel="${escapeHtml(r.label)}" style="font-weight:600;${r.isMachine ? 'color:#f59e0b;' : ''}cursor:pointer;">${escapeHtml(r.label)}</div>
+                    ${r.userCount != null ? `<div style="font-size:0.6rem;color:#4a5568;line-height:1.2;">${r.userCount} user${r.userCount !== 1 ? 's' : ''}</div>` : ''}
+                  </div>
                 </div>
                 <div style="text-align:right;font-size:0.7rem;color:#8892a4;">${r.marginScore.toFixed(2)}</div>
                 <div style="text-align:right;font-size:0.7rem;color:#8892a4;">${r.totalScore.toFixed(2)}</div>
@@ -975,7 +1032,8 @@
 
         // Season leaderboard (all games) → sidebar
         const { teamAcc: seasonTeamAcc } = scoreGames(allCompletedGames)
-        const seasonRows = buildTeamRows(seasonTeamAcc)
+        const seasonUserCounts = countTeamUsers(allCompletedGames)
+        const seasonRows = buildTeamRows(seasonTeamAcc, seasonUserCounts)
         seasonPanel.innerHTML = `
           <div class="text-xs px-3 py-2 border-b" style="border-color:#1e2a3a;color:#4a5568;">
             Score = min(P(margin ≥ actual), P(margin ≤ actual)) + min(P(total ≥ actual), P(total ≤ actual))
@@ -1004,7 +1062,8 @@
         const isTeamRoundLive = liveRoundNumber != null && (activeRound === liveRoundNumber || roundGames[0]?.round_number === liveRoundNumber)
         weekLabel.textContent = `Round ${activeRound || roundGames[0].round_number}${isTeamRoundLive ? ' — Live' : ''}`
         const { teamAcc: roundTeamAcc, perGameData } = scoreGames(roundGames)
-        const roundRows = buildTeamRows(roundTeamAcc)
+        const roundUserCounts = countTeamUsers(roundGames)
+        const roundRows = buildTeamRows(roundTeamAcc, roundUserCounts)
         weekPanel.innerHTML = buildCompactTeamHtml(roundRows)
 
         // Key metadata for tiles
@@ -1016,6 +1075,19 @@
           const gameEntries = perGameData[game.game_id]
           if (!gameEntries) return ''
 
+          // Count distinct users per team for this specific game
+          const gamePickers = picksByGame[game.game_id] || []
+          const gameUserCountSets = {}
+          gamePickers.forEach(p => {
+            const team = profileTeamMap[p.user_id] || '__no_team__'
+            if (!gameUserCountSets[team])   gameUserCountSets[team]   = new Set()
+            if (!gameUserCountSets.__all__) gameUserCountSets.__all__ = new Set()
+            gameUserCountSets[team].add(p.user_id)
+            gameUserCountSets.__all__.add(p.user_id)
+          })
+          const gameUserCounts = { __machine__: null }
+          for (const [k, v] of Object.entries(gameUserCountSets)) gameUserCounts[k] = v.size
+
           const tileRows = Object.entries(gameEntries)
             .map(([key, scores]) => ({
               key,
@@ -1025,6 +1097,7 @@
               totalScore:  scores.totalScore,
               totalLabel:  scores.totalLabel,
               total:       scores.marginScore + scores.totalScore,
+              userCount:   key === '__machine__' ? null : (gameUserCounts[key] ?? null),
             }))
             .sort((a, b) => b.total - a.total)
 
@@ -1046,7 +1119,10 @@
                 <div class="rank-badge lb-team-tile-rank ${rankClass}">${rankLabel}</div>
                 <div class="lb-team-tile-name flex items-center gap-2 min-w-0">
                   ${r.meta.team ? `<img src="../logos/${teamSlug(r.meta.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                  <span style="font-size:0.8125rem;font-weight:600;${r.meta.isMachine ? 'color:#f59e0b;' : 'color:#e2e8f0;'}">${escapeHtml(r.meta.label)}</span>
+                  <div class="min-w-0">
+                    <div class="team-tip-link" data-teamkey="${escapeHtml(r.key)}" data-teamlabel="${escapeHtml(r.meta.label)}" style="font-size:0.8125rem;font-weight:600;${r.meta.isMachine ? 'color:#f59e0b;' : 'color:#e2e8f0;'}cursor:pointer;">${escapeHtml(r.meta.label)}</div>
+                    ${r.userCount != null ? `<div style="font-size:0.6rem;color:#4a5568;line-height:1.2;">${r.userCount} user${r.userCount !== 1 ? 's' : ''}</div>` : ''}
+                  </div>
                 </div>
                 <div class="lb-team-tile-margin" style="text-align:right;">
                   <div style="font-size:0.6rem;color:#4a5568;font-family:monospace;">${r.marginLabel}</div>
@@ -1113,6 +1189,113 @@
         matchesEl.innerHTML = tilesHtml.length
           ? `<div>${tilesHtml.join('')}</div>`
           : emptyState('No game data for this round.')
+
+        // --- Team tips modal ---
+        function openTeamTipsModal(teamKey, teamLabel) {
+          const modal  = document.getElementById('user-tips-modal')
+          const header = document.getElementById('user-tips-header')
+          const body   = document.getElementById('user-tips-body')
+
+          const isMachine = teamKey === '__machine__'
+          const teamName  = isMachine ? null : (teamKey === '__all__' || teamKey === '__no_team__' ? null : teamKey)
+          const logoHtml  = teamName
+            ? `<img src="../logos/${teamSlug(teamName)}.svg" style="width:2rem;height:2rem;object-fit:contain;flex-shrink:0;opacity:0.85;" onerror="this.style.display='none'">`
+            : ''
+
+          header.innerHTML = `
+            <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
+              ${logoHtml}
+              <div style="min-width:0;">
+                <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.125rem;font-weight:700;${isMachine ? 'color:#f59e0b;' : 'color:#e2e8f0;'}white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(teamLabel)}</div>
+                <div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Round ${activeRound || roundGames[0]?.round_number} scores</div>
+              </div>
+            </div>
+            <button id="user-tips-close" aria-label="Close"
+              style="background:none;border:1px solid #2e3a4e;border-radius:6px;color:#4a5568;font-size:0.875rem;width:2rem;height:2rem;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:border-color 0.1s,color 0.1s;"
+              onmouseover="this.style.borderColor='#4a5568';this.style.color='#e2e8f0';"
+              onmouseout="this.style.borderColor='#2e3a4e';this.style.color='#4a5568';">✕</button>`
+          modal.classList.add('open')
+          document.getElementById('user-tips-close').addEventListener('click', () => modal.classList.remove('open'))
+
+          let totalMargin = 0, totalTotal = 0, gamesScored = 0
+
+          const rows = roundGames.map(game => {
+            const gameData = perGameData[game.game_id]?.[teamKey]
+            const lg       = liveRoundNumber === (activeRound || roundGames[0]?.round_number) ? liveGameMap[game.game_id] : null
+            const homeScore = lg?.home_score ?? game.home_score
+            const awayScore = lg?.away_score ?? game.away_score
+            const hasScore  = homeScore != null && awayScore != null
+            const isLive    = lg?.is_live === true
+
+            // Count users from this team who picked this game
+            const gamePicks_ = picksByGame[game.game_id] || []
+            const teamPickCount = teamKey === '__machine__' ? null
+              : teamKey === '__all__'
+                ? gamePicks_.length
+                : gamePicks_.filter(p =>
+                    teamKey === '__no_team__' ? !profileTeamMap[p.user_id] : profileTeamMap[p.user_id] === teamKey
+                  ).length
+
+            if (gameData) {
+              totalMargin += gameData.marginScore
+              totalTotal  += gameData.totalScore
+              gamesScored++
+            }
+
+            const actualDisplay = hasScore
+              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.25rem;font-weight:700;color:#e2e8f0;letter-spacing:0.03em;">${homeScore}–${awayScore}</span>${isLive ? '<br><span style="font-size:0.55rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}`
+              : `<span style="font-size:0.7rem;font-weight:600;color:#2e3a4e;text-transform:uppercase;letter-spacing:0.05em;">Upcoming</span>`
+
+            const userCountHtml = teamPickCount != null
+              ? `<span style="font-size:0.65rem;color:#4a5568;">${teamPickCount} picker${teamPickCount !== 1 ? 's' : ''}</span>`
+              : ''
+
+            const scoresHtml = gameData
+              ? `<div style="display:flex;align-items:center;gap:0.6rem;font-size:0.7rem;flex-wrap:wrap;">
+                  <span style="color:#4a5568;font-family:monospace;font-size:0.65rem;">${gameData.marginLabel}</span>
+                  <span style="color:#4a5568;">M: <span style="color:#8892a4;">${gameData.marginScore.toFixed(3)}</span></span>
+                  <span style="color:#4a5568;font-family:monospace;font-size:0.65rem;">${gameData.totalLabel}</span>
+                  <span style="color:#4a5568;">T: <span style="color:#8892a4;">${gameData.totalScore.toFixed(3)}</span></span>
+                  <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:#e2e8f0;">${(gameData.marginScore + gameData.totalScore).toFixed(3)}</span>
+                </div>`
+              : `<span style="font-size:0.75rem;color:#2e3a4e;">No data</span>`
+
+            return `
+              <div style="border-bottom:1px solid #1e2a3a;padding:0.625rem 1.25rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.3rem;">
+                  <div style="display:flex;align-items:center;gap:0.375rem;flex:1;justify-content:flex-end;min-width:0;">
+                    <span style="font-size:0.75rem;font-weight:600;color:#e2e8f0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
+                    <img src="../logos/${teamSlug(game.home_team)}.svg" style="width:1.375rem;height:1.375rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">
+                  </div>
+                  <div style="text-align:center;flex-shrink:0;min-width:4.5rem;line-height:1.3;">${actualDisplay}</div>
+                  <div style="display:flex;align-items:center;gap:0.375rem;flex:1;min-width:0;">
+                    <img src="../logos/${teamSlug(game.away_team)}.svg" style="width:1.375rem;height:1.375rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">
+                    <span style="font-size:0.75rem;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+                  ${userCountHtml}
+                  ${scoresHtml}
+                </div>
+              </div>`
+          })
+
+          body.innerHTML = rows.join('') + `
+            <div style="padding:0.75rem 1.25rem;display:flex;justify-content:space-between;align-items:center;background:#0f1117;flex-shrink:0;">
+              <span style="font-size:0.75rem;color:#4a5568;">${gamesScored} game${gamesScored !== 1 ? 's' : ''} scored</span>
+              <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.1rem;font-weight:700;color:#e2e8f0;">${(totalMargin + totalTotal).toFixed(3)}</span>
+            </div>`
+        }
+
+        // Delegated click handler for team name links in sidebar panels + match tiles
+        ;[seasonPanel, weekPanel, matchesEl].forEach(panel => {
+          panel.addEventListener('click', e => {
+            const link = e.target.closest('.team-tip-link')
+            if (!link) return
+            e.stopPropagation()
+            openTeamTipsModal(link.dataset.teamkey, link.dataset.teamlabel)
+          })
+        })
 
         // --- Distribution chart state & helpers ---
         const distCharts     = {}
@@ -1424,6 +1607,138 @@
         })
       }
 
+      // --- User tips modal ---
+      async function openUserTipsModal(userId, username, roundNumber) {
+        const modal  = document.getElementById('user-tips-modal')
+        const header = document.getElementById('user-tips-header')
+        const body   = document.getElementById('user-tips-body')
+
+        const headerBase = (logoHtml) => `
+          <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
+            ${logoHtml}
+            <div style="min-width:0;">
+              <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.125rem;font-weight:700;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(username)}</div>
+              <div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Round ${roundNumber} locked tips</div>
+            </div>
+          </div>
+          <button id="user-tips-close" aria-label="Close"
+            style="background:none;border:1px solid #2e3a4e;border-radius:6px;color:#4a5568;font-size:0.875rem;width:2rem;height:2rem;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:border-color 0.1s,color 0.1s;"
+            onmouseover="this.style.borderColor='#4a5568';this.style.color='#e2e8f0';"
+            onmouseout="this.style.borderColor='#2e3a4e';this.style.color='#4a5568';">✕</button>`
+
+        header.innerHTML = headerBase('')
+        body.innerHTML   = `<div style="padding:2.5rem;text-align:center;color:#4a5568;" class="animate-pulse">Loading tips…</div>`
+        modal.classList.add('open')
+        document.getElementById('user-tips-close').addEventListener('click', () => modal.classList.remove('open'))
+
+        // Fetch games, picks, scores, profile in parallel
+        const { data: games } = await supabase
+          .from('games')
+          .select('game_id, home_team, away_team, home_score, away_score, is_complete')
+          .eq('round_number', roundNumber)
+          .order('game_id', { ascending: true })
+
+        if (!games?.length) {
+          body.innerHTML = `<div style="padding:2rem;text-align:center;color:#4a5568;">No games found for Round ${roundNumber}.</div>`
+          return
+        }
+
+        const gameIds = games.map(g => g.game_id)
+
+        const [{ data: userPicks }, { data: userScores }, { data: profile }] = await Promise.all([
+          supabase.from('picks').select('game_id, home_score_pick, away_score_pick').eq('user_id', userId).in('game_id', gameIds),
+          supabase.from('scores').select('game_id, points, margin_score, total_score').eq('user_id', userId).eq('round_number', roundNumber),
+          supabase.from('profiles').select('favourite_team').eq('id', userId).single(),
+        ])
+
+        // Update header with team logo once profile loaded
+        const favTeam  = profile?.favourite_team || null
+        const logoHtml = favTeam
+          ? `<img src="../logos/${teamSlug(favTeam)}.svg" style="width:2rem;height:2rem;object-fit:contain;flex-shrink:0;opacity:0.85;" onerror="this.style.display='none'">`
+          : ''
+        header.innerHTML = headerBase(logoHtml)
+        document.getElementById('user-tips-close').addEventListener('click', () => modal.classList.remove('open'))
+
+        const pickMap  = {}
+        userPicks?.forEach(p => { pickMap[p.game_id] = p })
+        const scoreMap = {}
+        userScores?.forEach(s => { scoreMap[s.game_id] = s })
+
+        // Compute live bell-curve scores for unscored live games
+        if (liveRoundNumber === roundNumber) {
+          for (const [gid, lg] of Object.entries(liveGameMap)) {
+            const gameId = Number(gid)
+            if (scoreMap[gameId] || lg.home_score == null) continue
+            const p = pickMap[gameId]
+            if (!p) continue
+            const ms = bellScore((lg.home_score - lg.away_score) - (p.home_score_pick - p.away_score_pick))
+            const ts = bellScore((lg.home_score + lg.away_score) - (p.home_score_pick + p.away_score_pick))
+            scoreMap[gameId] = { game_id: gameId, margin_score: ms, total_score: ts, points: ms + ts }
+          }
+        }
+
+        let totalPts   = 0
+        let pickedCount = 0
+
+        const rows = games.map(game => {
+          const lg       = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
+          const homeScore = lg?.home_score ?? game.home_score
+          const awayScore = lg?.away_score ?? game.away_score
+          const hasScore  = homeScore != null && awayScore != null
+          const isLive    = lg?.is_live === true
+
+          const pick  = pickMap[game.game_id]
+          const score = scoreMap[game.game_id]
+          if (pick)  pickedCount++
+          if (score) totalPts += score.points
+
+          const actualDisplay = hasScore
+            ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.25rem;font-weight:700;color:#e2e8f0;letter-spacing:0.03em;">${homeScore}–${awayScore}</span>${isLive ? '<br><span style="font-size:0.55rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}`
+            : `<span style="font-size:0.7rem;font-weight:600;color:#2e3a4e;text-transform:uppercase;letter-spacing:0.05em;">Upcoming</span>`
+
+          const pickDisplay = pick
+            ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9rem;font-weight:600;color:#cbd5e1;">${pick.home_score_pick}–${pick.away_score_pick}</span>`
+            : `<span style="font-size:0.75rem;color:#2e3a4e;font-style:italic;">No pick</span>`
+
+          const mScore  = score?.margin_score != null ? score.margin_score.toFixed(1) : null
+          const tScore  = score?.total_score  != null ? score.total_score.toFixed(1)  : null
+          const ptsStr  = score ? score.points.toFixed(1) : null
+
+          const scoreFragment = ptsStr
+            ? `<div style="display:flex;align-items:center;gap:0.5rem;">
+                <span style="font-size:0.7rem;color:#4a5568;">M:<span style="color:#8892a4;margin-left:2px;">${mScore}</span></span>
+                <span style="font-size:0.7rem;color:#4a5568;">T:<span style="color:#8892a4;margin-left:2px;">${tScore}</span></span>
+                <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:#e2e8f0;">${ptsStr}</span>
+              </div>`
+            : `<span style="font-size:0.75rem;color:#2e3a4e;">—</span>`
+
+          return `
+            <div style="border-bottom:1px solid #1e2a3a;padding:0.625rem 1.25rem;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-bottom:0.3rem;">
+                <div style="display:flex;align-items:center;gap:0.375rem;flex:1;justify-content:flex-end;min-width:0;">
+                  <span style="font-size:0.75rem;font-weight:600;color:#e2e8f0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(game.home_team)}</span>
+                  <img src="../logos/${teamSlug(game.home_team)}.svg" style="width:1.375rem;height:1.375rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">
+                </div>
+                <div style="text-align:center;flex-shrink:0;min-width:4.5rem;line-height:1.3;">${actualDisplay}</div>
+                <div style="display:flex;align-items:center;gap:0.375rem;flex:1;min-width:0;">
+                  <img src="../logos/${teamSlug(game.away_team)}.svg" style="width:1.375rem;height:1.375rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">
+                  <span style="font-size:0.75rem;font-weight:600;color:#e2e8f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(game.away_team)}</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+                <div style="font-size:0.7rem;color:#4a5568;">Pick: ${pickDisplay}</div>
+                ${scoreFragment}
+              </div>
+            </div>`
+        })
+
+        body.innerHTML = rows.join('') + `
+          <div style="padding:0.75rem 1.25rem;display:flex;justify-content:space-between;align-items:center;background:#0f1117;flex-shrink:0;">
+            <span style="font-size:0.75rem;color:#4a5568;">${pickedCount} of ${games.length} games picked</span>
+            <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.1rem;font-weight:700;color:#e2e8f0;">${totalPts.toFixed(1)} pts</span>
+          </div>`
+      }
+
       function emptyState(msg) {
         return `<div class="p-10 text-center text-sm" style="color:#4a5568;">${msg}</div>`
       }
@@ -1488,6 +1803,30 @@
         btn.textContent = expanded
           ? `Show all ${btn.dataset.total} players \u25bc`
           : `Show fewer \u25b2`
+      })
+
+      // Username click → user tips modal (delegated on sidebar panels + match tiles)
+      ;[seasonPanel, weekPanel, matchesEl].forEach(panel => {
+        panel.addEventListener('click', e => {
+          const link = e.target.closest('.user-tip-link')
+          if (!link) return
+          const uid      = link.dataset.uid
+          const username = link.dataset.username
+          const round    = currentDisplayRound
+          if (!uid || !round) return
+          e.stopPropagation()
+          openUserTipsModal(uid, username, round)
+        })
+      })
+
+      // Close modal on backdrop click
+      document.getElementById('user-tips-modal').addEventListener('click', e => {
+        if (e.target === e.currentTarget) e.currentTarget.classList.remove('open')
+      })
+
+      // Close modal on Escape
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') document.getElementById('user-tips-modal').classList.remove('open')
       })
 
       loadLeaderboard()

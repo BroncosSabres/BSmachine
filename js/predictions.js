@@ -812,11 +812,11 @@ function renderBlendedDisplay(matchKey) {
       </button>` : '';
     summaryHtml = `
       <div class="w-full mt-1.5 pt-1.5 border-t border-gray-700/40">
-        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-600">
-          <div><span class="text-amber-500/60 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${mH}%/${mA}%</div>
+        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-400">
+          <div><span class="text-amber-400/80 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${mH}%/${mA}%</div>
           <div>${hasUser
-            ? `<span class="text-blue-400/60 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${uH}%/${uA}%`
-            : `<span class="italic text-gray-700">No crowd picks</span>`}</div>
+            ? `<span class="text-blue-400/80 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${uH}%/${uA}%`
+            : `<span class="italic text-gray-600">No crowd picks</span>`}</div>
         </div>
         ${prominentDistBtn}
       </div>`;
@@ -861,11 +861,11 @@ function renderBlendedDisplay(matchKey) {
   if (mobileSection) {
     const mobileSummary = user !== null ? `
       <div class="mt-1.5 pt-1.5 border-t border-gray-700/40">
-        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-600">
-          <div><span class="text-amber-500/60 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${(machine.homeWinFrac * 100).toFixed(0)}%/${(machine.awayWinFrac * 100).toFixed(0)}%</div>
+        <div class="grid grid-cols-2 gap-x-2 text-xs text-gray-400">
+          <div><span class="text-amber-400/80 font-semibold">BSM</span> ${machine.homeScore}–${machine.awayScore} · ${(machine.homeWinFrac * 100).toFixed(0)}%/${(machine.awayWinFrac * 100).toFixed(0)}%</div>
           <div>${hasUser
-            ? `<span class="text-blue-400/60 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${(user.homeWinFrac * 100).toFixed(0)}%/${(user.awayWinFrac * 100).toFixed(0)}%`
-            : `<span class="italic text-gray-700">No crowd picks</span>`}</div>
+            ? `<span class="text-blue-400/80 font-semibold">Crowd</span> ${user.homeScore}–${user.awayScore} · ${(user.homeWinFrac * 100).toFixed(0)}%/${(user.awayWinFrac * 100).toFixed(0)}%`
+            : `<span class="italic text-gray-600">No crowd picks</span>`}</div>
         </div>
         ${hasUser && user.matchId ? `<button class="js-dist-btn-mobile w-full flex items-center justify-center gap-1.5 mt-1.5 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-400 font-medium" style="background:rgba(255,255,255,0.04);cursor:pointer;"><svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>${user.pickCount} pick${user.pickCount !== 1 ? 's' : ''} · Show Probability Distributions</button>` : ''}
       </div>` : '';
