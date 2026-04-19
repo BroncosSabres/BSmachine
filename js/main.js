@@ -38,53 +38,87 @@ function formBadge(form) {
   return `<span style="color:${color};font-weight:600">${sign} ${Math.abs(f).toFixed(2)}</span>`;
 }
 
+// Rank change badge: positive delta = moved up (smaller rank number)
+function rankChangeBadge(current, prev) {
+  if (prev == null) return '';
+  const delta = prev - current;
+  if (delta > 0) return `<span style="color:#4ade80;font-size:0.7rem;font-weight:600;margin-left:3px">▲${delta}</span>`;
+  if (delta < 0) return `<span style="color:#f87171;font-size:0.7rem;font-weight:600;margin-left:3px">▼${Math.abs(delta)}</span>`;
+  return `<span style="color:#6b7280;font-size:0.7rem;margin-left:3px">—</span>`;
+}
+
 
 (async () => {
-  const [rankingsRes, latestRoundRes] = await Promise.all([
+  // First wave: current rankings + current ladder snapshot
+  const [rankingsRes, ladderSnapshotRes] = await Promise.all([
     fetch(`${BACKEND}/power_rankings/nrl`),
-    fetch('../data/latestRound.json'),
+    fetch(`${BACKEND}/round_snapshot/projected_ladder`),
   ]);
   if (!rankingsRes.ok) return;
   const json = await rankingsRes.json();
   const rankings = json.rankings || [];
   const roundNumber = json.round_number;
-
-  // Load projected ladder from CSV for the current round
-  if (latestRoundRes.ok) {
-    const { latest } = await latestRoundRes.json();
-    const csvUrl = `../data/Round${latest}/projected_ladder.csv`;
-    Papa.parse(csvUrl, {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete({ data }) {
-        data.forEach((row, i) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td class="text-center text-gray-400 font-medium">${row['Rank'] ?? i + 1}</td>
-            <td>
-              <div class="flex items-center gap-2">
-                <img src="../logos/${teamSlug(row['Team'])}.svg"
-                     alt="${row['Team']}" class="w-6 h-6 object-contain shrink-0"
-                     onerror="this.style.display='none'">
-                <span>${row['Team']}</span>
-              </div>
-            </td>
-            <td class="text-center font-mono">${row['Wins'] ?? ''}</td>
-            <td class="text-center font-mono">${row['Losses'] ?? ''}</td>
-            <td class="text-center font-mono">${row['PD'] ?? ''}</td>
-            <td class="text-center font-mono">${row['Points For'] ?? ''}</td>
-            <td class="text-center font-mono">${row['Points Against'] ?? ''}</td>
-          `;
-          ladderTable.appendChild(tr);
-        });
-      },
-    });
-  }
+  const ladderJson = ladderSnapshotRes.ok ? await ladderSnapshotRes.json() : null;
 
   // Update round badge
   const badge = document.getElementById('round-badge');
   if (badge && roundNumber != null) badge.textContent = `Round ${roundNumber}`;
+
+  // Second wave: previous round rankings + previous ladder snapshot (needed for rank change badges)
+  let prevData = {};
+  let prevRankByTeam = {};
+  let prevLadderRankByTeam = {};
+  if (roundNumber != null && roundNumber > 1) {
+    const [prevRankingsRes, prevLadderRes] = await Promise.all([
+      fetch(`${BACKEND}/power_rankings/nrl?round=${roundNumber - 1}`),
+      fetch(`${BACKEND}/round_snapshot/projected_ladder?round=${roundNumber - 1}`),
+    ]);
+    if (prevRankingsRes.ok) {
+      const prevJson = await prevRankingsRes.json();
+      (prevJson.rankings || []).forEach(r => {
+        prevRankByTeam[r.team] = r.rank;
+        prevData[r.team] = {
+          'Top 8':          r.percent_top8,
+          'Top 4':          r.percent_top4,
+          'Minor Premiers': r.percent_minor_premiers,
+          'Premiers':       r.percent_premiers,
+          'Spoon':          r.percent_wooden_spoon,
+        };
+      });
+    }
+    if (prevLadderRes.ok) {
+      const prevLadderJson = await prevLadderRes.json();
+      (prevLadderJson.data || []).forEach(row => {
+        prevLadderRankByTeam[row.team] = row.rank;
+      });
+    }
+  }
+
+  // Render projected ladder
+  if (ladderJson) {
+    (ladderJson.data || []).forEach((row, i) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="text-center text-gray-400 font-medium">
+          ${row.rank ?? i + 1}${rankChangeBadge(row.rank ?? i + 1, prevLadderRankByTeam[row.team])}
+        </td>
+        <td>
+          <div class="flex items-center gap-2">
+            <img src="../logos/${teamSlug(row.team)}.svg"
+                 alt="${row.team}" class="w-6 h-6 object-contain shrink-0"
+                 onerror="this.style.display='none'">
+            <span>${row.team}</span>
+          </div>
+        </td>
+        <td class="text-center font-mono">${row.wins ?? ''}</td>
+        <td class="text-center font-mono">${row.losses ?? ''}</td>
+        <td class="text-center font-mono">${row.pd ?? ''}</td>
+        <td class="text-center font-mono">${row.pfor ?? ''}</td>
+        <td class="text-center font-mono">${row.pagainst ?? ''}</td>
+      `;
+      ladderTable.appendChild(tr);
+    });
+  }
 
   // Build resultsData in a shape compatible with updateChart / updateScatter
   resultsData = rankings.map(r => ({
@@ -104,6 +138,7 @@ function formBadge(form) {
     'D':                 r.draws,
   }));
 
+  // Render power rankings table
   rankings.forEach(r => {
     const wc = r.weekly_change;
     const formArrow = wc != null
@@ -116,7 +151,9 @@ function formBadge(form) {
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="text-center text-gray-400 font-medium">${r.rank}</td>
+      <td class="text-center text-gray-400 font-medium">
+        ${r.rank}${rankChangeBadge(r.rank, prevRankByTeam[r.team])}
+      </td>
       <td>
         <div class="flex items-center gap-2">
           <img src="../logos/${teamSlug(r.team)}.svg"
@@ -135,24 +172,6 @@ function formBadge(form) {
     `;
     rankingsTable.appendChild(tr);
   });
-
-  // Fetch previous round's rankings for chart delta comparison
-  let prevData = {};
-  if (roundNumber != null && roundNumber > 1) {
-    const prevRes = await fetch(`${BACKEND}/power_rankings/nrl?round=${roundNumber - 1}`);
-    if (prevRes.ok) {
-      const prevJson = await prevRes.json();
-      (prevJson.rankings || []).forEach(r => {
-        prevData[r.team] = {
-          'Top 8':         r.percent_top8,
-          'Top 4':         r.percent_top4,
-          'Minor Premiers': r.percent_minor_premiers,
-          'Premiers':       r.percent_premiers,
-          'Spoon':          r.percent_wooden_spoon,
-        };
-      });
-    }
-  }
 
   updateChart(resultsData, 'Top 8', prevData);
   updateScatter(resultsData);
