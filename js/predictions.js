@@ -949,8 +949,8 @@ function renderUserModel(matchKey, pickData, modelHomeScore, modelAwayScore) {
 }
 
 // --- USER MODEL: OVERLAY ALL CARDS FOR ROUND ---
-async function updateUserModelOverlays(predictions, displayRound) {
-  const result = await fetchUserPicksForRound(displayRound);
+async function updateUserModelOverlays(predictions, displayRound, prefetchedPicks) {
+  const result = prefetchedPicks ?? await fetchUserPicksForRound(displayRound);
 
   // Compute round-level sigma scaling ratio before rendering any cards.
   // Machine dists are already prefetched by loadRound() so machineDistCache is warm.
@@ -1898,18 +1898,19 @@ async function loadRound() {
     </div>`).join('');
 
   try {
-    const res  = await fetch(`${TRYSCORER_API}/round_predictions/${currentRound}/nrl`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    // Fetch predictions and kickoff times in parallel — neither depends on the other
+    const [predRes, { data: gamesData }] = await Promise.all([
+      fetch(`${TRYSCORER_API}/round_predictions/${currentRound}/nrl`),
+      supabase
+        .from('games')
+        .select('game_id, kickoff_time')
+        .eq('round_number', currentRound)
+        .order('kickoff_time', { ascending: true }),
+    ]);
+    if (!predRes.ok) throw new Error(`HTTP ${predRes.status}`);
+    const data = await predRes.json();
     const allMatches  = data.predictions || [];
     const predictions = allMatches.filter(p => p.has_prediction);
-
-    // Sort by kickoff_time from Supabase games table (game_id === match_id)
-    const { data: gamesData } = await supabase
-      .from('games')
-      .select('game_id, kickoff_time')
-      .eq('round_number', currentRound)
-      .order('kickoff_time', { ascending: true });
     const kickoffMap = {};
     if (gamesData?.length) {
       gamesData.forEach(g => { kickoffMap[g.game_id] = g.kickoff_time; });
@@ -1954,6 +1955,9 @@ async function loadRound() {
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);
 
+    // Start fetching user picks immediately — doesn't depend on machine distributions
+    const userPicksPromise = fetchUserPicksForRound(currentRound);
+
     // Prefetch machine distributions for all matches so card win probabilities
     // use calibrated sigma from the start, not Silverman fallback
     await Promise.all(allMatches
@@ -1961,9 +1965,9 @@ async function loadRound() {
       .map(m => fetchMachineDistributions(m.match_id))
     );
 
-    // Async: overlay user model picks for this round — pass ALL matches so rounds
-    // without model predictions (no SGM bins) still show user picks
-    updateUserModelOverlays(allMatches, currentRound);
+    // User picks are likely already resolved; pass the pre-fetched result through
+    // to avoid a redundant fetch inside updateUserModelOverlays
+    updateUserModelOverlays(allMatches, currentRound, await userPicksPromise);
   } catch (err) {
     console.error("Failed to load predictions:", err);
     container.innerHTML = `<p class="text-gray-400">Predictions unavailable for Round ${currentRound}.</p>`;

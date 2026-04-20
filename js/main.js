@@ -49,54 +49,38 @@ function rankChangeBadge(current, prev) {
 
 
 (async () => {
-  // First wave: current rankings + current ladder snapshot
-  const [rankingsRes, ladderSnapshotRes] = await Promise.all([
-    fetch(`${BACKEND}/power_rankings/nrl`),
-    fetch(`${BACKEND}/round_snapshot/projected_ladder`),
-  ]);
-  if (!rankingsRes.ok) return;
-  const json = await rankingsRes.json();
-  const rankings = json.rankings || [];
+  // Single request: current + previous round rankings and ladders in one call
+  const res = await fetch(`${BACKEND}/power_rankings_with_prev/nrl`);
+  if (!res.ok) return;
+  const json = await res.json();
+
+  const rankings    = json.rankings || [];
   const roundNumber = json.round_number;
-  const ladderJson = ladderSnapshotRes.ok ? await ladderSnapshotRes.json() : null;
+  const ladderData  = json.ladder   || [];
 
   // Update round badge
   const badge = document.getElementById('round-badge');
   if (badge && roundNumber != null) badge.textContent = `Round ${roundNumber}`;
 
-  // Second wave: previous round rankings + previous ladder snapshot (needed for rank change badges)
-  let prevData = {};
-  let prevRankByTeam = {};
-  let prevLadderRankByTeam = {};
-  if (roundNumber != null && roundNumber > 1) {
-    const [prevRankingsRes, prevLadderRes] = await Promise.all([
-      fetch(`${BACKEND}/power_rankings/nrl?round=${roundNumber - 1}`),
-      fetch(`${BACKEND}/round_snapshot/projected_ladder?round=${roundNumber - 1}`),
-    ]);
-    if (prevRankingsRes.ok) {
-      const prevJson = await prevRankingsRes.json();
-      (prevJson.rankings || []).forEach(r => {
-        prevRankByTeam[r.team] = r.rank;
-        prevData[r.team] = {
-          'Top 8':          r.percent_top8,
-          'Top 4':          r.percent_top4,
-          'Minor Premiers': r.percent_minor_premiers,
-          'Premiers':       r.percent_premiers,
-          'Spoon':          r.percent_wooden_spoon,
-        };
-      });
-    }
-    if (prevLadderRes.ok) {
-      const prevLadderJson = await prevLadderRes.json();
-      (prevLadderJson.data || []).forEach(row => {
-        prevLadderRankByTeam[row.team] = row.rank;
-      });
-    }
-  }
+  // Build prev-round lookup maps from the bundled previous-round data
+  let prevData = {}, prevRankByTeam = {}, prevLadderRankByTeam = {};
+  (json.prev_rankings || []).forEach(r => {
+    prevRankByTeam[r.team] = r.rank;
+    prevData[r.team] = {
+      'Top 8':          r.percent_top8,
+      'Top 4':          r.percent_top4,
+      'Minor Premiers': r.percent_minor_premiers,
+      'Premiers':       r.percent_premiers,
+      'Spoon':          r.percent_wooden_spoon,
+    };
+  });
+  (json.prev_ladder || []).forEach(row => {
+    prevLadderRankByTeam[row.team] = row.rank;
+  });
 
   // Render projected ladder
-  if (ladderJson) {
-    (ladderJson.data || []).forEach((row, i) => {
+  if (ladderData.length) {
+    ladderData.forEach((row, i) => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td class="text-center text-gray-400 font-medium">
