@@ -150,6 +150,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let matchMarginLabels = {};         // { matchId: display label string }
   let matchTotalLabels  = {};         // { matchId: display label string }
   let betslipExpanded   = false;
+  let _bookieOdds       = null;   // user-entered bookie odds for share card
   let blendT               = 0;        // 0 = pure machine, 1 = pure crowd
   let userPicksCache       = {};       // { matchId: { margins: [], totals: [] } }
   let machineScoreDistCache = {};      // { matchId: { margins: [{x,prob}], totals: [{x,prob}] } }
@@ -922,7 +923,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const matchLabel       = `${data.home_team} vs ${data.away_team}`;
     const hasMarginOrTotal = !!(marginVal || totalVal);
-    const lineLabel        = [marginLabel, totalLabel].filter(Boolean).join(' + ');
+    const cleanMarginLabel = marginLabel.replace(/\s*-0\.5$/, ' Win');
+    const lineLabel        = [cleanMarginLabel, totalLabel].filter(Boolean).join(' + ');
 
     // Collect per-side picks
     const pickedBySide = {};
@@ -1188,6 +1190,28 @@ document.addEventListener("DOMContentLoaded", function () {
         Find this useful? <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" class="text-yellow-300 hover:underline">Buy me a coffee</a> to help pay server costs.
       </div>`;
 
+    const bookieOddsHtml = hasPicks ? `
+      <div class="mt-3 pt-3 border-t border-gray-700/40">
+        <div class="flex items-center gap-2">
+          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-500 uppercase tracking-wider shrink-0">Bookie Odds</label>
+          <div class="flex items-center gap-1 flex-1">
+            <span class="text-sm text-gray-400">$</span>
+            <input id="bookie-odds-input" type="number" min="1.01" step="0.05"
+                   placeholder="e.g. 4.50" value="${_bookieOdds != null ? _bookieOdds : ''}"
+                   class="flex-1 min-w-0 bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-amber-500/60">
+          </div>
+        </div>
+        <p class="text-xs text-gray-600 mt-1">Optional · shown on your share card</p>
+      </div>` : '';
+
+    const shareHtml = hasPicks ? `
+      <div class="mt-2 flex justify-center">
+        <button id="share-card-btn" type="button"
+                class="px-4 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 font-semibold text-sm hover:bg-amber-500/10 transition-colors">
+          ↗ Share Card
+        </button>
+      </div>` : '';
+
     // Mobile collapsed summary
     const summaryOdds = hasPicks ? `$${combinedOdds}` : results[0]?.prob > 0 ? `$${(1 / results[0].prob).toFixed(2)}` : '–';
     const summaryLegs = totalLegs > 0 ? `${totalLegs} leg${totalLegs !== 1 ? 's' : ''} · ` : '';
@@ -1212,7 +1236,9 @@ document.addEventListener("DOMContentLoaded", function () {
       <div id="betslip-body" class="hidden md:block mt-1">
         ${legsHtml}
         ${finalOddsHtml}
+        ${bookieOddsHtml}
         ${bmcHtml}
+        ${shareHtml}
       </div>
     `;
 
@@ -1225,6 +1251,18 @@ document.addEventListener("DOMContentLoaded", function () {
       if (body)    body.classList.toggle('hidden', !betslipExpanded);
       if (chevron) chevron.textContent = betslipExpanded ? '▼' : '▲';
     });
+
+    const bookieInput = resultDiv.querySelector('#bookie-odds-input');
+    if (bookieInput) {
+      bookieInput.addEventListener('input', () => {
+        _bookieOdds = bookieInput.value ? parseFloat(bookieInput.value) : null;
+      });
+    }
+
+    const shareBtn = resultDiv.querySelector('#share-card-btn');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', () => generateAndShowShareCard(results, combinedPct, combinedOdds, _bookieOdds, Math.round(blendT * 100)));
+    }
   }
 
   // --- FORMATTING ---
@@ -1283,6 +1321,452 @@ document.addEventListener("DOMContentLoaded", function () {
     a.href = url; a.download = filename;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  // --- SHARE CARD ---
+  function _drawRoundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y,     x + w, y + r,     r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x,     y + h, x,     y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x,     y,     x + r, y,         r);
+    ctx.closePath();
+  }
+
+  function _drawDot(ctx, x, y, r, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function _loadAndDrawImage(ctx, src, x, y, w, h) {
+    return new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, x, y, w, h); resolve(); };
+      img.onerror = () => resolve();
+      img.src = src;
+    });
+  }
+
+  async function generateShareCard(results, combinedPct, combinedOdds, bookieOdds, blendPct) {
+    const W            = 600;
+    const HEADER_H     = 60;
+    const MATCH_H      = 72;
+    const PICK_H       = 40;
+    const LINE_H       = 36;
+    const COMBINED_H   = bookieOdds != null ? 104 : 68;
+    const FOOTER_H     = 34;
+    const PAD          = 24;
+
+    const pickResults = results.filter(r => !r.lineOnly && r.picks && r.picks.length > 0);
+    const hasPicks    = pickResults.length > 0;
+
+    let picksH = 0;
+    results.forEach(r => {
+      if (r.lineOnly) { picksH += LINE_H; }
+      else {
+        picksH += r.picks.length * PICK_H;
+        if (r.hasMarginOrTotal) picksH += LINE_H;
+      }
+    });
+    const H = HEADER_H + MATCH_H + 1 + picksH + (hasPicks ? 1 + COMBINED_H : 0) + FOOTER_H;
+
+    const DPR = window.devicePixelRatio || 1;
+    const canvas = document.createElement('canvas');
+    canvas.width  = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width  = `${W}px`;
+    canvas.style.height = `${H}px`;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(DPR, DPR);
+
+    const BG      = '#0f1117';
+    const BG2     = '#161b27';
+    const BG3     = '#1a1f2e';
+    const AMBER   = '#fbbf24';
+    const GREEN   = '#4ade80';
+    const BLUE    = '#60a5fa';
+    const WHITE   = '#f9fafb';
+    const GRAY300 = '#d1d5db';
+    const GRAY400 = '#9ca3af';
+    const GRAY500 = '#6b7280';
+    const DIVIDER = '#2d3748';
+
+    // Background
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+
+    // Header bar
+    ctx.fillStyle = BG3;
+    ctx.fillRect(0, 0, W, HEADER_H);
+
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 20px "Barlow Condensed", sans-serif';
+    ctx.fillStyle = AMBER;
+    ctx.textAlign = 'left';
+    ctx.fillText('THE BS MACHINE', PAD, HEADER_H / 2);
+
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = GRAY500;
+    ctx.textAlign = 'right';
+    ctx.fillText('SGM BUILDER', W - PAD, HEADER_H / 2 - 7);
+    ctx.font = '10px sans-serif';
+    ctx.fillText('bsmachine.dev', W - PAD, HEADER_H / 2 + 7);
+
+    ctx.fillStyle = DIVIDER;
+    ctx.fillRect(0, HEADER_H, W, 1);
+
+    let y = HEADER_H;
+
+    // Match row
+    ctx.fillStyle = BG2;
+    ctx.fillRect(0, y, W, MATCH_H);
+
+    const matchLabel = results[0]?.matchLabel || '';
+    const parts      = matchLabel.split(' vs ');
+    const homeTeam   = parts[0]?.trim() || '';
+    const awayTeam   = parts[1]?.trim() || '';
+
+    const logoSize  = 40;
+    const logoY     = y + (MATCH_H - logoSize) / 2;
+    const homeLogoX = PAD;
+    const awayLogoX = W - PAD - logoSize;
+    const midY      = y + MATCH_H / 2;
+
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = WHITE;
+    ctx.textAlign = 'left';
+    ctx.fillText(homeTeam, homeLogoX + logoSize + 10, midY - 9);
+
+    ctx.textAlign = 'right';
+    ctx.fillText(awayTeam, awayLogoX - 10, midY - 9);
+
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillStyle = GRAY500;
+    ctx.textAlign = 'center';
+    ctx.fillText('vs', W / 2, midY - 9);
+
+    const dateStr   = selectedMatch ? formatDateString(selectedMatch.date) : '';
+    const roundStr  = selectedMatch?.round_number ? `Rd ${selectedMatch.round_number}` : '';
+    const dateLabel = [roundStr, dateStr].filter(Boolean).join(' · ');
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = GRAY500;
+    ctx.textAlign = 'center';
+    ctx.fillText(dateLabel, W / 2, midY + 9);
+
+    y += MATCH_H;
+    ctx.fillStyle = DIVIDER;
+    ctx.fillRect(0, y, W, 1);
+    y += 1;
+
+    // Picks
+    results.forEach(r => {
+      if (r.lineOnly) {
+        _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
+        ctx.font = 'italic 13px sans-serif';
+        ctx.fillStyle = GRAY400;
+        ctx.textAlign = 'left';
+        ctx.fillText(r.lineLabel || '', PAD + 14, y + LINE_H / 2);
+        if (r.prob > 0) {
+          ctx.font = 'bold 13px sans-serif';
+          ctx.fillStyle = GRAY300;
+          ctx.textAlign = 'right';
+          ctx.fillText(`${(r.prob * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
+          ctx.font = '11px sans-serif';
+          ctx.fillStyle = GRAY500;
+          ctx.fillText(`$${(1 / r.prob).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
+        }
+        y += LINE_H;
+      } else {
+        r.picks.forEach((p, i) => {
+          const rowY = y + i * PICK_H;
+          _drawDot(ctx, PAD + 4, rowY + PICK_H / 2, 4, GREEN);
+          const triesText = p.n > 1 ? ` (${p.n} tries)` : '';
+          ctx.font = '14px sans-serif';
+          ctx.fillStyle = WHITE;
+          ctx.textAlign = 'left';
+          ctx.fillText(p.name + triesText, PAD + 14, rowY + PICK_H / 2 - 6);
+          if (p.indivProb != null) {
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillStyle = GRAY300;
+            ctx.textAlign = 'right';
+            ctx.fillText(`${(p.indivProb * 100).toFixed(1)}%`, W - PAD, rowY + PICK_H / 2 - 6);
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = GRAY500;
+            ctx.fillText(`$${(1 / p.indivProb).toFixed(2)}`, W - PAD, rowY + PICK_H / 2 + 8);
+          }
+          if (i < r.picks.length - 1 || r.hasMarginOrTotal) {
+            ctx.fillStyle = DIVIDER;
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(PAD, rowY + PICK_H - 1, W - PAD * 2, 1);
+            ctx.globalAlpha = 1;
+          }
+        });
+        y += r.picks.length * PICK_H;
+
+        if (r.hasMarginOrTotal && r.lineLabel) {
+          _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
+          ctx.font = 'italic 13px sans-serif';
+          ctx.fillStyle = GRAY400;
+          ctx.textAlign = 'left';
+          ctx.fillText(r.lineLabel, PAD + 14, y + LINE_H / 2);
+          if (r.lineProb) {
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillStyle = GRAY300;
+            ctx.textAlign = 'right';
+            ctx.fillText(`${(r.lineProb * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = GRAY500;
+            ctx.fillText(`$${(1 / r.lineProb).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
+          }
+          y += LINE_H;
+        }
+      }
+    });
+
+    // Combined result
+    if (hasPicks) {
+      ctx.fillStyle = DIVIDER;
+      ctx.fillRect(0, y, W, 1);
+      y += 1;
+
+      ctx.fillStyle = BG3;
+      ctx.fillRect(0, y, W, COMBINED_H);
+
+      const isMulti    = pickResults.length > 1;
+      const totalLegs  = pickResults.reduce((acc, r) => acc + r.picks.length, 0);
+      const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : 'SGM';
+
+      if (bookieOdds != null) {
+        // Two-panel layout: BS Machine | Bookie
+        const modelProb = parseFloat(combinedPct) / 100;
+        const ev        = (bookieOdds * modelProb - 1) * 100;
+        const isValue   = ev > 0;
+
+        // Row label + blend badge
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = GRAY500;
+        ctx.textAlign = 'left';
+        ctx.fillText(finalLabel.toUpperCase(), PAD, y + 16);
+        if (blendPct > 0) {
+          ctx.font = '10px sans-serif';
+          ctx.fillStyle = BLUE;
+          ctx.textAlign = 'right';
+          ctx.fillText(`⚡ ${blendPct}% crowd`, W - PAD, y + 16);
+        }
+
+        // Panel geometry
+        const PANEL_Y = y + 24;
+        const PANEL_H = COMBINED_H - 30;
+        const GAP     = 8;
+        const PW      = (W - PAD * 2 - GAP) / 2;
+        const P_PAD   = 12;
+        const leftX   = PAD;
+        const rightX  = PAD + PW + GAP;
+
+        // Left panel — BS Machine (dark bg, amber border tint)
+        ctx.fillStyle = '#111827';
+        _drawRoundRect(ctx, leftX, PANEL_Y, PW, PANEL_H, 8);
+        ctx.fill();
+        ctx.strokeStyle = '#fbbf2440';
+        ctx.lineWidth = 1;
+        _drawRoundRect(ctx, leftX, PANEL_Y, PW, PANEL_H, 8);
+        ctx.stroke();
+
+        // Right panel — Bookie (tinted bg based on value)
+        ctx.fillStyle = isValue ? '#052010' : '#111827';
+        _drawRoundRect(ctx, rightX, PANEL_Y, PW, PANEL_H, 8);
+        ctx.fill();
+        ctx.strokeStyle = isValue ? '#4ade8040' : '#37415180';
+        ctx.lineWidth = 1;
+        _drawRoundRect(ctx, rightX, PANEL_Y, PW, PANEL_H, 8);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+
+        // Left panel content
+        const midL = PANEL_Y + PANEL_H / 2;
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = AMBER;
+        ctx.textAlign = 'left';
+        ctx.fillText('BS MACHINE', leftX + P_PAD, PANEL_Y + 14);
+
+        ctx.font = 'bold 26px "Barlow Condensed", sans-serif';
+        ctx.fillStyle = AMBER;
+        ctx.fillText(`${combinedPct}%`, leftX + P_PAD, midL + 8);
+
+        ctx.font = '13px sans-serif';
+        ctx.fillStyle = GRAY400;
+        ctx.fillText(`$${combinedOdds}`, leftX + P_PAD, PANEL_Y + PANEL_H - 10);
+
+        // Right panel content
+        const midR = PANEL_Y + PANEL_H / 2;
+        const bookieColor = isValue ? '#4ade80' : GRAY400;
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = isValue ? '#4ade80' : GRAY500;
+        ctx.textAlign = 'left';
+        ctx.fillText('BOOKIE', rightX + P_PAD, PANEL_Y + 14);
+
+        ctx.font = 'bold 26px "Barlow Condensed", sans-serif';
+        ctx.fillStyle = bookieColor;
+        ctx.fillText(`$${parseFloat(bookieOdds).toFixed(2)}`, rightX + P_PAD, midR + 8);
+
+        const evSign  = ev >= 0 ? '+' : '';
+        const evLabel = `${evSign}${ev.toFixed(1)}% EV`;
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillStyle = isValue ? '#4ade80' : GRAY500;
+        ctx.fillText(evLabel, rightX + P_PAD, PANEL_Y + PANEL_H - 10);
+
+      } else {
+        // Single-panel layout (no bookie odds)
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillStyle = AMBER;
+        ctx.textAlign = 'left';
+        ctx.fillText('BS MACHINE', PAD, y + 16);
+
+        if (blendPct > 0) {
+          ctx.font = '10px sans-serif';
+          ctx.fillStyle = BLUE;
+          ctx.textAlign = 'right';
+          ctx.fillText(`⚡ ${blendPct}% crowd`, W - PAD, y + 16);
+        }
+
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = GRAY500;
+        ctx.textAlign = 'left';
+        ctx.fillText(finalLabel, PAD, y + COMBINED_H - 12);
+
+        ctx.font = 'bold 32px "Barlow Condensed", sans-serif';
+        ctx.fillStyle = AMBER;
+        ctx.textAlign = 'right';
+        ctx.fillText(`${combinedPct}%`, W - PAD - 80, y + COMBINED_H / 2 + 8);
+
+        ctx.font = 'bold 20px "Barlow Condensed", sans-serif';
+        ctx.fillStyle = GRAY300;
+        ctx.fillText(`$${combinedOdds}`, W - PAD, y + COMBINED_H / 2 + 8);
+      }
+
+      y += COMBINED_H;
+    }
+
+    // Footer
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, y, W, FOOTER_H);
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = GRAY500;
+    ctx.textAlign = 'center';
+    ctx.fillText('The BS Machine · bsmachine.dev', W / 2, y + FOOTER_H / 2);
+
+    // Draw team logos on top (async)
+    const homeSlug = teamLogoSlug(homeTeam);
+    const awaySlug = teamLogoSlug(awayTeam);
+    await Promise.all([
+      homeSlug ? _loadAndDrawImage(ctx, `../logos/${homeSlug}.svg`, homeLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
+      awaySlug ? _loadAndDrawImage(ctx, `../logos/${awaySlug}.svg`, awayLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
+    ]);
+
+    return canvas;
+  }
+
+  async function generateAndShowShareCard(results, combinedPct, combinedOdds, bookieOdds, blendPct) {
+    const btn = document.getElementById('share-card-btn');
+    if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+    try {
+      await document.fonts.ready;
+      const canvas = await generateShareCard(results, combinedPct, combinedOdds, bookieOdds, blendPct);
+      showShareModal(canvas);
+    } finally {
+      if (btn) { btn.textContent = '↗ Share Card'; btn.disabled = false; }
+    }
+  }
+
+  function _trackShare(method) {
+    if (typeof gtag === 'function') {
+      gtag('event', 'share', { method, content_type: 'sgm_card', item_id: 'tryscorer_sgm' });
+    }
+  }
+
+  async function showShareModal(canvas) {
+    const existing = document.getElementById('share-card-modal');
+    if (existing) existing.remove();
+
+    const dataUrl = canvas.toDataURL('image/png');
+
+    // Pre-generate blob before showing modal — both share and clipboard.write()
+    // must be called with no awaits before them to preserve the iOS gesture token.
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    const shareFile = new File([blob], 'bsmachine-sgm.png', { type: 'image/png' });
+    const canNativeShare = !!(navigator.canShare && navigator.share && navigator.canShare({ files: [shareFile] }));
+
+    const nativeShareBtn = canNativeShare ? `
+      <button id="share-native-btn"
+         style="flex:1;padding:10px;border-radius:8px;background:#fbbf24;color:#111;font-weight:700;font-size:14px;cursor:pointer;border:none;font-family:sans-serif;">
+        ↗ Share
+      </button>` : '';
+
+    const downloadBtn = `
+      <a id="share-download-btn" href="${dataUrl}" download="bsmachine-sgm.png"
+         style="flex:1;padding:10px;border-radius:8px;${canNativeShare ? 'background:#1a2a3a;border:1px solid #374151;color:#9ca3af;' : 'background:#fbbf24;color:#111;'}font-weight:700;font-size:14px;text-align:center;text-decoration:none;font-family:sans-serif;">
+        ↓ Download
+      </a>`;
+
+    const copyBtn = `
+      <button id="share-copy-btn"
+         style="flex:1;padding:10px;border-radius:8px;background:#1e3a5f;border:1px solid #60a5fa;color:#60a5fa;font-weight:700;font-size:14px;cursor:pointer;font-family:sans-serif;">
+        Copy
+      </button>`;
+
+    const modal = document.createElement('div');
+    modal.id = 'share-card-modal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;padding:16px;';
+    modal.innerHTML = `
+      <div style="background:#1a1f2e;border:1px solid #374151;border-radius:16px;padding:20px;max-width:640px;width:100%;position:relative;">
+        <button id="share-modal-close" style="position:absolute;top:12px;right:14px;background:transparent;border:none;color:#6b7280;font-size:20px;cursor:pointer;line-height:1;">✕</button>
+        <p style="font-family:sans-serif;font-size:15px;font-weight:700;color:#f9fafb;margin:0 0 14px 0;">Share Your SGM</p>
+        <img src="${dataUrl}" style="width:100%;border-radius:8px;display:block;margin-bottom:14px;" alt="SGM Card">
+        <div style="display:flex;gap:10px;">
+          ${nativeShareBtn}
+          ${downloadBtn}
+          ${copyBtn}
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    modal.querySelector('#share-modal-close').addEventListener('click', () => modal.remove());
+
+    if (canNativeShare) {
+      modal.querySelector('#share-native-btn').addEventListener('click', () => {
+        // No awaits before navigator.share() — preserves iOS Safari gesture token
+        navigator.share({ files: [shareFile], title: 'My SGM · The BS Machine' })
+          .then(() => _trackShare('native_share'))
+          .catch(e => { if (e.name !== 'AbortError') console.warn('Share failed:', e); });
+      });
+    }
+
+    modal.querySelector('#share-download-btn').addEventListener('click', () => _trackShare('download'));
+
+    modal.querySelector('#share-copy-btn').addEventListener('click', () => {
+      const btn = modal.querySelector('#share-copy-btn');
+      // No awaits before clipboard.write() — preserves iOS Safari gesture token
+      navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+        .then(() => {
+          _trackShare('clipboard');
+          btn.textContent = '✓ Copied!';
+          btn.style.color = '#4ade80';
+          btn.style.borderColor = '#4ade80';
+          setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = '#60a5fa'; btn.style.borderColor = '#60a5fa'; }, 2000);
+        })
+        .catch(() => {
+          btn.textContent = 'Right-click to copy';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 2500);
+        });
+    });
   }
 
   // --- INIT ---
