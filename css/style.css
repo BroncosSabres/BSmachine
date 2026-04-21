@@ -238,6 +238,63 @@ h2, h3 {
   color: var(--accent-bright);
 }
 
+/* ---- Player stat badges (tryscorer page) ---- */
+.player-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+  position: relative;
+  font-size: 0.7rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+.player-badge::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: #1f2937;
+  border: 1px solid #374151;
+  color: #e5e7eb;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 5px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 50;
+}
+/* Left-aligned panel: anchor tooltip to badge's left edge so it extends rightward */
+.player-badge.tooltip-left::after {
+  left: 0;
+  transform: none;
+}
+/* Right-aligned panel: anchor tooltip to badge's right edge so it extends leftward */
+.player-badge.tooltip-right::after {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+.player-badge:hover::after {
+  opacity: 1;
+}
+.star-badge {
+  color: #fbbf24; /* amber-400 */
+}
+.flame-badge {
+  font-style: normal;
+}
+.cold-badge {
+  font-style: normal;
+}
+.shield-badge {
+  font-style: normal;
+}
+
 /* ================================================
    Prize Banner
    ================================================ */

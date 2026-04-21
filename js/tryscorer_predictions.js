@@ -538,6 +538,7 @@ document.addEventListener("DOMContentLoaded", function () {
               <div class="flex-1 min-w-0">
                 <span class="text-sm">${p.name}</span>
                 <span class="text-xs text-gray-500 ml-1">(${p.position})</span>
+                <span id="badge-${side}-${p.id}" class="inline-flex gap-0.5 ml-1"></span>
               </div>
               <div id="anytime-${side}-${p.id}" class="w-20 text-right shrink-0"><div class="text-xs font-semibold text-gray-600">·</div></div>
               <div class="flex items-center gap-1">
@@ -631,8 +632,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (allTryscorerData[matchId][side]) {
           // Already cached — repopulate display
-          const { tryProbs, tryDist } = allTryscorerData[matchId][side];
+          const { tryProbs, tryDist, tryStats, oppConcession } = allTryscorerData[matchId][side];
           populateAnytime(tryProbs, tryDist);
+          if (tryStats) applyPlayerBadges(matchId, side, tryStats, oppConcession);
           if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
             downloadCsvBtn.disabled = false;
           }
@@ -641,14 +643,17 @@ document.addEventListener("DOMContentLoaded", function () {
           allTryscorerData[matchId]._loadingCount = (allTryscorerData[matchId]._loadingCount || 0) + 1;
           Promise.all([
             fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
-            fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json())
-          ]).then(([tryProbs, tryDist]) => {
-            allTryscorerData[matchId][side] = { teamName, teamId, players, tryProbs, tryDist };
+            fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json()),
+            fetch(`${API_BASE}/player_try_stats/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({})),
+            fetch(`${API_BASE}/opponent_try_concession/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({}))
+          ]).then(([tryProbs, tryDist, tryStats, oppConcession]) => {
+            allTryscorerData[matchId][side] = { teamName, teamId, players, tryProbs, tryDist, tryStats, oppConcession };
             allTryscorerData[matchId]._loadingCount--;
             if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
               downloadCsvBtn.disabled = false;
             }
             populateAnytime(tryProbs, tryDist);
+            applyPlayerBadges(matchId, side, tryStats, oppConcession);
             if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
           }).catch(() => {
             allTryscorerData[matchId][side] = null;
@@ -661,6 +666,78 @@ document.addEventListener("DOMContentLoaded", function () {
           });
         }
       }
+    });
+  }
+
+  // --- PLAYER STAT BADGES ---
+  const BADGE_THRESHOLD   = 1.05;  // star: player vs league average
+  const HOT_THRESHOLD     = 1.20;  // flame: recent vs own career (20% above)
+  const COLD_THRESHOLD    = 0.80;  // snowflake: recent vs own career (20% below)
+
+  function computePlayerBadges(pid, tryStats) {
+    const s = tryStats?.[pid] ?? tryStats?.[String(pid)];
+    if (!s) return { star: null, flame: null, cold: null };
+
+    // Star: career rate vs position league average (career window only)
+    let starBest = null;
+    if (s.career_rate != null && s.pos_career_avg) {
+      const ratio = s.career_rate / s.pos_career_avg;
+      if (ratio > BADGE_THRESHOLD) starBest = { ratio, window: 'career' };
+    }
+
+    // Flame (hot) / Snowflake (cold): season or last-10 vs own career rate
+    let flameBest = null;
+    let coldWorst = null;
+    if (s.career_rate != null) {
+      const candidates = [
+        s.season_rate  != null ? { ratio: s.season_rate  / s.career_rate, window: 'this season'   } : null,
+        s.last10_rate  != null ? { ratio: s.last10_rate  / s.career_rate, window: 'last 10 games' } : null,
+      ].filter(Boolean);
+      for (const c of candidates) {
+        if (c.ratio > HOT_THRESHOLD  && (!flameBest || c.ratio > flameBest.ratio)) flameBest = c;
+        if (c.ratio < COLD_THRESHOLD && (!coldWorst || c.ratio < coldWorst.ratio)) coldWorst = c;
+      }
+    }
+
+    return { star: starBest, flame: flameBest, cold: coldWorst };
+  }
+
+  function applyPlayerBadges(matchId, side, tryStats, oppConcession) {
+    if (!tryStats || matchId !== currentMatchId) return;
+    const data = teamListCache[matchId];
+    if (!data) return;
+    (data[`${side}_players`] || []).forEach(p => {
+      const el = document.getElementById(`badge-${side}-${p.id}`);
+      if (!el) return;
+      const { star, flame, cold } = computePlayerBadges(p.id, tryStats);
+
+      // Shield: opponent concedes significantly more tries to this position
+      let shieldData = null;
+      const posData = oppConcession?.[p.position];
+      if (posData && posData.ratio > BADGE_THRESHOLD && posData.games >= 3) {
+        shieldData = posData;
+      }
+
+      // Anchor tooltips away from the screen edge to prevent overflow
+      const tooltipClass = side === 'away' ? ' tooltip-right' : ' tooltip-left';
+      let html = '';
+      if (star) {
+        const pct = Math.round((star.ratio - 1) * 100);
+        html += `<span class="player-badge star-badge${tooltipClass}" data-tooltip="${pct}% above avg ${p.position} scorer (${star.window})">★</span>`;
+      }
+      if (flame) {
+        const pct = Math.round((flame.ratio - 1) * 100);
+        html += `<span class="player-badge flame-badge${tooltipClass}" data-tooltip="${pct}% above own career avg as ${p.position} (${flame.window})">🔥</span>`;
+      }
+      if (cold) {
+        const pct = Math.round((1 - cold.ratio) * 100);
+        html += `<span class="player-badge cold-badge${tooltipClass}" data-tooltip="${pct}% below own career avg as ${p.position} (${cold.window})">❄️</span>`;
+      }
+      if (shieldData) {
+        const pct = Math.round((shieldData.ratio - 1) * 100);
+        html += `<span class="player-badge shield-badge${tooltipClass}" data-tooltip="Opp concedes ${pct}% more tries to ${p.position} (last ${shieldData.games} games)">🛡️</span>`;
+      }
+      el.innerHTML = html;
     });
   }
 
