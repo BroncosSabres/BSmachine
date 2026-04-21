@@ -15,7 +15,6 @@
     <title>NRL Impact Simulator</title>
     <link rel="stylesheet" href="../css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.3.2/papaparse.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-900 text-white">
@@ -35,19 +34,12 @@
           </form>
         </div>
 
-        <!-- Bar Chart Area -->
-        <div class="card flex-1 min-w-0">
-          <h2 class="text-lg font-semibold mb-3 text-gray-100">Simulated Outcome Probabilities</h2>
-          <div class="mb-4">
-            <label for="impact-select" class="block text-sm font-medium text-gray-400 mb-2">Select Outcome</label>
-            <select id="impact-select" class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option>Top 8</option>
-              <option>Top 4</option>
-              <option>Minor Premiership</option>
-              <option>Wooden Spoon</option>
-            </select>
+        <!-- Ladder Table Area -->
+        <div class="card flex-1 min-w-0 overflow-x-auto">
+          <h2 class="text-lg font-semibold mb-4 text-gray-100">Simulated Ladder Probabilities</h2>
+          <div id="sim-table-container">
+            <div class="text-gray-400 text-sm py-8 text-center">Loading simulator...</div>
           </div>
-          <canvas id="impactChart" class="w-full"></canvas>
         </div>
 
       </div>
