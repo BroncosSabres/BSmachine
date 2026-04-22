@@ -711,14 +711,21 @@ document.addEventListener("DOMContentLoaded", function () {
       if (!el) return;
       const { star, flame, cold } = computePlayerBadges(p.id, tryStats);
 
-      // Shield: opponent concedes significantly more tries to this position
-      let shieldData = null;
-      const posData = oppConcession?.[p.position];
-      if (posData && posData.ratio > BADGE_THRESHOLD && posData.games >= 3) {
-        shieldData = posData;
+      // Sword: opponent concedes significantly more tries to this position
+      // Pick the better ratio across last-10 and season windows
+      let swordData = null;
+      const posWindows = oppConcession?.[p.position];
+      if (posWindows) {
+        const candidates = [
+          posWindows.last10 ? { ...posWindows.last10, window: 'last 10 games' } : null,
+          posWindows.season ? { ...posWindows.season, window: 'this season'   } : null,
+        ].filter(d => d && d.ratio > BADGE_THRESHOLD && d.games >= 3);
+        if (candidates.length) {
+          swordData = candidates.reduce((best, c) => c.ratio > best.ratio ? c : best);
+        }
       }
 
-      // Anchor tooltips away from the screen edge to prevent overflow
+      // Anchor tooltips to prevent overflow: away panel gets right-anchored on all sizes
       const tooltipClass = side === 'away' ? ' tooltip-right' : ' tooltip-left';
       let html = '';
       if (star) {
@@ -733,9 +740,9 @@ document.addEventListener("DOMContentLoaded", function () {
         const pct = Math.round((1 - cold.ratio) * 100);
         html += `<span class="player-badge cold-badge${tooltipClass}" data-tooltip="${pct}% below own career avg as ${p.position} (${cold.window})">❄️</span>`;
       }
-      if (shieldData) {
-        const pct = Math.round((shieldData.ratio - 1) * 100);
-        html += `<span class="player-badge shield-badge${tooltipClass}" data-tooltip="Opp concedes ${pct}% more tries to ${p.position} (last ${shieldData.games} games)">🛡️</span>`;
+      if (swordData) {
+        const pct = Math.round((swordData.ratio - 1) * 100);
+        html += `<span class="player-badge sword-badge${tooltipClass}" data-tooltip="Opp concedes ${pct}% more tries to ${p.position} (${swordData.window})">⚔️</span>`;
       }
       el.innerHTML = html;
     });
