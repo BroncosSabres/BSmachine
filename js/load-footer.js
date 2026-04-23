@@ -1,4 +1,6 @@
-// Shared component loader — footer injection & prize banner logic
+// Shared component loader — footer injection, prize banner, My Stats modal
+// Eagerly load the My Stats modal so the header button works on every page.
+import('/js/my-stats.js').catch(function () {});
 
 // ---- Backend keep-warm ping ----
 // Fire-and-forget: wakes the Render backend early so it's ready by the time

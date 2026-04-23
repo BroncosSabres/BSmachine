@@ -169,9 +169,12 @@
 
       <!-- Controls -->
       <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
-          <button class="lb-tab active" data-tab="individual">Individual</button>
-          <button class="lb-tab" data-tab="team">Team</button>
+        <div class="flex items-center gap-2 flex-wrap">
+          <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
+            <button class="lb-tab active" data-tab="individual">Individual</button>
+            <button class="lb-tab" data-tab="team">Team</button>
+          </div>
+          <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.45rem 0.75rem; cursor:pointer; white-space:nowrap;">My Stats</button>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
@@ -233,6 +236,7 @@
 
     <script type="module">
       import { supabase, getSession, getProfile, updateAuthNav } from '../js/supabase-client.js'
+      import { fetchAllData, renderStats } from '../js/my-stats.js'
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
@@ -244,6 +248,7 @@
       let liveRoundNumber    = null   // current active round number
       let liveGameMap        = {}     // { [game_id]: game enriched with live scores }
       let currentDisplayRound = null  // round currently shown in the match tiles
+      let machinePicks       = {}     // { game_id: { home, away } } — BS Machine predicted scores
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -252,7 +257,11 @@
 
       // --- Init ---
       const session = await getSession()
-      if (session) myUserId = session.user.id
+      if (session) {
+        myUserId = session.user.id
+        const statsBtn = document.getElementById('my-stats-page-btn')
+        if (statsBtn) statsBtn.style.display = ''
+      }
 
       const { data: completedRoundRows } = await supabase
         .from('games')
@@ -389,11 +398,32 @@
           })
       }
 
+      // Fetch BS Machine expected scores for a list of round numbers
+      async function fetchMachinePicksForRounds(roundNumbers) {
+        const results = {}
+        const responses = await Promise.all(
+          [...new Set(roundNumbers)].map(rn =>
+            fetch(`${BACKEND}/round_predictions/${rn}`)
+              .then(r => r.ok ? r.json() : null).catch(() => null)
+          )
+        )
+        responses.forEach(data => {
+          if (!data?.predictions) return
+          data.predictions.forEach(p => {
+            if (p.exp_home_score != null && p.exp_away_score != null) {
+              results[p.match_id] = { home: p.exp_home_score, away: p.exp_away_score }
+            }
+          })
+        })
+        return results
+      }
+
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        const [{ data: allSeasonScores }, { data: profiles }] = await Promise.all([
+        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }] = await Promise.all([
           supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number'),
           supabase.from('profiles').select('id, username, favourite_team'),
+          supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null),
         ])
 
         // Compute live scores for current-round games not yet in the scores table
@@ -423,6 +453,27 @@
           ...(allSeasonScores || []).filter(s => !liveComputedIds.has(s.game_id)),
           ...liveComputedScores,
         ]
+
+        // Fetch BS Machine predicted scores for all relevant rounds
+        const relevantRounds = [...new Set(allMergedScores.map(s => s.round_number).filter(Boolean))]
+        if (liveRoundNumber) relevantRounds.push(liveRoundNumber)
+        machinePicks = await fetchMachinePicksForRounds(relevantRounds)
+
+        // Compute machine bell-curve scores for every game with actual scores + a machine prediction
+        const allActualGames = [...(completedGames || [])]
+        Object.values(liveGameMap).forEach(g => {
+          if (g.home_score != null && g.away_score != null && !allActualGames.some(ag => ag.game_id === g.game_id))
+            allActualGames.push(g)
+        })
+        const machineIndividualScores = []
+        for (const game of allActualGames) {
+          const mp = machinePicks[game.game_id]
+          if (!mp) continue
+          const ms = bellScore((game.home_score - game.away_score) - (mp.home - mp.away))
+          const ts = bellScore((game.home_score + game.away_score) - (mp.home + mp.away))
+          machineIndividualScores.push({ user_id: 'bs_machine', game_id: game.game_id, round_number: game.round_number, margin_score: ms, total_score: ts, points: ms + ts })
+        }
+        allMergedScores.push(...machineIndividualScores)
 
         // Season sidebar panel — full season aggregate (includes live partial scores)
         seasonPanel.innerHTML = buildIndividualCompact(allMergedScores, profiles || [])
@@ -460,8 +511,9 @@
         const rows = Object.entries(userMap)
           .map(([uid, stats]) => ({
             uid,
-            username: profileMap[uid]?.username || 'Unknown',
-            team:     profileMap[uid]?.favourite_team || null,
+            username: uid === 'bs_machine' ? 'BS Machine' : (profileMap[uid]?.username || 'Unknown'),
+            team:     uid === 'bs_machine' ? null : (profileMap[uid]?.favourite_team || null),
+            isMachine: uid === 'bs_machine',
             pts:      stats.pts,
             avg:      stats.games > 0 ? (stats.pts / stats.games).toFixed(2) : '0.00',
           }))
@@ -483,15 +535,21 @@
           const rankLabel = isTied ? `=${rank}` : `${rank}`
           const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
           const isMe      = r.uid === myUserId
+          const nameEl    = r.isMachine
+            ? `<span class="username text-sm font-semibold truncate" style="color:#f59e0b;">${escapeHtml(r.username)}</span>`
+            : `<span class="user-tip-link username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}" data-uid="${r.uid}" data-username="${escapeHtml(r.username)}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>`
+          const logoEl    = r.isMachine
+            ? `<img src="../assets/BS_Logo.png" class="w-4 h-4 object-contain shrink-0 opacity-80" style="border-radius:2px;">`
+            : (r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : '')
           return `
-            <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;">
+            <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;${r.isMachine ? 'border-top:2px solid #2e3a4e;' : ''}">
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
               <div class="flex items-center gap-1.5 min-w-0">
-                ${r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : ''}
-                <span class="user-tip-link username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}" data-uid="${r.uid}" data-username="${escapeHtml(r.username)}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>
+                ${logoEl}
+                ${nameEl}
               </div>
               <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
-              <div class="pts-display text-right">${r.pts.toFixed(1)}</div>
+              <div class="pts-display text-right" style="${r.isMachine ? 'color:#f59e0b;' : ''}">${r.pts.toFixed(1)}</div>
             </div>`
         }).join('')
 
@@ -566,12 +624,30 @@
           }
         }
 
+        // Inject BS Machine as a virtual scorer for each game with actual scores + a prediction
+        for (const game of (games || [])) {
+          const mp = machinePicks[game.game_id]
+          if (!mp) continue
+          const lg = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
+          const homeScore = lg?.home_score ?? game.home_score
+          const awayScore = lg?.away_score ?? game.away_score
+          if (homeScore == null || awayScore == null) continue
+          const ms = bellScore((homeScore - awayScore) - (mp.home - mp.away))
+          const ts = bellScore((homeScore + awayScore) - (mp.home + mp.away))
+          const machineEntry = { user_id: 'bs_machine', game_id: game.game_id, round_number: roundNumber, margin_score: ms, total_score: ts, points: ms + ts }
+          if (!scoresByGame[game.game_id]) scoresByGame[game.game_id] = []
+          // Remove any stale machine entry before adding fresh one
+          scoresByGame[game.game_id] = scoresByGame[game.game_id].filter(s => s.user_id !== 'bs_machine')
+          scoresByGame[game.game_id].push(machineEntry)
+        }
+
         const cards = games.map(game => {
           const gameScores = (scoresByGame[game.game_id] || [])
             .sort((a, b) => b.points - a.points)
 
-          const totalPts  = gameScores.reduce((sum, s) => sum + s.points, 0)
-          const pickers   = gameScores.length
+          const humanScores = gameScores.filter(s => s.user_id !== 'bs_machine')
+          const totalPts  = humanScores.reduce((sum, s) => sum + s.points, 0)
+          const pickers   = humanScores.length
           const top5      = gameScores.slice(0, 5)
 
           // Compute tied ranks for all scorers in this game
@@ -600,15 +676,18 @@
             : `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:#4a5568;letter-spacing:0.06em;text-transform:uppercase;">Upcoming</span>`
 
           const renderRow = (s, rank, rankLabel, isMe) => {
-            const p    = profileMap[s.user_id]
-            const name = escapeHtml(p?.username || 'Unknown')
-            const team = p?.favourite_team || null
+            const isMachine = s.user_id === 'bs_machine'
+            const p    = isMachine ? null : profileMap[s.user_id]
+            const name = isMachine ? 'BS Machine' : escapeHtml(p?.username || 'Unknown')
+            const team = isMachine ? null : (p?.favourite_team || null)
             const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
-            const pick = pickMap[`${s.user_id}|${s.game_id}`]
-            const pickMargin = pick ? pick.home_score_pick - pick.away_score_pick : null
-            const pickTotal  = pick ? pick.home_score_pick + pick.away_score_pick : null
-            const predictedScore = pick
-              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:#8892a4;white-space:nowrap;">${pick.home_score_pick}–${pick.away_score_pick}</span>`
+            const pick = isMachine ? machinePicks[s.game_id] : pickMap[`${s.user_id}|${s.game_id}`]
+            const pickHome   = isMachine ? pick?.home : pick?.home_score_pick
+            const pickAway   = isMachine ? pick?.away : pick?.away_score_pick
+            const pickMargin = (pickHome != null && pickAway != null) ? pickHome - pickAway : null
+            const pickTotal  = (pickHome != null && pickAway != null) ? pickHome + pickAway : null
+            const predictedScore = (pickHome != null && pickAway != null)
+              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:${isMachine ? '#f59e0b' : '#8892a4'};white-space:nowrap;">${pickHome}–${pickAway}</span>`
               : `<span style="color:#4a5568;">—</span>`
             const marginPick = pickMargin !== null
               ? `<span style="color:#4a5568;font-size:0.65rem;">(${pickMargin > 0 ? '+' : ''}${pickMargin})</span>`
@@ -617,21 +696,27 @@
               ? `<span style="color:#4a5568;font-size:0.65rem;">(${pickTotal})</span>`
               : ''
             const mobileDetails = [
-              pick ? `${pick.home_score_pick}–${pick.away_score_pick}` : null,
+              (pickHome != null && pickAway != null) ? `${pickHome}–${pickAway}` : null,
               s.margin_score != null ? `M:${s.margin_score.toFixed(1)}` : null,
               s.total_score  != null ? `T:${s.total_score.toFixed(1)}`  : null,
             ].filter(Boolean).join('<span style="color:#2e3a4e;margin:0 3px;">·</span>')
+            const logoEl = isMachine
+              ? `<img src="../assets/BS_Logo.png" class="w-4 h-4 object-contain shrink-0 opacity-80" style="border-radius:2px;">`
+              : (team ? `<img src="../logos/${teamSlug(team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-60" onerror="this.style.display='none'">` : '')
+            const nameEl = isMachine
+              ? `<span style="font-size:0.8125rem;font-weight:600;color:#f59e0b;">${name}</span>`
+              : `<span class="user-tip-link" data-uid="${s.user_id}" data-username="${name}" style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}cursor:pointer;">${name}${isMe ? ' (you)' : ''}</span>`
             return `
-              <div class="lb-ind-row" style="${isMe ? 'background:rgba(245,158,11,0.06);border-top:1px solid rgba(245,158,11,0.15);' : 'border-top:1px solid #1e2a3a;'}">
-                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
+              <div class="lb-ind-row" style="${isMachine ? 'background:rgba(245,158,11,0.04);border-top:2px solid #2e3a4e;' : isMe ? 'background:rgba(245,158,11,0.06);border-top:1px solid rgba(245,158,11,0.15);' : 'border-top:1px solid #1e2a3a;'}">
+                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMachine ? 'color:#f59e0b;' : isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
                 <div class="lb-ind-name flex items-center gap-2 min-w-0">
-                  ${team ? `<img src="../logos/${teamSlug(team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-60" onerror="this.style.display='none'">` : ''}
-                  <span class="user-tip-link" data-uid="${s.user_id}" data-username="${name}" style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}cursor:pointer;">${name}${isMe ? ' (you)' : ''}</span>
+                  ${logoEl}
+                  ${nameEl}
                 </div>
                 <div class="lb-ind-pick" style="text-align:right;">${predictedScore}</div>
                 <div class="lb-ind-margin" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.margin_score?.toFixed(1) ?? '—'} ${marginPick}</div>
                 <div class="lb-ind-total" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.total_score?.toFixed(1)  ?? '—'} ${totalPick}</div>
-                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:#e2e8f0;">${s.points?.toFixed(1) ?? '—'}</div>
+                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:${isMachine ? '#f59e0b' : '#e2e8f0'};">${s.points?.toFixed(1) ?? '—'}</div>
                 <div class="lb-ind-details">${mobileDetails}</div>
               </div>`
           }
@@ -646,7 +731,7 @@
             <div style="text-align:center;padding:0.375rem 1rem;border-top:1px solid #1e2a3a;">
               <button class="lb-ind-show-more-btn" data-game-id="${game.game_id}" data-total="${gameScores.length}"
                 style="background:none;border:none;color:#4a5568;font-size:0.7rem;cursor:pointer;font-family:'Barlow',system-ui,sans-serif;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;padding:0.15rem 0;">
-                Show all ${gameScores.length} players ▼
+                Show all ${humanScores.length} players ▼
               </button>
             </div>` : ''
 
@@ -1613,16 +1698,32 @@
         const header = document.getElementById('user-tips-header')
         const body   = document.getElementById('user-tips-body')
 
+        // Tab bar shared between both tabs
+        const tabBar = `
+          <div id="utips-tabs" style="display:flex;gap:0.375rem;margin-top:0.625rem;">
+            <button id="utips-tab-tips"
+              style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;padding:0.3rem 0.75rem;border-radius:6px;border:1px solid #2e3a4e;background:#1e2a3a;color:#e2e8f0;cursor:pointer;transition:all 0.1s;">
+              Round ${roundNumber}
+            </button>
+            <button id="utips-tab-stats"
+              style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;padding:0.3rem 0.75rem;border-radius:6px;border:1px solid #2e3a4e;background:none;color:#4a5568;cursor:pointer;transition:all 0.1s;">
+              ${escapeHtml(username)}'s Stats
+            </button>
+          </div>`
+
         const headerBase = (logoHtml) => `
-          <div style="display:flex;align-items:center;gap:0.75rem;flex:1;min-width:0;">
-            ${logoHtml}
-            <div style="min-width:0;">
-              <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.125rem;font-weight:700;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(username)}</div>
-              <div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Round ${roundNumber} locked tips</div>
+          <div style="display:flex;align-items:flex-start;gap:0.75rem;flex:1;min-width:0;flex-direction:column;">
+            <div style="display:flex;align-items:center;gap:0.75rem;width:100%;">
+              ${logoHtml}
+              <div style="min-width:0;flex:1;">
+                <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.125rem;font-weight:700;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(username)}</div>
+                <div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Round ${roundNumber} locked tips</div>
+              </div>
             </div>
+            ${tabBar}
           </div>
           <button id="user-tips-close" aria-label="Close"
-            style="background:none;border:1px solid #2e3a4e;border-radius:6px;color:#4a5568;font-size:0.875rem;width:2rem;height:2rem;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:border-color 0.1s,color 0.1s;"
+            style="background:none;border:1px solid #2e3a4e;border-radius:6px;color:#4a5568;font-size:0.875rem;width:2rem;height:2rem;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:border-color 0.1s,color 0.1s;align-self:flex-start;"
             onmouseover="this.style.borderColor='#4a5568';this.style.color='#e2e8f0';"
             onmouseout="this.style.borderColor='#2e3a4e';this.style.color='#4a5568';">✕</button>`
 
@@ -1630,6 +1731,44 @@
         body.innerHTML   = `<div style="padding:2.5rem;text-align:center;color:#4a5568;" class="animate-pulse">Loading tips…</div>`
         modal.classList.add('open')
         document.getElementById('user-tips-close').addEventListener('click', () => modal.classList.remove('open'))
+
+        // Track active tab and cached stats
+        let activeTab = 'tips'
+        let cachedTipsHtml = null
+        let cachedStats = null
+
+        function setActiveTab(tab) {
+          activeTab = tab
+          const tipsBtn  = document.getElementById('utips-tab-tips')
+          const statsBtn = document.getElementById('utips-tab-stats')
+          if (!tipsBtn || !statsBtn) return
+          if (tab === 'tips') {
+            tipsBtn.style.background  = '#1e2a3a'; tipsBtn.style.color  = '#e2e8f0'; tipsBtn.style.borderColor = '#2e3a4e'
+            statsBtn.style.background = 'none';     statsBtn.style.color = '#4a5568'; statsBtn.style.borderColor = '#2e3a4e'
+            if (cachedTipsHtml !== null) body.innerHTML = cachedTipsHtml
+          } else {
+            statsBtn.style.background = '#1e2a3a'; statsBtn.style.color  = '#e2e8f0'; statsBtn.style.borderColor = '#2e3a4e'
+            tipsBtn.style.background  = 'none';    tipsBtn.style.color  = '#4a5568'; tipsBtn.style.borderColor = '#2e3a4e'
+            if (cachedStats) {
+              renderStats(cachedStats, { bodyEl: body })
+            } else {
+              body.innerHTML = `<div style="padding:2.5rem;text-align:center;color:#4a5568;" class="animate-pulse">Loading stats…</div>`
+              fetchAllData(userId).then(stats => {
+                cachedStats = stats
+                if (activeTab === 'stats') renderStats(stats, { bodyEl: body })
+              }).catch(() => {
+                if (activeTab === 'stats') body.innerHTML = `<div style="padding:2rem;text-align:center;font-size:0.875rem;color:#f87171;">Failed to load stats.</div>`
+              })
+            }
+          }
+        }
+
+        // Wire up tab buttons (re-wires after each header redraw)
+        function wireTabs() {
+          document.getElementById('utips-tab-tips')?.addEventListener('click', () => setActiveTab('tips'))
+          document.getElementById('utips-tab-stats')?.addEventListener('click', () => setActiveTab('stats'))
+        }
+        wireTabs()
 
         // Fetch games, picks, scores, profile in parallel
         const { data: games } = await supabase
@@ -1658,6 +1797,7 @@
           : ''
         header.innerHTML = headerBase(logoHtml)
         document.getElementById('user-tips-close').addEventListener('click', () => modal.classList.remove('open'))
+        wireTabs()
 
         const pickMap  = {}
         userPicks?.forEach(p => { pickMap[p.game_id] = p })
@@ -1732,11 +1872,12 @@
             </div>`
         })
 
-        body.innerHTML = rows.join('') + `
+        cachedTipsHtml = rows.join('') + `
           <div style="padding:0.75rem 1.25rem;display:flex;justify-content:space-between;align-items:center;background:#0f1117;flex-shrink:0;">
             <span style="font-size:0.75rem;color:#4a5568;">${pickedCount} of ${games.length} games picked</span>
             <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.1rem;font-weight:700;color:#e2e8f0;">${totalPts.toFixed(1)} pts</span>
           </div>`
+        body.innerHTML = cachedTipsHtml
       }
 
       function emptyState(msg) {

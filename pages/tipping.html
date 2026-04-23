@@ -235,6 +235,7 @@
         <div class="flex items-center gap-3">
           <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Round Tipping</h1>
           <a href="/pages/leaderboard.html" style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#f59e0b; text-decoration:none; border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:0.2rem 0.6rem; background:rgba(245,158,11,0.08); white-space:nowrap;">Leaderboard →</a>
+          <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.2rem 0.6rem; cursor:pointer; white-space:nowrap;">My Stats</button>
         </div>
         <select id="round-select" style="background:#161b24;border:1px solid #2e3a4e;border-radius:8px;padding:0.35rem 0.75rem;color:#8892a4;font-family:'Barlow',system-ui,sans-serif;font-size:0.875rem;cursor:pointer;outline:none;"></select>
       </div>
@@ -316,11 +317,17 @@
 
     <script type="module">
       import { supabase, getSession, updateAuthNav } from '../js/supabase-client.js'
+      import '../js/my-stats.js'
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
       const session = await getSession()
       const userId = session?.user?.id ?? null
+
+      if (session) {
+        const statsBtn = document.getElementById('my-stats-page-btn')
+        if (statsBtn) statsBtn.style.display = ''
+      }
 
       if (!session) {
         document.getElementById('picks-container').innerHTML = `
