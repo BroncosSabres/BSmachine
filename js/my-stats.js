@@ -238,7 +238,7 @@ function compute(scores, picks, games, machinePreds, profile) {
       teamScoreMap[team].count += 1
     })
   })
-  const MIN_GAMES_FOR_TEAM = 2  // require at least 2 games to be meaningful
+  const MIN_GAMES_FOR_TEAM = 1
   const teamAvgs = Object.entries(teamScoreMap)
     .filter(([, v]) => v.count >= MIN_GAMES_FOR_TEAM)
     .map(([team, v]) => ({ team, avg: v.sum / v.count, count: v.count }))
