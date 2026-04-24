@@ -23,27 +23,87 @@ function _calibratedBw(values, modelSigma) {
   const sigmaU = _stddev(values);
   return Math.max(1, Math.sqrt(Math.max(0, modelSigma ** 2 - sigmaU ** 2)));
 }
-// Sigma of a machine distribution from [{x, prob}] bins
-function _machineSigmaFromBins(bins) {
+// Sigma of a machine distribution from [{x, prob}] bins.
+// Mirrors predictions.js: clamp to [xMin, xMax] and renormalise before computing sigma
+// so extreme outlier bins don't inflate the bandwidth.
+function _machineSigmaFromBins(bins, xMin = -Infinity, xMax = Infinity) {
   if (!bins?.length) return null;
-  const total = bins.reduce((s, b) => s + b.prob, 0);
+  const clamped = bins.filter(b => b.x >= xMin && b.x <= xMax);
+  const total = clamped.reduce((s, b) => s + b.prob, 0);
   if (!total) return null;
-  const mu = bins.reduce((s, b) => s + b.x * b.prob, 0) / total;
-  const variance = bins.reduce((s, b) => s + b.prob * (b.x - mu) ** 2, 0) / total;
+  const mu = clamped.reduce((s, b) => s + b.x * b.prob, 0) / total;
+  const variance = clamped.reduce((s, b) => s + b.prob * (b.x - mu) ** 2, 0) / total;
   return Math.sqrt(variance);
 }
-// P(X >= threshold) from a Gaussian KDE over `values`, evaluated on the integer grid [xMin, xMax]
-function _kdeLineProbGte(values, xMin, xMax, threshold, modelSigma) {
+// P(X >= threshold) from a Gaussian KDE over `values`, evaluated on the integer grid [xMin, xMax].
+// When reflect=true, applies boundary reflection at xMin: for each data point v, a mirror at
+// 2*xMin-v is added. This cancels the density that would leak below xMin without affecting
+// the spread, preventing the truncation from right-shifting the effective distribution.
+// Use reflect=true whenever xMin is a hard boundary (e.g. team scores bounded at 0).
+function _kdeLineProbGte(values, xMin, xMax, threshold, modelSigma, reflect = false) {
   if (!values.length) return null;
   const h = _calibratedBw(values, modelSigma);
+  const kernelPts = reflect ? [...values, ...values.map(v => 2 * xMin - v)] : values;
   let total = 0, above = 0;
   for (let x = xMin; x <= xMax; x++) {
-    const y = values.reduce((s, v) => s + _normPdf(x, v, h), 0) / values.length;
+    const y = kernelPts.reduce((s, v) => s + _normPdf(x, v, h), 0);
     total += y;
     if (x >= threshold) above += y;
   }
   return total > 0 ? above / total : null;
 }
+// Joint 2D crowd probability: P(all constraints in c) from crowd's paired (home, away) score KDE.
+// Uses a product kernel (2D Gaussian at each paired pick) with boundary reflection at 0 for both
+// dimensions. Evaluates all constraints — margin, total, homeTotal, awayTotal — at each (h, a)
+// grid point jointly, so redundant constraints (e.g. team totals that imply the match total)
+// don't compound and self-inconsistencies can't arise.
+// hBw/aBw are the calibrated bandwidths for home/away scores respectively.
+function _joint2dCrowdProb(homeScores, awayScores, c, hBw, aBw) {
+  if (!homeScores.length) return null;
+  const n = homeScores.length;
+
+  // Pre-compute constraint bounds (mirrors computeUserLineProb logic for margin/total)
+  let mGte = null, mLte = null;
+  if (c?.margin1?.type === 'over')  mGte = c.margin1.val;
+  if (c?.margin1?.type === 'under') mLte = c.margin1.val - 1;
+  if (c?.margin2?.type === 'over')  mGte = mGte !== null ? Math.max(mGte, c.margin2.val) : c.margin2.val;
+  if (c?.margin2?.type === 'under') mLte = mLte !== null ? Math.min(mLte, c.margin2.val - 1) : c.margin2.val - 1;
+  let tGte = null, tLte = null;
+  if (c?.total1?.type === 'over')  tGte = c.total1.val;
+  if (c?.total1?.type === 'under') tLte = c.total1.val - 1;
+  if (c?.total2?.type === 'over')  tGte = tGte !== null ? Math.max(tGte, c.total2.val) : c.total2.val;
+  if (c?.total2?.type === 'under') tLte = tLte !== null ? Math.min(tLte, c.total2.val - 1) : c.total2.val - 1;
+
+  let total = 0, satisfying = 0;
+  for (let h = 0; h <= 80; h++) {
+    for (let a = 0; a <= 80; a++) {
+      // Product kernel density at (h, a) with boundary reflection at 0 for both scores
+      let w = 0;
+      for (let i = 0; i < n; i++) {
+        const wh = _normPdf(h, homeScores[i], hBw) + _normPdf(h, -homeScores[i], hBw);
+        const wa = _normPdf(a, awayScores[i], aBw) + _normPdf(a, -awayScores[i], aBw);
+        w += wh * wa;
+      }
+      total += w;
+
+      // Check all constraints jointly at this (h, a) point
+      const m = h - a, t = h + a;
+      let ok = true;
+      if (mGte !== null && m < mGte) ok = false;
+      if (ok && mLte !== null && m > mLte) ok = false;
+      if (ok && tGte !== null && t < tGte) ok = false;
+      if (ok && tLte !== null && t > tLte) ok = false;
+      if (ok && c.homeTotal?.type === 'over'  && h <  c.homeTotal.val) ok = false;
+      if (ok && c.homeTotal?.type === 'under' && h >= c.homeTotal.val) ok = false;
+      if (ok && c.awayTotal?.type === 'over'  && a <  c.awayTotal.val) ok = false;
+      if (ok && c.awayTotal?.type === 'under' && a >= c.awayTotal.val) ok = false;
+
+      if (ok) satisfying += w;
+    }
+  }
+  return total > 0 ? satisfying / total : null;
+}
+
 // KDE density at a single point x — used for per-bin crowd weighting
 function _kdeDensityAt(values, x, modelSigma) {
   if (!values.length) return 0;
@@ -94,15 +154,41 @@ document.addEventListener("DOMContentLoaded", function () {
   const matchSelect    = document.getElementById('match-select');
   const teamsContainer = document.getElementById('teams-container');
   const resultDiv      = document.getElementById('result');
-  const marginSelect   = document.getElementById('margin-select');
-  const totalSelect    = document.getElementById('total-select');
   const btnNrl         = document.getElementById('btn-nrl');
   const btnNrlw        = document.getElementById('btn-nrlw');
   const downloadCsvBtn  = document.getElementById('download-tryscorer-csv');
   const resetMatchBtn   = document.getElementById('reset-match-btn');
   const resetAllBtn     = document.getElementById('reset-all-btn');
-  const homeWinBtn      = document.getElementById('home-win-btn');
-  const awayWinBtn      = document.getElementById('away-win-btn');
+
+  // Match Outcome line selectors
+  const line1Row         = document.getElementById('line1-row');
+  const line1DirHome     = document.getElementById('line1-dir-home');
+  const line1DirAway     = document.getElementById('line1-dir-away');
+  const line1ValSel      = document.getElementById('line1-val');
+  const line1ClearBtn    = document.getElementById('line1-clear');
+  const addLine2Btn      = document.getElementById('add-line2-btn');
+  const line2Row         = document.getElementById('line2-row');
+  const line2TeamLabel   = document.getElementById('line2-team-label');
+  const line2ValSel      = document.getElementById('line2-val');
+  const line2ClearBtn    = document.getElementById('line2-clear');
+  // Total Pts / Team Pts selectors
+  const totalDirOver     = document.getElementById('total-dir-over');
+  const totalDirUnder    = document.getElementById('total-dir-under');
+  const totalValSel      = document.getElementById('total-val');
+  const totalClearBtn    = document.getElementById('total-clear');
+  const addTotalCapBtn   = document.getElementById('add-total-cap-btn');
+  const totalCapRow      = document.getElementById('total-cap-row');
+  const totalCapDirLabel = document.getElementById('total-cap-dir-label');
+  const totalCapValSel   = document.getElementById('total-cap-val');
+  const totalCapClearBtn = document.getElementById('total-cap-clear');
+  const homeTotalDirOver  = document.getElementById('home-total-dir-over');
+  const homeTotalDirUnder = document.getElementById('home-total-dir-under');
+  const homeTotalValSel   = document.getElementById('home-total-val');
+  const homeTotalClearBtn = document.getElementById('home-total-clear');
+  const awayTotalDirOver  = document.getElementById('away-total-dir-over');
+  const awayTotalDirUnder = document.getElementById('away-total-dir-under');
+  const awayTotalValSel   = document.getElementById('away-total-val');
+  const awayTotalClearBtn = document.getElementById('away-total-clear');
 
   // --- COMPETITION TOGGLE ---
   let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
@@ -145,16 +231,23 @@ document.addEventListener("DOMContentLoaded", function () {
   let teamListCache     = {};         // { matchId: data }
   let allPlayerInputs   = {};         // { matchId: { home: {id: n}, away: {id: n} } }
   let allTryscorerData  = {};         // { matchId: { home: cacheObj, away: cacheObj } }
-  let matchMargins      = {};         // { matchId: select value string }
-  let matchTotals       = {};         // { matchId: select value string }
-  let matchMarginLabels = {};         // { matchId: display label string }
-  let matchTotalLabels  = {};         // { matchId: display label string }
+  let matchLineTeam1    = {};  // { matchId: 'home'|'away'|null }
+  let matchLineL1       = {};  // { matchId: float|null } — line value e.g. -6.5, +3.5
+  let matchLineL2       = {};  // { matchId: float|null } — second line (opposite team)
+  let matchTotalDir     = {};  // { matchId: 'over'|'under'|null }
+  let matchTotalN       = {};  // { matchId: number|null }
+  let matchTotalCapN    = {};  // { matchId: number|null }
+  let matchHomeTotalDir = {};  // { matchId: 'over'|'under'|null }
+  let matchHomeTotalN   = {};  // { matchId: number|null }
+  let matchAwayTotalDir = {};  // { matchId: 'over'|'under'|null }
+  let matchAwayTotalN   = {};  // { matchId: number|null }
   let betslipExpanded   = false;
   let _bookieOdds       = null;   // user-entered bookie odds for share card
   let blendT               = 0;        // 0 = pure machine, 1 = pure crowd
   let userPicksCache       = {};       // { matchId: { margins: [], totals: [] } }
   let machineScoreDistCache = {};      // { matchId: { margins: [{x,prob}], totals: [{x,prob}] } }
   let roundSigmaScale      = { margin: null, total: null }; // round-level σ ratio (machine/crowd)
+  let currentBlendedDists  = null;     // most recent blended try distributions { home_try_dist, away_try_dist }
 
   // --- BLEND SLIDER ELEMENTS ---
   const blendSlider   = document.getElementById('model-blend-slider');
@@ -165,34 +258,266 @@ document.addEventListener("DOMContentLoaded", function () {
   function setControlsEnabled(enabled) {
     if (downloadCsvBtn) downloadCsvBtn.disabled = !enabled;
     if (resetMatchBtn)  resetMatchBtn.disabled  = !enabled;
-    if (homeWinBtn) { homeWinBtn.disabled = !enabled; if (!enabled) homeWinBtn.textContent = 'Home'; }
-    if (awayWinBtn) { awayWinBtn.disabled = !enabled; if (!enabled) awayWinBtn.textContent = 'Away'; }
     updateResetAllState();
+  }
+
+  function matchHasLine(matchId) {
+    return !!(matchLineTeam1[matchId] && matchLineL1[matchId] != null) ||
+           !!(matchTotalDir[matchId]  && matchTotalN[matchId]  != null) ||
+           !!(matchHomeTotalDir[matchId] && matchHomeTotalN[matchId] != null) ||
+           !!(matchAwayTotalDir[matchId] && matchAwayTotalN[matchId] != null);
+  }
+
+  // All match IDs that have any active state (tryscorer picks or any line constraint).
+  // Used by resetAll, updateResetAllState, and recalculateAllOdds.
+  function allActiveMatchIds() {
+    return new Set([
+      ...Object.keys(allPlayerInputs),
+      ...Object.keys(matchLineTeam1),
+      ...Object.keys(matchTotalDir),
+      ...Object.keys(matchHomeTotalDir),
+      ...Object.keys(matchAwayTotalDir),
+    ]);
   }
 
   function updateResetAllState() {
     if (!resetAllBtn) return;
-    const anyActive = Object.keys(allPlayerInputs).some(mid => {
+    const anyActive = [...allActiveMatchIds()].some(mid => {
       const inputs = allPlayerInputs[mid] || {};
       return Object.values(inputs.home || {}).some(v => v > 0) ||
-             Object.values(inputs.away || {}).some(v => v > 0);
-    }) || Object.keys(matchMargins).some(mid => matchMargins[mid]) ||
-         Object.keys(matchTotals).some(mid => matchTotals[mid]);
+             Object.values(inputs.away || {}).some(v => v > 0) ||
+             matchHasLine(mid);
+    });
     resetAllBtn.disabled = !anyActive;
   }
 
-  // --- FIXED LINES ---
-  function populateFixedLines(homeTeam = "Home", awayTeam = "Away") {
-    marginSelect.innerHTML = `<option value="">Any Margin</option>`;
-    for (let m = -36; m <= 36; m++) {
-      marginSelect.innerHTML += `<option value="over_${-m+1}">${homeTeam} ${m > 0 ? "+" : ""}${m - 0.5}</option>`;
-      marginSelect.innerHTML += `<option value="under_${m}">${awayTeam} ${m > 0 ? "+" : ""}${m - 0.5}</option>`;
+  // --- LINE LABEL HELPERS ---
+  // L (float, e.g. -6.5) → constraint threshold N (integer): margin >= N for home, <= -N for away
+  function lineToN(L) { return Math.floor(-L) + 1; }
+
+  function getMarginLabel(matchId) {
+    const team = matchLineTeam1[matchId], L1 = matchLineL1[matchId], L2 = matchLineL2[matchId];
+    if (!team || L1 == null) return '';
+    const ht = teamListCache[matchId]?.home_team || 'Home';
+    const at = teamListCache[matchId]?.away_team || 'Away';
+    const team1Name = team === 'home' ? ht : at;
+    const team2Name = team === 'home' ? at : ht;
+    const N1 = lineToN(L1);
+    if (L2 != null) {
+      // Range: team1 wins by N1 to N2 pts
+      // N2 is derived: for team1=home, N2=floor(L2) (margin<=floor(L2));
+      //               for team1=away, -N2=floor(-L2)+1 → N2 = -(floor(-L2)+1)+1... simplify below
+      const rangeLo = N1;
+      const rangeHi = team === 'home' ? Math.floor(L2) : -(lineToN(L2)) + 1;
+      // Actually: team1=home, line2=Away+L2 → margin<=floor(L2). So hi=floor(L2).
+      // team1=away, line2=Home+L2 → margin>=lineToN(L2) → away margin <= -lineToN(L2)+1...
+      // Let me simplify using the cap directly:
+      // cap for home: margin <= capHi = floor(L2)
+      // cap for away: margin >= capLo = lineToN(L2), i.e. away wins by at most -lineToN(L2)+1 = 1-lineToN(L2)
+      if (team === 'home') {
+        const hi = Math.floor(L2);
+        return `${team1Name} ${L1 < 0 ? '' : '+'}${L1} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
+      } else {
+        const hi = -lineToN(L2) + 1; // away wins by at most this many
+        return `${team1Name} ${L1 < 0 ? '' : '+'}${L1} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
+      }
     }
-    totalSelect.innerHTML = `<option value="">Any Total</option>`;
-    for (let t = 0; t <= 80; t++) {
-      totalSelect.innerHTML += `<option value="over_${t}">Over ${t - 0.5}</option>`;
-      totalSelect.innerHTML += `<option value="under_${t}">Under ${t - 0.5}</option>`;
+    const sign = L1 < 0 ? '' : '+';
+    return `${team1Name} ${sign}${L1}`;
+  }
+
+  function getTotalLabel(matchId) {
+    const dir = matchTotalDir[matchId], n = matchTotalN[matchId], cap = matchTotalCapN[matchId];
+    if (!dir || n == null) return '';
+    if (cap != null) {
+      const lo = dir === 'over' ? n - 0.5 : cap - 0.5;
+      const hi = dir === 'over' ? cap - 0.5 : n - 0.5;
+      return `Total ${lo}–${hi}`;
     }
+    return `${dir === 'over' ? 'Over' : 'Under'} ${n - 0.5}`;
+  }
+  function getHomeTotalLabel(matchId) {
+    const dir = matchHomeTotalDir[matchId], n = matchHomeTotalN[matchId];
+    if (!dir || n == null) return '';
+    const ht = teamListCache[matchId]?.home_team || 'Home';
+    return `${ht} ${dir === 'over' ? 'Over' : 'Under'} ${n - 0.5}`;
+  }
+  function getAwayTotalLabel(matchId) {
+    const dir = matchAwayTotalDir[matchId], n = matchAwayTotalN[matchId];
+    if (!dir || n == null) return '';
+    const at = teamListCache[matchId]?.away_team || 'Away';
+    return `${at} ${dir === 'over' ? 'Over' : 'Under'} ${n - 0.5}`;
+  }
+
+  // --- POPULATE VALUE DROPDOWNS ---
+  // line1: -36.5 to +36.5 in steps of 1
+  function populateLine1ValDropdown() {
+    if (!line1ValSel) return;
+    line1ValSel.innerHTML = '';
+    for (let v = -36.5; v <= 36.5; v += 1) {
+      const sign = v >= 0 ? '+' : '';
+      const label = v === -0.5 ? 'To Win' : `${sign}${v}`;
+      line1ValSel.innerHTML += `<option value="${v}"${v === -0.5 ? ' selected' : ''}>${label}</option>`;
+    }
+  }
+  populateLine1ValDropdown();
+
+  // line2: valid range options given team1 + L1
+  function populateLine2ValDropdown(team1, L1) {
+    if (!line2ValSel) return;
+    line2ValSel.innerHTML = '';
+    if (!team1 || L1 == null) return;
+    const N1 = lineToN(L1);
+    // Valid L2 >= N1 + 0.5 (ensures non-empty range)
+    const minL2 = N1 + 0.5;
+    const team2Name = team1 === 'home'
+      ? (teamListCache[currentMatchId]?.away_team || 'Away')
+      : (teamListCache[currentMatchId]?.home_team || 'Home');
+    if (line2TeamLabel) {
+      line2TeamLabel.textContent = team2Name;
+      line2TeamLabel.classList.remove('hidden');
+    }
+    for (let v = minL2; v <= 36.5; v += 1) {
+      line2ValSel.innerHTML += `<option value="${v}">+${v}</option>`;
+    }
+  }
+
+  function populateValueDropdowns() {
+    const placeholder = '<option value="" disabled>—</option>';
+    if (totalValSel) {
+      totalValSel.innerHTML = placeholder;
+      for (let n = 1; n <= 80; n++)
+        totalValSel.innerHTML += `<option value="${n}">${n - 0.5}</option>`;
+    }
+    if (homeTotalValSel) {
+      homeTotalValSel.innerHTML = placeholder;
+      for (let n = 1; n <= 70; n++)
+        homeTotalValSel.innerHTML += `<option value="${n}">${n - 0.5}</option>`;
+    }
+    if (awayTotalValSel) {
+      awayTotalValSel.innerHTML = placeholder;
+      for (let n = 1; n <= 70; n++)
+        awayTotalValSel.innerHTML += `<option value="${n}">${n - 0.5}</option>`;
+    }
+  }
+  populateValueDropdowns();
+
+  function updateTotalCapDropdown(dir, n) {
+    if (!totalCapValSel) return;
+    totalCapValSel.innerHTML = '';
+    // Second line is opposite direction to first
+    const capDir = dir === 'over' ? 'under' : 'over';
+    if (totalCapDirLabel) totalCapDirLabel.textContent = capDir === 'under' ? 'Under' : 'Over';
+    if (dir === 'over') {
+      // First is Over X, second is Under Y where Y > X
+      for (let m = n + 1; m <= 81; m++)
+        totalCapValSel.innerHTML += `<option value="${m}">${m - 0.5}</option>`;
+    } else {
+      // First is Under X, second is Over Y where Y < X
+      for (let m = 1; m < n; m++)
+        totalCapValSel.innerHTML += `<option value="${m}">${m - 0.5}</option>`;
+    }
+  }
+
+  // Update dir-button visual state (highlight active)
+  function setDirBtnActive(btn, active) {
+    if (!btn) return;
+    if (active) {
+      btn.classList.add('bg-blue-600', 'border-blue-500', 'text-white');
+      btn.classList.remove('border-gray-600', 'text-gray-400');
+    } else {
+      btn.classList.remove('bg-blue-600', 'border-blue-500', 'text-white');
+      btn.classList.add('border-gray-600', 'text-gray-400');
+    }
+  }
+
+  // Sync all line UI to current state for a match
+  function syncLineUI(matchId) {
+    const team1 = matchLineTeam1[matchId], L1 = matchLineL1[matchId], L2 = matchLineL2[matchId];
+    const tDir = matchTotalDir[matchId], tN = matchTotalN[matchId], tCap = matchTotalCapN[matchId];
+    const htDir = matchHomeTotalDir[matchId], htN = matchHomeTotalN[matchId];
+    const atDir = matchAwayTotalDir[matchId], atN = matchAwayTotalN[matchId];
+
+    // Match Outcome / Line 1 — always visible
+    const lineActive = !!(team1 && L1 != null);
+    if (line1ClearBtn) line1ClearBtn.classList.toggle('hidden', !lineActive);
+    if (line1ValSel) {
+      line1ValSel.disabled = !team1;
+      if (L1 != null) line1ValSel.value = L1;
+    }
+    setDirBtnActive(line1DirHome, team1 === 'home');
+    setDirBtnActive(line1DirAway, team1 === 'away');
+
+    // Line 2
+    if (lineActive) {
+      populateLine2ValDropdown(team1, L1);
+      if (L2 != null) {
+        // Second line is set — show the row, hide the add button
+        if (addLine2Btn) addLine2Btn.classList.add('hidden');
+        if (line2Row) line2Row.classList.remove('hidden');
+        if (line2ValSel) line2ValSel.value = L2;
+        if (line2ClearBtn) line2ClearBtn.classList.remove('hidden');
+      } else {
+        // No second line yet — show the "Add second line" button, hide the row
+        if (addLine2Btn) addLine2Btn.classList.remove('hidden');
+        if (line2Row) line2Row.classList.add('hidden');
+        if (line2ClearBtn) line2ClearBtn.classList.add('hidden');
+      }
+    } else {
+      if (addLine2Btn) addLine2Btn.classList.add('hidden');
+      if (line2Row) line2Row.classList.add('hidden');
+    }
+
+    // Total
+    setDirBtnActive(totalDirOver,  tDir === 'over');
+    setDirBtnActive(totalDirUnder, tDir === 'under');
+    if (totalValSel) {
+      totalValSel.disabled = !tDir;
+      totalValSel.value = tN != null ? tN : '';
+    }
+    if (totalClearBtn) totalClearBtn.classList.toggle('hidden', !tDir);
+    if (tDir && tN != null) {
+      updateTotalCapDropdown(tDir, tN);
+      if (tCap != null) {
+        if (addTotalCapBtn) addTotalCapBtn.classList.add('hidden');
+        if (totalCapRow) totalCapRow.classList.remove('hidden');
+        if (totalCapValSel) totalCapValSel.value = tCap;
+      } else {
+        if (addTotalCapBtn) addTotalCapBtn.classList.remove('hidden');
+        if (totalCapRow) totalCapRow.classList.add('hidden');
+      }
+    } else {
+      if (addTotalCapBtn) addTotalCapBtn.classList.add('hidden');
+      if (totalCapRow) totalCapRow.classList.add('hidden');
+    }
+
+    // Home total
+    setDirBtnActive(homeTotalDirOver,  htDir === 'over');
+    setDirBtnActive(homeTotalDirUnder, htDir === 'under');
+    if (homeTotalValSel) {
+      homeTotalValSel.disabled = !htDir;
+      homeTotalValSel.value = htN != null ? htN : '';
+    }
+    if (homeTotalClearBtn) homeTotalClearBtn.classList.toggle('hidden', !htDir);
+
+    // Away total
+    setDirBtnActive(awayTotalDirOver,  atDir === 'over');
+    setDirBtnActive(awayTotalDirUnder, atDir === 'under');
+    if (awayTotalValSel) {
+      awayTotalValSel.disabled = !atDir;
+      awayTotalValSel.value = atN != null ? atN : '';
+    }
+    if (awayTotalClearBtn) awayTotalClearBtn.classList.toggle('hidden', !atDir);
+  }
+
+  // Update team name labels (To Win buttons + Team Pts section labels)
+  function updateTeamLabels(homeTeam = 'Home', awayTeam = 'Away') {
+    if (line1DirHome) line1DirHome.textContent = homeTeam;
+    if (line1DirAway) line1DirAway.textContent = awayTeam;
+    const homeLbl = document.getElementById('home-pts-label');
+    const awayLbl = document.getElementById('away-pts-label');
+    if (homeLbl) homeLbl.textContent = (homeTeam + ' Pts').toUpperCase();
+    if (awayLbl) awayLbl.textContent = (awayTeam + ' Pts').toUpperCase();
   }
 
   // --- FETCH MATCHES ---
@@ -201,14 +526,19 @@ document.addEventListener("DOMContentLoaded", function () {
     teamsContainer.innerHTML = '';
     resultDiv.innerHTML = '';
     matchList = []; currentMatchId = null; selectedMatch = null;
+    currentBlendedDists = null;
     teamListCache = {}; allPlayerInputs = {}; allTryscorerData = {};
-    matchMargins = {}; matchTotals = {}; matchMarginLabels = {}; matchTotalLabels = {};
+    matchLineTeam1 = {}; matchLineL1 = {}; matchLineL2 = {};
+    matchTotalDir  = {}; matchTotalN  = {}; matchTotalCapN  = {};
+    matchHomeTotalDir = {}; matchHomeTotalN = {};
+    matchAwayTotalDir = {}; matchAwayTotalN = {};
     userPicksCache = {};
     machineScoreDistCache = {};
     roundSigmaScale = { margin: null, total: null };
     betslipExpanded = false;
     setControlsEnabled(false);
-    populateFixedLines();
+    syncLineUI(null);
+    updateTeamLabels();
 
     const res     = await fetch(`${API_BASE}/current_round_matches/${competition}`);
     const matches = await res.json();
@@ -278,8 +608,10 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!matchId) {
       currentMatchId = null;
       selectedMatch = null;
+      currentBlendedDists = null;
       teamsContainer.innerHTML = '';
-      populateFixedLines();
+      syncLineUI(null);
+      updateTeamLabels();
       setControlsEnabled(false);
       recalculateAllOdds();
       return;
@@ -289,22 +621,15 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function loadMatch(matchId) {
     currentMatchId = matchId;
+    currentBlendedDists = null;
     updateBlendInfo(matchId);
-
-    // Restore margin/total selects for this match
-    marginSelect.value = matchMargins[matchId] || '';
-    totalSelect.value  = matchTotals[matchId]  || '';
 
     if (teamListCache[matchId]) {
       // Render from cache — no loading spinner
       selectedMatch = teamListCache[matchId];
       renderTeams(selectedMatch, matchId);
-      populateFixedLines(selectedMatch.home_team, selectedMatch.away_team);
-      // Re-apply stored margin/total (needs repopulated options)
-      marginSelect.value = matchMargins[matchId] || '';
-      totalSelect.value  = matchTotals[matchId]  || '';
-      if (homeWinBtn) { homeWinBtn.textContent = selectedMatch.home_team; homeWinBtn.disabled = false; }
-      if (awayWinBtn) { awayWinBtn.textContent = selectedMatch.away_team; awayWinBtn.disabled = false; }
+      updateTeamLabels(selectedMatch.home_team, selectedMatch.away_team);
+      syncLineUI(matchId);
       if (resetMatchBtn) resetMatchBtn.disabled = false;
       if (resetAllBtn)   resetAllBtn.disabled   = false;
       updateOptionBadges();
@@ -322,11 +647,8 @@ document.addEventListener("DOMContentLoaded", function () {
         selectedMatch = data;
         if (!allPlayerInputs[matchId]) allPlayerInputs[matchId] = { home: {}, away: {} };
         renderTeams(data, matchId);
-        populateFixedLines(data.home_team, data.away_team);
-        marginSelect.value = matchMargins[matchId] || '';
-        totalSelect.value  = matchTotals[matchId]  || '';
-        if (homeWinBtn)    { homeWinBtn.textContent = data.home_team; homeWinBtn.disabled = false; }
-        if (awayWinBtn)    { awayWinBtn.textContent = data.away_team; awayWinBtn.disabled = false; }
+        updateTeamLabels(data.home_team, data.away_team);
+        syncLineUI(matchId);
         if (resetMatchBtn) resetMatchBtn.disabled = false;
         if (resetAllBtn)   resetAllBtn.disabled   = false;
         updateOptionBadges();
@@ -334,32 +656,208 @@ document.addEventListener("DOMContentLoaded", function () {
       });
   }
 
-  // --- MARGIN/TOTAL CHANGE ---
-  marginSelect.addEventListener('change', function () {
-    if (currentMatchId) {
-      matchMargins[currentMatchId] = this.value;
-      const opt = this.options[this.selectedIndex];
-      matchMarginLabels[currentMatchId] = opt ? opt.textContent : '';
+  // --- LINE SELECTOR EVENT HANDLERS ---
+
+  // Set line1 team + value; resets line2
+  function setLine1(team, L1) {
+    if (!currentMatchId) return;
+    matchLineTeam1[currentMatchId] = team;
+    matchLineL1[currentMatchId]    = L1;
+    matchLineL2[currentMatchId]    = null; // reset second line when first changes
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  }
+
+  // To Win quick-picks: set team, default line to -0.5
+  // Line1 team toggle buttons (switch team, keep value; set default -0.5 if no value yet)
+  if (line1DirHome) line1DirHome.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    // Toggle off if already selected
+    if (matchLineTeam1[currentMatchId] === 'home') {
+      matchLineTeam1[currentMatchId] = null;
+      matchLineL1[currentMatchId]    = null;
+      matchLineL2[currentMatchId]    = null;
+    } else {
+      matchLineTeam1[currentMatchId] = 'home';
+      if (matchLineL1[currentMatchId] == null) matchLineL1[currentMatchId] = -0.5;
+      matchLineL2[currentMatchId] = null;
     }
+    syncLineUI(currentMatchId);
     recalculateAllOdds();
   });
-  totalSelect.addEventListener('change', function () {
-    if (currentMatchId) {
-      matchTotals[currentMatchId] = this.value;
-      const opt = this.options[this.selectedIndex];
-      matchTotalLabels[currentMatchId] = opt ? opt.textContent : '';
+  if (line1DirAway) line1DirAway.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    if (matchLineTeam1[currentMatchId] === 'away') {
+      matchLineTeam1[currentMatchId] = null;
+      matchLineL1[currentMatchId]    = null;
+      matchLineL2[currentMatchId]    = null;
+    } else {
+      matchLineTeam1[currentMatchId] = 'away';
+      if (matchLineL1[currentMatchId] == null) matchLineL1[currentMatchId] = -0.5;
+      matchLineL2[currentMatchId] = null;
     }
+    syncLineUI(currentMatchId);
     recalculateAllOdds();
   });
 
-  // --- TEAM WIN BUTTONS ---
-  if (homeWinBtn) homeWinBtn.addEventListener('click', () => {
-    marginSelect.value = 'over_1';
-    marginSelect.dispatchEvent(new Event('change'));
+  // Line1 value change
+  if (line1ValSel) line1ValSel.addEventListener('change', function () {
+    if (!currentMatchId) return;
+    matchLineL1[currentMatchId] = Number(this.value);
+    matchLineL2[currentMatchId] = null; // reset cap when main line changes
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
   });
-  if (awayWinBtn) awayWinBtn.addEventListener('click', () => {
-    marginSelect.value = 'under_0';
-    marginSelect.dispatchEvent(new Event('change'));
+
+  // Line1 clear (clears entire margin section)
+  if (line1ClearBtn) line1ClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchLineTeam1[currentMatchId] = null;
+    matchLineL1[currentMatchId]    = null;
+    matchLineL2[currentMatchId]    = null;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  });
+
+  // Add second line button — reveal line2 row
+  if (addLine2Btn) addLine2Btn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    addLine2Btn.classList.add('hidden');
+    if (line2Row) line2Row.classList.remove('hidden');
+    // Default to first option in dropdown
+    if (line2ValSel && line2ValSel.options.length) {
+      matchLineL2[currentMatchId] = Number(line2ValSel.value);
+      if (line2ClearBtn) line2ClearBtn.classList.remove('hidden');
+      recalculateAllOdds();
+    }
+  });
+
+  // Line2 value change
+  if (line2ValSel) line2ValSel.addEventListener('change', function () {
+    if (!currentMatchId) return;
+    matchLineL2[currentMatchId] = Number(this.value);
+    if (line2ClearBtn) line2ClearBtn.classList.remove('hidden');
+    recalculateAllOdds();
+  });
+
+  // Line2 clear (clears second line only, goes back to "Add second line" button)
+  if (line2ClearBtn) line2ClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchLineL2[currentMatchId] = null;
+    if (line2Row) line2Row.classList.add('hidden');
+    if (line2ClearBtn) line2ClearBtn.classList.add('hidden');
+    if (addLine2Btn) addLine2Btn.classList.remove('hidden');
+    recalculateAllOdds();
+  });
+
+  // Total
+  function handleTotalDir(dir) {
+    if (!currentMatchId) return;
+    const prev = matchTotalDir[currentMatchId];
+    if (prev === dir) return;
+    matchTotalDir[currentMatchId]  = dir;
+    matchTotalCapN[currentMatchId] = null;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  }
+  if (totalDirOver)  totalDirOver.addEventListener('click',  () => handleTotalDir('over'));
+  if (totalDirUnder) totalDirUnder.addEventListener('click', () => handleTotalDir('under'));
+
+  if (totalValSel) totalValSel.addEventListener('change', function () {
+    if (!currentMatchId || !this.value) return;
+    matchTotalN[currentMatchId]    = Number(this.value);
+    matchTotalCapN[currentMatchId] = null;
+    updateTotalCapDropdown(matchTotalDir[currentMatchId], Number(this.value));
+    // Show "Add second line" button, hide cap row
+    if (addTotalCapBtn) addTotalCapBtn.classList.remove('hidden');
+    if (totalCapRow) totalCapRow.classList.add('hidden');
+    recalculateAllOdds();
+  });
+
+  if (addTotalCapBtn) addTotalCapBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    addTotalCapBtn.classList.add('hidden');
+    if (totalCapRow) totalCapRow.classList.remove('hidden');
+    // Default to first option in cap dropdown
+    if (totalCapValSel && totalCapValSel.options.length) {
+      matchTotalCapN[currentMatchId] = Number(totalCapValSel.value);
+      recalculateAllOdds();
+    }
+  });
+
+  if (totalCapValSel) totalCapValSel.addEventListener('change', function () {
+    if (!currentMatchId) return;
+    matchTotalCapN[currentMatchId] = Number(this.value);
+    recalculateAllOdds();
+  });
+
+  if (totalCapClearBtn) totalCapClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchTotalCapN[currentMatchId] = null;
+    if (totalCapRow) totalCapRow.classList.add('hidden');
+    if (addTotalCapBtn) addTotalCapBtn.classList.remove('hidden');
+    recalculateAllOdds();
+  });
+
+  if (totalClearBtn) totalClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchTotalDir[currentMatchId]  = null;
+    matchTotalN[currentMatchId]    = null;
+    matchTotalCapN[currentMatchId] = null;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  });
+
+  // Home total
+  function handleHomeTotalDir(dir) {
+    if (!currentMatchId) return;
+    const prev = matchHomeTotalDir[currentMatchId];
+    if (prev === dir) return;
+    matchHomeTotalDir[currentMatchId] = dir;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  }
+  if (homeTotalDirOver)  homeTotalDirOver.addEventListener('click',  () => handleHomeTotalDir('over'));
+  if (homeTotalDirUnder) homeTotalDirUnder.addEventListener('click', () => handleHomeTotalDir('under'));
+
+  if (homeTotalValSel) homeTotalValSel.addEventListener('change', function () {
+    if (!currentMatchId || !this.value) return;
+    matchHomeTotalN[currentMatchId] = Number(this.value);
+    recalculateAllOdds();
+  });
+
+  if (homeTotalClearBtn) homeTotalClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchHomeTotalDir[currentMatchId] = null;
+    matchHomeTotalN[currentMatchId]   = null;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  });
+
+  // Away total
+  function handleAwayTotalDir(dir) {
+    if (!currentMatchId) return;
+    const prev = matchAwayTotalDir[currentMatchId];
+    if (prev === dir) return;
+    matchAwayTotalDir[currentMatchId] = dir;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
+  }
+  if (awayTotalDirOver)  awayTotalDirOver.addEventListener('click',  () => handleAwayTotalDir('over'));
+  if (awayTotalDirUnder) awayTotalDirUnder.addEventListener('click', () => handleAwayTotalDir('under'));
+
+  if (awayTotalValSel) awayTotalValSel.addEventListener('change', function () {
+    if (!currentMatchId || !this.value) return;
+    matchAwayTotalN[currentMatchId] = Number(this.value);
+    recalculateAllOdds();
+  });
+
+  if (awayTotalClearBtn) awayTotalClearBtn.addEventListener('click', () => {
+    if (!currentMatchId) return;
+    matchAwayTotalDir[currentMatchId] = null;
+    matchAwayTotalN[currentMatchId]   = null;
+    syncLineUI(currentMatchId);
+    recalculateAllOdds();
   });
 
   // --- RESET CURRENT MATCH ---
@@ -379,13 +877,18 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       });
     });
-    matchMargins[matchId] = '';
-    matchTotals[matchId]  = '';
-    matchMarginLabels[matchId] = '';
-    matchTotalLabels[matchId]  = '';
+    matchLineTeam1[matchId] = null;
+    matchLineL1[matchId]    = null;
+    matchLineL2[matchId]    = null;
+    matchTotalDir[matchId]     = null;
+    matchTotalN[matchId]       = null;
+    matchTotalCapN[matchId]    = null;
+    matchHomeTotalDir[matchId] = null;
+    matchHomeTotalN[matchId]   = null;
+    matchAwayTotalDir[matchId] = null;
+    matchAwayTotalN[matchId]   = null;
     if (matchId === currentMatchId) {
-      marginSelect.value = '';
-      totalSelect.value  = '';
+      syncLineUI(matchId);
     }
   }
 
@@ -400,9 +903,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // --- RESET ALL MATCHES ---
   if (resetAllBtn) {
     resetAllBtn.addEventListener('click', () => {
-      Object.keys(allPlayerInputs).forEach(mid => resetMatch(mid));
-      // Also clear any matches that only had margin/total but no player picks
-      Object.keys(matchMargins).forEach(mid => resetMatch(mid));
+      allActiveMatchIds().forEach(mid => resetMatch(mid));
       updateOptionBadges();
       recalculateAllOdds();
     });
@@ -816,8 +1317,8 @@ document.addEventListener("DOMContentLoaded", function () {
       const totals  = game.totals  || [];
       if (margins.length < 2) return;
 
-      const σM  = _machineSigmaFromBins(dist.margins);
-      const σT  = _machineSigmaFromBins(dist.totals);
+      const σM  = _machineSigmaFromBins(dist.margins, -100, 100);
+      const σT  = _machineSigmaFromBins(dist.totals,    0, 100);
       const σUm = _stddev(margins);
       const σUt = _stddev(totals);
 
@@ -827,8 +1328,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
     const avg = arr => arr.reduce((s, v) => s + v, 0) / arr.length;
     roundSigmaScale = {
-      margin: machMargSigmas.length >= 2 ? avg(machMargSigmas) / avg(userMargSigmas) : null,
-      total:  machTotSigmas.length  >= 2 ? avg(machTotSigmas)  / avg(userTotSigmas)  : null,
+      margin: machMargSigmas.length >= 1 ? avg(machMargSigmas) / avg(userMargSigmas) : null,
+      total:  machTotSigmas.length  >= 1 ? avg(machTotSigmas)  / avg(userTotSigmas)  : null,
     };
   }
 
@@ -865,32 +1366,55 @@ document.addEventListener("DOMContentLoaded", function () {
     return machineScoreDistCache[matchId];
   }
 
-  // P(crowd satisfies margin/total line) using Gaussian KDE — matches predictions.js crowd model.
-  // marginSigma / totalSigma: machine distribution sigma for calibrated bandwidth (may be null).
-  function computeUserLineProb(picks, marginType, marginVal, totalType, totalVal, marginSigma, totalSigma) {
+  // P(crowd satisfies all line constraints) using Gaussian KDE — matches predictions.js crowd model.
+  // c: constraints object from buildConstraints(); marginSigma/totalSigma for calibrated bandwidth.
+  // Computes crowd P(margin constraints AND total constraints) from marginal KDEs.
+  // Does NOT handle homeTotal/awayTotal — those require the joint bins (see blendedLineProb).
+  function computeUserLineProb(picks, c, marginSigma, totalSigma) {
     const { margins, totals } = picks;
     if (!margins.length) return null;
-
     let prob = 1;
 
-    if (marginType === 'over') {
-      // P(home margin >= marginVal)
-      const p = _kdeLineProbGte(margins, -80, 80, marginVal, marginSigma);
+    // Effective margin bounds (combine margin1 + margin2 for range)
+    let mGte = null, mLte = null;
+    if (c?.margin1?.type === 'over')  mGte = c.margin1.val;
+    if (c?.margin1?.type === 'under') mLte = c.margin1.val - 1;
+    if (c?.margin2?.type === 'over')  mGte = mGte !== null ? Math.max(mGte, c.margin2.val) : c.margin2.val;
+    if (c?.margin2?.type === 'under') mLte = mLte !== null ? Math.min(mLte, c.margin2.val - 1) : c.margin2.val - 1;
+
+    if (mGte !== null && mLte !== null) {
+      const pA = _kdeLineProbGte(margins, -100, 100, mGte, marginSigma);
+      const pB = _kdeLineProbGte(margins, -100, 100, mLte + 1, marginSigma);
+      if (pA === null) return null;
+      prob *= Math.max(0, pA - (pB || 0));
+    } else if (mGte !== null) {
+      const p = _kdeLineProbGte(margins, -100, 100, mGte, marginSigma);
       if (p === null) return null;
       prob *= p;
-    } else if (marginType === 'under') {
-      // P(home margin <= marginVal - 1)  =  1 - P(>= marginVal)
-      const p = _kdeLineProbGte(margins, -80, 80, marginVal, marginSigma);
+    } else if (mLte !== null) {
+      const p = _kdeLineProbGte(margins, -100, 100, mLte + 1, marginSigma);
       if (p === null) return null;
       prob *= (1 - p);
     }
 
-    if (totalType === 'over') {
-      const p = _kdeLineProbGte(totals, 0, 120, totalVal, totalSigma);
+    // Effective total bounds (combine total1 + total2 for range)
+    let tGte = null, tLte = null;
+    if (c?.total1?.type === 'over')  tGte = c.total1.val;
+    if (c?.total1?.type === 'under') tLte = c.total1.val - 1;
+    if (c?.total2?.type === 'over')  tGte = tGte !== null ? Math.max(tGte, c.total2.val) : c.total2.val;
+    if (c?.total2?.type === 'under') tLte = tLte !== null ? Math.min(tLte, c.total2.val - 1) : c.total2.val - 1;
+
+    if (tGte !== null && tLte !== null) {
+      const pA = _kdeLineProbGte(totals, 0, 120, tGte, totalSigma);
+      const pB = _kdeLineProbGte(totals, 0, 120, tLte + 1, totalSigma);
+      if (pA === null) return null;
+      prob *= Math.max(0, pA - (pB || 0));
+    } else if (tGte !== null) {
+      const p = _kdeLineProbGte(totals, 0, 120, tGte, totalSigma);
       if (p === null) return null;
       prob *= p;
-    } else if (totalType === 'under') {
-      const p = _kdeLineProbGte(totals, 0, 120, totalVal, totalSigma);
+    } else if (tLte !== null) {
+      const p = _kdeLineProbGte(totals, 0, 120, tLte + 1, totalSigma);
       if (p === null) return null;
       prob *= (1 - p);
     }
@@ -923,26 +1447,22 @@ document.addEventListener("DOMContentLoaded", function () {
     const cached = allTryscorerData[matchId];
     if (!cached?.home || !cached?.away) return;
 
-    const marginVal = matchMargins[matchId] || '';
-    const totalVal  = matchTotals[matchId]  || '';
-    let margin_type = null, margin_val = null, total_type = null, total_val = null;
-    if (marginVal) { [margin_type, margin_val] = marginVal.split('_'); margin_val = Number(margin_val); }
-    if (totalVal)  { [total_type,  total_val]  = totalVal.split('_');  total_val  = Number(total_val); }
+    const c = buildConstraints(matchId);
 
     try {
       const [userPicks, machineScoreDist, sgmDist] = await Promise.all([
         fetchUserPicksForMatch(matchId),
         fetchMachineScoreDist(matchId),
-        getSgmDist(matchId, margin_type, margin_val, total_type, total_val),
+        getSgmDist(matchId, c),
       ]);
       if (currentMatchId !== matchId) return; // stale — match changed while fetching
       const userPickCount = userPicks.margins.length;
       const marginSigma = (userPickCount >= 2 && roundSigmaScale.margin)
         ? _stddev(userPicks.margins) * roundSigmaScale.margin
-        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins) : null);
+        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins, -100, 100) : null);
       const totalSigma = (userPickCount >= 2 && roundSigmaScale.total)
         ? _stddev(userPicks.totals) * roundSigmaScale.total
-        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals) : null);
+        : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals, 0, 100) : null);
       updateAnytimeDisplay(matchId, _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT));
     } catch { /* silently fail */ }
   }
@@ -961,6 +1481,7 @@ document.addEventListener("DOMContentLoaded", function () {
   // blendedDists: { home_try_dist, away_try_dist } — as returned by _blendedTryDists()
   function updateAnytimeDisplay(matchId, blendedDists) {
     if (!matchId || matchId !== currentMatchId) return;
+    currentBlendedDists = blendedDists;
     const data = teamListCache[matchId];
     if (!data) return;
     ['home', 'away'].forEach(side => {
@@ -980,14 +1501,84 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  function getSgmDist(matchId, marginType, marginVal, totalType, totalVal) {
-    let params = [];
-    if (marginType === "over")  params.push(`margin_gte=${marginVal}`);
-    if (marginType === "under") params.push(`margin_lte=${marginVal - 1}`);
-    if (totalType  === "over")  params.push(`total_gte=${totalVal}`);
-    if (totalType  === "under") params.push(`total_lte=${totalVal - 1}`);
-    const paramString = params.length ? `?${params.join("&")}` : "";
-    return fetch(`${API_BASE}/match_sgm_bins_range/${matchId}${paramString}`).then(r => r.json());
+  function buildConstraints(matchId) {
+    const team1 = matchLineTeam1[matchId], L1 = matchLineL1[matchId], L2 = matchLineL2[matchId];
+    const tDir = matchTotalDir[matchId],  tN = matchTotalN[matchId],  tCap = matchTotalCapN[matchId];
+    const htDir = matchHomeTotalDir[matchId], htN = matchHomeTotalN[matchId];
+    const atDir = matchAwayTotalDir[matchId], atN = matchAwayTotalN[matchId];
+    let margin1 = null, margin2 = null, total1 = null, total2 = null, homeTotal = null, awayTotal = null;
+
+    if (team1 && L1 != null) {
+      const N1 = lineToN(L1); // margin >= N1 for home, <= -N1 for away
+      if (team1 === 'home') {
+        margin1 = { type: 'over',  val: N1 };
+        // Line2 is on Away team: Away +L2 → margin <= floor(L2)
+        if (L2 != null) margin2 = { type: 'under', val: Math.floor(L2) + 1 };
+      } else {
+        margin1 = { type: 'under', val: 1 - N1 }; // margin <= -N1
+        // Line2 is on Home team: Home +L2 → margin >= lineToN(L2)
+        if (L2 != null) margin2 = { type: 'over', val: lineToN(L2) };
+      }
+    }
+    if (tDir && tN != null) {
+      if (tDir === 'over') {
+        total1 = { type: 'over',  val: tN };
+        if (tCap != null) total2 = { type: 'under', val: tCap };
+      } else {
+        total1 = { type: 'under', val: tN };
+        if (tCap != null) total2 = { type: 'over',  val: tCap };
+      }
+    }
+    if (htDir && htN != null) homeTotal = { type: htDir, val: htN };
+    if (atDir && atN != null) awayTotal = { type: atDir, val: atN };
+    return { margin1, margin2, total1, total2, homeTotal, awayTotal };
+  }
+
+  async function getSgmDist(matchId, c) {
+    const params = [];
+    if (c?.margin1?.type === 'over')  params.push(`margin_gte=${c.margin1.val}`);
+    if (c?.margin1?.type === 'under') params.push(`margin_lte=${c.margin1.val - 1}`);
+    if (c?.margin2?.type === 'over')  params.push(`margin_gte=${c.margin2.val}`);
+    if (c?.margin2?.type === 'under') params.push(`margin_lte=${c.margin2.val - 1}`);
+    if (c?.total1?.type === 'over')   params.push(`total_gte=${c.total1.val}`);
+    if (c?.total1?.type === 'under')  params.push(`total_lte=${c.total1.val - 1}`);
+    if (c?.total2?.type === 'over')   params.push(`total_gte=${c.total2.val}`);
+    if (c?.total2?.type === 'under')  params.push(`total_lte=${c.total2.val - 1}`);
+    const paramString = params.length ? `?${params.join('&')}` : '';
+    const result = await fetch(`${API_BASE}/match_sgm_bins_range/${matchId}${paramString}`).then(r => r.json());
+    // Apply team total filtering client-side using the raw bins.
+    // preFiltBins = bins matching margin/total only (before team total filter) — used by blendedLineProb
+    // for crowd team score probability via crowd-weighted joint distribution.
+    if ((c?.homeTotal || c?.awayTotal) && Array.isArray(result.bins) && result.bins.length) {
+      const preFiltBins = result.bins;
+      const bins = result.bins.filter(b => {
+        const hs = (b.m + b.t) / 2;
+        const as_ = (b.t - b.m) / 2;
+        if (c.homeTotal?.type === 'over'  && hs <  c.homeTotal.val) return false;
+        if (c.homeTotal?.type === 'under' && hs >= c.homeTotal.val) return false;
+        if (c.awayTotal?.type === 'over'  && as_ <  c.awayTotal.val) return false;
+        if (c.awayTotal?.type === 'under' && as_ >= c.awayTotal.val) return false;
+        return true;
+      });
+      const totalC = result.bins.reduce((s, b) => s + (b.c || 0), 0);
+      const filtC  = bins.reduce((s, b) => s + (b.c || 0), 0);
+      // Always return a result with team-total filter applied.
+      // filtC == 0 means the combination is impossible — return prob 0, not the unfiltered result.
+      if (totalC > 0) {
+        if (filtC === 0) {
+          return { ...result, preFiltBins, bins: [], prob: 0, home_try_dist: {}, away_try_dist: {} };
+        }
+        const scale = filtC / totalC;
+        const aggHome = {}, aggAway = {};
+        bins.forEach(b => {
+          const w = (b.c || 0) / filtC;
+          for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
+          for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
+        });
+        return { ...result, preFiltBins, bins, prob: (result.prob || 0) * scale, home_try_dist: aggHome, away_try_dist: aggAway };
+      }
+    }
+    return { ...result, preFiltBins: result.bins };
   }
 
   // Calculate SGM for one match — returns Promise<result|null>
@@ -995,20 +1586,24 @@ document.addEventListener("DOMContentLoaded", function () {
     const data = teamListCache[matchId];
     if (!data) return null;
 
-    const inputs      = allPlayerInputs[matchId] || { home: {}, away: {} };
-    const marginVal   = matchMargins[matchId] || '';
-    const totalVal    = matchTotals[matchId]  || '';
-    const marginLabel = matchMarginLabels[matchId] || '';
-    const totalLabel  = matchTotalLabels[matchId]  || '';
+    const inputs = allPlayerInputs[matchId] || { home: {}, away: {} };
 
-    let margin_type = null, margin_val = null, total_type = null, total_val = null;
-    if (marginVal) { [margin_type, margin_val] = marginVal.split('_'); margin_val = Number(margin_val); }
-    if (totalVal)  { [total_type,  total_val]  = totalVal.split('_');  total_val  = Number(total_val); }
-
+    const c = buildConstraints(matchId);
     const matchLabel       = `${data.home_team} vs ${data.away_team}`;
-    const hasMarginOrTotal = !!(marginVal || totalVal);
-    const cleanMarginLabel = marginLabel.replace(/\s*-0\.5$/, ' Win');
-    const lineLabel        = [cleanMarginLabel, totalLabel].filter(Boolean).join(' + ');
+    const hasMarginOrTotal = matchHasLine(matchId);
+    const lineLabel = [
+      getMarginLabel(matchId),
+      getTotalLabel(matchId),
+      getHomeTotalLabel(matchId),
+      getAwayTotalLabel(matchId),
+    ].filter(Boolean).join(' + ');
+    const lineLegs =
+      (matchLineTeam1[matchId] && matchLineL1[matchId] != null ? 1 : 0) +
+      (matchLineL2[matchId] != null ? 1 : 0) +
+      (matchTotalDir[matchId]  && matchTotalN[matchId]  != null ? 1 : 0) +
+      (matchTotalCapN[matchId]  != null ? 1 : 0) +
+      (matchHomeTotalDir[matchId] && matchHomeTotalN[matchId] != null ? 1 : 0) +
+      (matchAwayTotalDir[matchId] && matchAwayTotalN[matchId] != null ? 1 : 0);
 
     // Collect per-side picks
     const pickedBySide = {};
@@ -1033,15 +1628,47 @@ document.addEventListener("DOMContentLoaded", function () {
     // Mirror predictions.js: use round sigma scale when available (n >= 2), else per-match machine sigma
     const marginSigma = (userPickCount >= 2 && roundSigmaScale.margin)
       ? _stddev(userPicks.margins) * roundSigmaScale.margin
-      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins) : null);
+      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.margins, -100, 100) : null);
     const totalSigma  = (userPickCount >= 2 && roundSigmaScale.total)
       ? _stddev(userPicks.totals) * roundSigmaScale.total
-      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals)  : null);
+      : (machineScoreDist ? _machineSigmaFromBins(machineScoreDist.totals, 0, 100)  : null);
 
-    // Blend machine line probability with crowd KDE probability
+    // Crowd team score distributions derived from paired picks.
+    // margins[i] and totals[i] come from the same tipper, so home/away scores are exact.
+    const _paired = userPicks.totals.length === userPicks.margins.length && userPickCount > 0;
+    const _homeScores = _paired ? userPicks.margins.map((m, i) => (userPicks.totals[i] + m) / 2) : [];
+    const _awayScores = _paired ? userPicks.margins.map((m, i) => (userPicks.totals[i] - m) / 2) : [];
+    // Machine sigma for team scores (used as modelSigma target by _kdeLineProbGte,
+    // which internally computes bandwidth as sqrt(max(0, modelSigma² - crowd_std²))).
+    // Approximation: Var(home) = (Var(margin) + Var(total)) / 4 (ignoring covariance).
+    const _machineTeamSigma = (marginSigma != null && totalSigma != null)
+      ? Math.sqrt((marginSigma ** 2 + totalSigma ** 2) / 4)
+      : null;
+
+    // Blend machine line probability with crowd probability.
     function blendedLineProb(machineProb) {
       if (blendT === 0 || !hasMarginOrTotal || !userPickCount) return machineProb;
-      const crowdProb = computeUserLineProb(userPicks, margin_type, margin_val, total_type, total_val, marginSigma, totalSigma);
+
+      const hasTeamTotal = !!(c.homeTotal || c.awayTotal);
+
+      if (hasTeamTotal) {
+        if (!_paired) return machineProb; // can't derive team scores — fall back to machine
+
+        // Compute all crowd constraints jointly from the 2D (home, away) score distribution.
+        // This avoids the self-inconsistency of multiplying independent 1D KDE probabilities:
+        // e.g. Dragons Under 0.5 + Roosters Under 19.5 already implies Total Under 19.5,
+        // so adding that constraint must not further reduce the probability.
+        // The 2D joint approach evaluates every constraint at the same (h, a) point, so
+        // redundant constraints are automatically handled.
+        const hBw = _calibratedBw(_homeScores, _machineTeamSigma);
+        const aBw = _calibratedBw(_awayScores, _machineTeamSigma);
+        const crowdProb = _joint2dCrowdProb(_homeScores, _awayScores, c, hBw, aBw);
+        if (crowdProb === null) return machineProb;
+        return (1 - blendT) * machineProb + blendT * crowdProb;
+      }
+
+      // No team total constraints — use marginal KDE for margin/total only
+      const crowdProb = computeUserLineProb(userPicks, c, marginSigma, totalSigma);
       if (crowdProb === null) return machineProb;
       return (1 - blendT) * machineProb + blendT * crowdProb;
     }
@@ -1049,24 +1676,24 @@ document.addEventListener("DOMContentLoaded", function () {
     // Line-only (no tryscorer picks)
     if (!hasAnyPicks) {
       try {
-        const sgmDist    = await getSgmDist(matchId, margin_type, margin_val, total_type, total_val);
+        const sgmDist    = await getSgmDist(matchId, c);
         const machProb   = typeof sgmDist.prob === 'number' ? sgmDist.prob : 0;
         // Update anytime column with blended distributions for this margin/total filter
         if (matchId === currentMatchId) {
           updateAnytimeDisplay(matchId, _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT));
         }
-        return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineLabel, userPickCount };
+        return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineLabel, userPickCount, lineLegs };
       } catch { return null; }
     }
 
     // Tryscorer picks (± margin/total)
     // Fetch SGM dist once; both sides share it
     let sgmDist;
-    try { sgmDist = await getSgmDist(matchId, margin_type, margin_val, total_type, total_val); }
+    try { sgmDist = await getSgmDist(matchId, c); }
     catch { return null; }
 
     const machLineProb     = typeof sgmDist.prob === 'number' ? sgmDist.prob : 1;
-    const effectiveLineProb = hasMarginOrTotal ? blendedLineProb(machLineProb) : 1;
+    const effectiveLineProb = hasMarginOrTotal ? blendedLineProb(machLineProb, sgmDist) : 1;
 
     // Blend try distributions using crowd KDE density at each (margin, total) bin
     const blendedDists = _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT);
@@ -1119,7 +1746,7 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     });
     const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
-    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb, userPickCount };
+    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb, userPickCount, lineLegs };
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
@@ -1129,17 +1756,12 @@ document.addEventListener("DOMContentLoaded", function () {
     updateResetAllState();
 
     // Gather active match IDs immediately to decide whether to show loading
-    const allIds = new Set([
-      ...Object.keys(allPlayerInputs),
-      ...Object.keys(matchMargins).filter(mid => matchMargins[mid]),
-      ...Object.keys(matchTotals).filter(mid => matchTotals[mid])
-    ]);
+    const allIds = allActiveMatchIds();
     const activeIds = [...allIds].filter(mid => {
       const inputs = allPlayerInputs[mid] || {};
       const hasPicks = Object.values(inputs.home || {}).some(v => v > 0) ||
                        Object.values(inputs.away || {}).some(v => v > 0);
-      const hasLine  = !!(matchMargins[mid] || matchTotals[mid]);
-      return hasPicks || hasLine;
+      return hasPicks || matchHasLine(mid);
     });
 
     if (activeIds.length === 0) {
@@ -1197,8 +1819,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const combinedProb = pickResults.reduce((acc, r) => acc * r.prob, 1);
     const combinedOdds = combinedProb > 0 ? (1 / combinedProb).toFixed(2) : '∞';
     const combinedPct  = (combinedProb * 100).toFixed(2);
-    const isMulti      = pickResults.length > 1;
-    const totalLegs    = pickResults.reduce((acc, r) => acc + r.picks.length, 0);
+    const totalLegs    = results.reduce((acc, r) => acc + (r.picks?.length || 0) + (r.lineLegs || 0), 0);
+    const isMulti      = pickResults.length > 1 || totalLegs > (pickResults[0]?.picks?.length ?? 0);
 
     // Per-game leg rows
     const legsHtml = results.map(r => {
@@ -1365,10 +1987,12 @@ document.addEventListener("DOMContentLoaded", function () {
       const cached = cache[side];
       if (!cached) return;
       const { teamName, players, tryProbs, tryDist } = cached;
+      const blendedTryDist = currentBlendedDists?.[side + '_try_dist'];
+      const effectiveTryDist = blendedTryDist || tryDist;
       players.forEach(player => {
         const perTryProb = tryProbs[player.id] ?? tryProbs[String(player.id)];
-        const anytimeProb = perTryProb !== undefined && tryDist
-          ? anytimeTryscorerProbability(perTryProb, tryDist, 20) : null;
+        const anytimeProb = perTryProb !== undefined && effectiveTryDist
+          ? anytimeTryscorerProbability(perTryProb, effectiveTryDist, 20) : null;
         rows.push({ team: teamName, side, player_id: player.id, player_name: player.name, position: player.position, per_try_prob: perTryProb, anytime_prob: anytimeProb });
       });
     });
@@ -1624,7 +2248,7 @@ document.addEventListener("DOMContentLoaded", function () {
       ctx.fillRect(0, y, W, COMBINED_H);
 
       const isMulti    = pickResults.length > 1;
-      const totalLegs  = pickResults.reduce((acc, r) => acc + r.picks.length, 0);
+      const totalLegs  = results.reduce((acc, r) => acc + (r.picks?.length || 0) + (r.lineLegs || 0), 0);
       const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : 'SGM';
 
       if (bookieOdds != null) {
@@ -1854,5 +2478,6 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- INIT ---
-  populateFixedLines();
+  syncLineUI(null);
+  updateTeamLabels();
 });

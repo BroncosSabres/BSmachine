@@ -249,6 +249,7 @@
       let liveGameMap        = {}     // { [game_id]: game enriched with live scores }
       let currentDisplayRound = null  // round currently shown in the match tiles
       let machinePicks       = {}     // { game_id: { home, away } } — BS Machine predicted scores
+      let crowdPicks         = {}     // { game_id: { home, away } } — crowd average picks
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -454,26 +455,55 @@
           ...liveComputedScores,
         ]
 
-        // Fetch BS Machine predicted scores for all relevant rounds
-        const relevantRounds = [...new Set(allMergedScores.map(s => s.round_number).filter(Boolean))]
-        if (liveRoundNumber) relevantRounds.push(liveRoundNumber)
-        machinePicks = await fetchMachinePicksForRounds(relevantRounds)
-
-        // Compute machine bell-curve scores for every game with actual scores + a machine prediction
+        // Compute allActualGames first (needed for crowd picks fetch)
         const allActualGames = [...(completedGames || [])]
         Object.values(liveGameMap).forEach(g => {
           if (g.home_score != null && g.away_score != null && !allActualGames.some(ag => ag.game_id === g.game_id))
             allActualGames.push(g)
         })
+
+        // Fetch BS Machine predictions + all user picks in parallel
+        const relevantRounds = [...new Set(allMergedScores.map(s => s.round_number).filter(Boolean))]
+        if (liveRoundNumber) relevantRounds.push(liveRoundNumber)
+        const allActualGameIds = allActualGames.map(g => g.game_id)
+        const [, allCompletedPicksRes] = await Promise.all([
+          fetchMachinePicksForRounds(relevantRounds).then(mp => { machinePicks = mp }),
+          allActualGameIds.length
+            ? supabase.from('picks').select('game_id, home_score_pick, away_score_pick').in('game_id', allActualGameIds)
+            : Promise.resolve({ data: [] }),
+        ])
+
+        // Build crowd picks: average home/away pick per game across all users
+        const crowdAccum = {}
+        ;(allCompletedPicksRes.data || []).forEach(p => {
+          if (!crowdAccum[p.game_id]) crowdAccum[p.game_id] = { homeSum: 0, awaySum: 0, count: 0 }
+          crowdAccum[p.game_id].homeSum += p.home_score_pick
+          crowdAccum[p.game_id].awaySum += p.away_score_pick
+          crowdAccum[p.game_id].count++
+        })
+        crowdPicks = {}
+        Object.entries(crowdAccum).forEach(([gid, v]) => {
+          if (v.count > 0) crowdPicks[Number(gid)] = { home: Math.round(v.homeSum / v.count), away: Math.round(v.awaySum / v.count) }
+        })
+
+        // Compute machine + crowd bell-curve scores for every game with actual scores
         const machineIndividualScores = []
+        const crowdIndividualScores   = []
         for (const game of allActualGames) {
           const mp = machinePicks[game.game_id]
-          if (!mp) continue
-          const ms = bellScore((game.home_score - game.away_score) - (mp.home - mp.away))
-          const ts = bellScore((game.home_score + game.away_score) - (mp.home + mp.away))
-          machineIndividualScores.push({ user_id: 'bs_machine', game_id: game.game_id, round_number: game.round_number, margin_score: ms, total_score: ts, points: ms + ts })
+          if (mp) {
+            const ms = bellScore((game.home_score - game.away_score) - (mp.home - mp.away))
+            const ts = bellScore((game.home_score + game.away_score) - (mp.home + mp.away))
+            machineIndividualScores.push({ user_id: 'bs_machine', game_id: game.game_id, round_number: game.round_number, margin_score: ms, total_score: ts, points: ms + ts })
+          }
+          const cp = crowdPicks[game.game_id]
+          if (cp) {
+            const ms = bellScore((game.home_score - game.away_score) - (cp.home - cp.away))
+            const ts = bellScore((game.home_score + game.away_score) - (cp.home + cp.away))
+            crowdIndividualScores.push({ user_id: 'the_crowd', game_id: game.game_id, round_number: game.round_number, margin_score: ms, total_score: ts, points: ms + ts })
+          }
         }
-        allMergedScores.push(...machineIndividualScores)
+        allMergedScores.push(...machineIndividualScores, ...crowdIndividualScores)
 
         // Season sidebar panel — full season aggregate (includes live partial scores)
         seasonPanel.innerHTML = buildIndividualCompact(allMergedScores, profiles || [])
@@ -511,9 +541,10 @@
         const rows = Object.entries(userMap)
           .map(([uid, stats]) => ({
             uid,
-            username: uid === 'bs_machine' ? 'BS Machine' : (profileMap[uid]?.username || 'Unknown'),
-            team:     uid === 'bs_machine' ? null : (profileMap[uid]?.favourite_team || null),
+            username:  uid === 'bs_machine' ? 'BS Machine' : uid === 'the_crowd' ? 'The Crowd' : (profileMap[uid]?.username || 'Unknown'),
+            team:      uid === 'bs_machine' || uid === 'the_crowd' ? null : (profileMap[uid]?.favourite_team || null),
             isMachine: uid === 'bs_machine',
+            isCrowd:   uid === 'the_crowd',
             pts:      stats.pts,
             avg:      stats.games > 0 ? (stats.pts / stats.games).toFixed(2) : '0.00',
           }))
@@ -535,21 +566,25 @@
           const rankLabel = isTied ? `=${rank}` : `${rank}`
           const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
           const isMe      = r.uid === myUserId
-          const nameEl    = r.isMachine
-            ? `<span class="username text-sm font-semibold truncate" style="color:#f59e0b;">${escapeHtml(r.username)}</span>`
+          const isVirtual = r.isMachine || r.isCrowd
+          const nameClr   = r.isMachine ? '#f59e0b' : r.isCrowd ? '#38bdf8' : isMe ? '' : ''
+          const nameEl    = isVirtual
+            ? `<span class="username text-sm font-semibold truncate" style="color:${nameClr};">${escapeHtml(r.username)}</span>`
             : `<span class="user-tip-link username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}" data-uid="${r.uid}" data-username="${escapeHtml(r.username)}">${escapeHtml(r.username)}${isMe ? ' (you)' : ''}</span>`
           const logoEl    = r.isMachine
             ? `<img src="../assets/BS_Logo.png" class="w-4 h-4 object-contain shrink-0 opacity-80" style="border-radius:2px;">`
+            : r.isCrowd
+            ? `<span style="font-size:0.9rem;line-height:1;flex-shrink:0;">👥</span>`
             : (r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : '')
           return `
-            <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;${r.isMachine ? 'border-top:2px solid #2e3a4e;' : ''}">
+            <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;${isVirtual ? 'border-top:2px solid #2e3a4e;' : ''}">
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
               <div class="flex items-center gap-1.5 min-w-0">
                 ${logoEl}
                 ${nameEl}
               </div>
               <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
-              <div class="pts-display text-right" style="${r.isMachine ? 'color:#f59e0b;' : ''}">${r.pts.toFixed(1)}</div>
+              <div class="pts-display text-right" style="${r.isMachine ? 'color:#f59e0b;' : r.isCrowd ? 'color:#38bdf8;' : ''}">${r.pts.toFixed(1)}</div>
             </div>`
         }).join('')
 
@@ -624,28 +659,41 @@
           }
         }
 
-        // Inject BS Machine as a virtual scorer for each game with actual scores + a prediction
+        // Inject BS Machine + Crowd as virtual scorers for each game with actual scores
         for (const game of (games || [])) {
-          const mp = machinePicks[game.game_id]
-          if (!mp) continue
           const lg = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
           const homeScore = lg?.home_score ?? game.home_score
           const awayScore = lg?.away_score ?? game.away_score
           if (homeScore == null || awayScore == null) continue
-          const ms = bellScore((homeScore - awayScore) - (mp.home - mp.away))
-          const ts = bellScore((homeScore + awayScore) - (mp.home + mp.away))
-          const machineEntry = { user_id: 'bs_machine', game_id: game.game_id, round_number: roundNumber, margin_score: ms, total_score: ts, points: ms + ts }
           if (!scoresByGame[game.game_id]) scoresByGame[game.game_id] = []
-          // Remove any stale machine entry before adding fresh one
-          scoresByGame[game.game_id] = scoresByGame[game.game_id].filter(s => s.user_id !== 'bs_machine')
-          scoresByGame[game.game_id].push(machineEntry)
+
+          const mp = machinePicks[game.game_id]
+          if (mp) {
+            const ms = bellScore((homeScore - awayScore) - (mp.home - mp.away))
+            const ts = bellScore((homeScore + awayScore) - (mp.home + mp.away))
+            scoresByGame[game.game_id] = scoresByGame[game.game_id].filter(s => s.user_id !== 'bs_machine')
+            scoresByGame[game.game_id].push({ user_id: 'bs_machine', game_id: game.game_id, round_number: roundNumber, margin_score: ms, total_score: ts, points: ms + ts })
+          }
+
+          // Crowd: compute average pick from allPicks for this game
+          const gamePicks = (allPicks || []).filter(p => p.game_id === game.game_id)
+          if (gamePicks.length) {
+            const homeSum = gamePicks.reduce((s, p) => s + p.home_score_pick, 0)
+            const awaySum = gamePicks.reduce((s, p) => s + p.away_score_pick, 0)
+            const cp = { home: Math.round(homeSum / gamePicks.length), away: Math.round(awaySum / gamePicks.length) }
+            crowdPicks[game.game_id] = cp
+            const ms = bellScore((homeScore - awayScore) - (cp.home - cp.away))
+            const ts = bellScore((homeScore + awayScore) - (cp.home + cp.away))
+            scoresByGame[game.game_id] = scoresByGame[game.game_id].filter(s => s.user_id !== 'the_crowd')
+            scoresByGame[game.game_id].push({ user_id: 'the_crowd', game_id: game.game_id, round_number: roundNumber, margin_score: ms, total_score: ts, points: ms + ts })
+          }
         }
 
         const cards = games.map(game => {
           const gameScores = (scoresByGame[game.game_id] || [])
             .sort((a, b) => b.points - a.points)
 
-          const humanScores = gameScores.filter(s => s.user_id !== 'bs_machine')
+          const humanScores = gameScores.filter(s => s.user_id !== 'bs_machine' && s.user_id !== 'the_crowd')
           const totalPts  = humanScores.reduce((sum, s) => sum + s.points, 0)
           const pickers   = humanScores.length
           const top5      = gameScores.slice(0, 5)
@@ -677,38 +725,46 @@
 
           const renderRow = (s, rank, rankLabel, isMe) => {
             const isMachine = s.user_id === 'bs_machine'
-            const p    = isMachine ? null : profileMap[s.user_id]
-            const name = isMachine ? 'BS Machine' : escapeHtml(p?.username || 'Unknown')
-            const team = isMachine ? null : (p?.favourite_team || null)
+            const isCrowd   = s.user_id === 'the_crowd'
+            const isVirtual = isMachine || isCrowd
+            const p    = isVirtual ? null : profileMap[s.user_id]
+            const name = isMachine ? 'BS Machine' : isCrowd ? 'The Crowd' : escapeHtml(p?.username || 'Unknown')
+            const team = isVirtual ? null : (p?.favourite_team || null)
             const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
-            const pick = isMachine ? machinePicks[s.game_id] : pickMap[`${s.user_id}|${s.game_id}`]
-            const pickHome   = isMachine ? pick?.home : pick?.home_score_pick
-            const pickAway   = isMachine ? pick?.away : pick?.away_score_pick
+            const pick = isMachine ? machinePicks[s.game_id] : isCrowd ? crowdPicks[s.game_id] : pickMap[`${s.user_id}|${s.game_id}`]
+            const pickHome   = isVirtual ? pick?.home : pick?.home_score_pick
+            const pickAway   = isVirtual ? pick?.away : pick?.away_score_pick
             const pickMargin = (pickHome != null && pickAway != null) ? pickHome - pickAway : null
             const pickTotal  = (pickHome != null && pickAway != null) ? pickHome + pickAway : null
-            const predictedScore = (pickHome != null && pickAway != null)
-              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:${isMachine ? '#f59e0b' : '#8892a4'};white-space:nowrap;">${pickHome}–${pickAway}</span>`
+            const virtualClr = isMachine ? '#f59e0b' : '#38bdf8'
+            // Crowd picks are averages — round to nearest integer for display
+            const phDisp = (pickHome != null) ? (isCrowd ? Math.round(pickHome) : pickHome) : null
+            const paDisp = (pickAway != null) ? (isCrowd ? Math.round(pickAway) : pickAway) : null
+            const predictedScore = (phDisp != null && paDisp != null)
+              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.875rem;font-weight:600;color:${isVirtual ? virtualClr : '#8892a4'};white-space:nowrap;">${phDisp}–${paDisp}</span>`
               : `<span style="color:#4a5568;">—</span>`
             const marginPick = pickMargin !== null
-              ? `<span style="color:#4a5568;font-size:0.65rem;">(${pickMargin > 0 ? '+' : ''}${pickMargin})</span>`
+              ? `<span style="color:#4a5568;font-size:0.65rem;">(${pickMargin > 0 ? '+' : ''}${Math.round(pickMargin)})</span>`
               : ''
             const totalPick  = pickTotal !== null
-              ? `<span style="color:#4a5568;font-size:0.65rem;">(${pickTotal})</span>`
+              ? `<span style="color:#4a5568;font-size:0.65rem;">(${Math.round(pickTotal)})</span>`
               : ''
             const mobileDetails = [
-              (pickHome != null && pickAway != null) ? `${pickHome}–${pickAway}` : null,
+              (phDisp != null && paDisp != null) ? `${phDisp}–${paDisp}` : null,
               s.margin_score != null ? `M:${s.margin_score.toFixed(1)}` : null,
               s.total_score  != null ? `T:${s.total_score.toFixed(1)}`  : null,
             ].filter(Boolean).join('<span style="color:#2e3a4e;margin:0 3px;">·</span>')
             const logoEl = isMachine
               ? `<img src="../assets/BS_Logo.png" class="w-4 h-4 object-contain shrink-0 opacity-80" style="border-radius:2px;">`
+              : isCrowd
+              ? `<span style="font-size:0.9rem;line-height:1;flex-shrink:0;">👥</span>`
               : (team ? `<img src="../logos/${teamSlug(team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-60" onerror="this.style.display='none'">` : '')
-            const nameEl = isMachine
-              ? `<span style="font-size:0.8125rem;font-weight:600;color:#f59e0b;">${name}</span>`
+            const nameEl = isVirtual
+              ? `<span style="font-size:0.8125rem;font-weight:600;color:${virtualClr};">${name}</span>`
               : `<span class="user-tip-link" data-uid="${s.user_id}" data-username="${name}" style="font-size:0.8125rem;font-weight:600;${isMe ? 'color:#fbbf24;' : 'color:#e2e8f0;'}cursor:pointer;">${name}${isMe ? ' (you)' : ''}</span>`
             return `
-              <div class="lb-ind-row" style="${isMachine ? 'background:rgba(245,158,11,0.04);border-top:2px solid #2e3a4e;' : isMe ? 'background:rgba(245,158,11,0.06);border-top:1px solid rgba(245,158,11,0.15);' : 'border-top:1px solid #1e2a3a;'}">
-                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isMachine ? 'color:#f59e0b;' : isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
+              <div class="lb-ind-row" style="${isMachine ? 'background:rgba(245,158,11,0.04);border-top:2px solid #2e3a4e;' : isCrowd ? 'background:rgba(56,189,248,0.04);border-top:2px solid #2e3a4e;' : isMe ? 'background:rgba(245,158,11,0.06);border-top:1px solid rgba(245,158,11,0.15);' : 'border-top:1px solid #1e2a3a;'}">
+                <div class="rank-badge lb-ind-rank ${rankClass}" style="${isVirtual ? `color:${virtualClr};` : isMe ? 'color:#fbbf24;' : ''}">${rankLabel}</div>
                 <div class="lb-ind-name flex items-center gap-2 min-w-0">
                   ${logoEl}
                   ${nameEl}
@@ -716,7 +772,7 @@
                 <div class="lb-ind-pick" style="text-align:right;">${predictedScore}</div>
                 <div class="lb-ind-margin" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.margin_score?.toFixed(1) ?? '—'} ${marginPick}</div>
                 <div class="lb-ind-total" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.total_score?.toFixed(1)  ?? '—'} ${totalPick}</div>
-                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:${isMachine ? '#f59e0b' : '#e2e8f0'};">${s.points?.toFixed(1) ?? '—'}</div>
+                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:${isVirtual ? virtualClr : '#e2e8f0'};">${s.points?.toFixed(1) ?? '—'}</div>
                 <div class="lb-ind-details">${mobileDetails}</div>
               </div>`
           }

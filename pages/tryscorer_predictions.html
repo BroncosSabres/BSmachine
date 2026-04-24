@@ -55,40 +55,118 @@
       </div>
 
       <!-- FLEX ROW: Team lists left, betslip right -->
-      <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-start">
+      <!-- pb-24 on mobile ensures the reset buttons aren't obscured by the fixed bottom betslip -->
+      <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-start pb-24 md:pb-0">
         <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8 flex-1 order-2 md:order-1"></div>
         <div class="w-full md:w-auto shrink-0 order-1 md:order-2">
           <!-- Margin/Total Selectors -->
           <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
-            <!-- Team win quick-pick -->
-            <div class="flex flex-col gap-1">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Team to Win</span>
-              <div class="flex gap-2">
-                <button id="home-win-btn" type="button" disabled
-                        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 text-sm font-semibold
-                               disabled:opacity-40 disabled:cursor-not-allowed hover:border-blue-400 hover:text-white transition-colors truncate">
-                  Home
-                </button>
-                <button id="away-win-btn" type="button" disabled
-                        class="flex-1 px-3 py-1.5 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 text-sm font-semibold
-                               disabled:opacity-40 disabled:cursor-not-allowed hover:border-blue-400 hover:text-white transition-colors truncate">
-                  Away
-                </button>
+            <!-- Match Outcome -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Match Outcome</span>
+              <!-- Line 1 -->
+              <div id="line1-row" class="flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-600 shrink-0">Line</span>
+                <div class="flex gap-1 shrink-0">
+                  <button id="line1-dir-home" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors truncate max-w-[4.5rem]">
+                    H
+                  </button>
+                  <button id="line1-dir-away" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors truncate max-w-[4.5rem]">
+                    A
+                  </button>
+                </div>
+                <select id="line1-val" disabled
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
+                <button id="line1-clear" type="button"
+                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+              </div>
+              <!-- Add second line button (shown when line1 active, no line2 set) -->
+              <button id="add-line2-btn" type="button"
+                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-500 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
+                + Add second line
+              </button>
+              <!-- Line 2 (shown after clicking "Add second line") -->
+              <div id="line2-row" class="hidden flex items-center gap-2">
+                <span class="text-xs font-semibold text-gray-600 shrink-0">+ Line</span>
+                <span id="line2-team-label" class="text-xs font-semibold text-gray-500 shrink-0 hidden"></span>
+                <select id="line2-val"
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+                <button id="line2-clear" type="button"
+                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <label for="margin-select" class="text-sm font-semibold text-gray-300 shrink-0 w-24">Margin:</label>
-              <select id="margin-select"
-                      class="flex-1 bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">(Any margin)</option>
-              </select>
+            <!-- Total Points -->
+            <div class="flex flex-col gap-1">
+              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Total Pts</span>
+              <div class="flex items-center gap-2">
+                <div class="flex gap-1 shrink-0">
+                  <button id="total-dir-over" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Over
+                  </button>
+                  <button id="total-dir-under" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Under
+                  </button>
+                </div>
+                <select id="total-val" disabled
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
+                <button id="total-clear" type="button"
+                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+              </div>
+              <button id="add-total-cap-btn" type="button"
+                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-500 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
+                + Add second line
+              </button>
+              <div id="total-cap-row" class="hidden flex items-center gap-2">
+                <span id="total-cap-dir-label" class="text-xs font-semibold text-gray-600 shrink-0">Under</span>
+                <select id="total-cap-val"
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+                <button id="total-cap-clear" type="button"
+                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+              </div>
             </div>
-            <div class="flex items-center gap-2">
-              <label for="total-select" class="text-sm font-semibold text-gray-300 shrink-0 w-24">Total Points:</label>
-              <select id="total-select"
-                      class="flex-1 bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">(Any total)</option>
-              </select>
+            <!-- Home Team Pts -->
+            <div class="flex flex-col gap-1">
+              <span id="home-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Home Pts</span>
+              <div class="flex items-center gap-2">
+                <div class="flex gap-1 shrink-0">
+                  <button id="home-total-dir-over" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Over
+                  </button>
+                  <button id="home-total-dir-under" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Under
+                  </button>
+                </div>
+                <select id="home-total-val" disabled
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
+                <button id="home-total-clear" type="button"
+                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+              </div>
+            </div>
+            <!-- Away Team Pts -->
+            <div class="flex flex-col gap-1">
+              <span id="away-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Away Pts</span>
+              <div class="flex items-center gap-2">
+                <div class="flex gap-1 shrink-0">
+                  <button id="away-total-dir-over" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Over
+                  </button>
+                  <button id="away-total-dir-under" type="button"
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">
+                    Under
+                  </button>
+                </div>
+                <select id="away-total-val" disabled
+                        class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
+                <button id="away-total-clear" type="button"
+                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+              </div>
             </div>
             <!-- Crowd blend slider -->
             <div id="model-blend-row" class="flex flex-col gap-1.5 pt-1 border-t border-gray-700/50">
