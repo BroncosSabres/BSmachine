@@ -156,6 +156,22 @@
         .lb-team-tile-header .lb-th-margin,
         .lb-team-tile-header .lb-th-total { display: none; }
       }
+      /* Hall of Fame */
+      .hof-entry-row {
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.1s ease;
+      }
+      .hof-entry-row:hover { background: rgba(34,197,94,0.04) !important; }
+      .hof-game-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.3rem 0.875rem 0.3rem 2.75rem;
+        border-top: 1px solid #1a2233;
+        font-size: 0.7rem;
+      }
     </style>
   </head>
   <body style="background-color:#0f1117; color:#e2e8f0; min-height:100vh;">
@@ -218,6 +234,17 @@
             </div>
           </div>
 
+          <!-- Hall of Fame -->
+          <div>
+            <div class="flex items-center gap-2 mb-2 px-1">
+              <div class="text-xs font-semibold uppercase tracking-widest" style="color:#4a5568;">Hall of Fame</div>
+              <div style="font-size:0.65rem;color:#4a5568;font-weight:500;">Perfect picks this season</div>
+            </div>
+            <div id="lb-hof-panel" class="lb-sidebar-panel">
+              <div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>
+            </div>
+          </div>
+
         </div>
       </div>
     </main>
@@ -253,6 +280,7 @@
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
+      const hofPanel    = document.getElementById('lb-hof-panel')
       const matchesEl   = document.getElementById('lb-matches')
       const weekLabel   = document.getElementById('lb-week-label')
 
@@ -1936,6 +1964,152 @@
         body.innerHTML = cachedTipsHtml
       }
 
+      // --- Hall of Fame ---
+      // A "perfect pick" is a score of >= 9.99 pts (both margin & total errors = 0 → exact scoreline)
+      async function loadHallOfFame() {
+        hofPanel.innerHTML = `<div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
+
+        const { data: perfectScores } = await supabase
+          .from('scores')
+          .select('user_id, game_id, points, round_number')
+          .gte('points', 9.99)
+
+        if (!perfectScores?.length) {
+          hofPanel.innerHTML = `<div class="p-8 text-center" style="color:#4a5568;font-size:0.8125rem;">No perfect picks yet this season.</div>`
+          return
+        }
+
+        // Filter out virtual users
+        const realScores = perfectScores.filter(s => s.user_id !== 'bs_machine' && s.user_id !== 'the_crowd')
+        if (!realScores.length) {
+          hofPanel.innerHTML = `<div class="p-8 text-center" style="color:#4a5568;font-size:0.8125rem;">No perfect picks yet this season.</div>`
+          return
+        }
+
+        const gameIds = [...new Set(realScores.map(s => s.game_id))]
+        const userIds = [...new Set(realScores.map(s => s.user_id))]
+
+        const [{ data: games }, { data: picks }, { data: profiles }, { data: allUserPicks }] = await Promise.all([
+          supabase.from('games')
+            .select('game_id, home_team, away_team, home_score, away_score, round_number')
+            .in('game_id', gameIds),
+          supabase.from('picks')
+            .select('user_id, game_id, home_score_pick, away_score_pick')
+            .in('user_id', userIds)
+            .in('game_id', gameIds),
+          supabase.from('profiles')
+            .select('id, username, favourite_team')
+            .in('id', userIds),
+          // All picks for these users (to compute percentage)
+          supabase.from('picks')
+            .select('user_id, game_id')
+            .in('user_id', userIds),
+        ])
+
+        const gameMap = {}
+        games?.forEach(g => { gameMap[g.game_id] = g })
+
+        const pickMap = {}
+        picks?.forEach(p => { pickMap[`${p.user_id}|${p.game_id}`] = p })
+
+        const profileMap = {}
+        profiles?.forEach(p => { profileMap[p.id] = p })
+
+        const totalPicksMap = {}
+        allUserPicks?.forEach(p => {
+          totalPicksMap[p.user_id] = (totalPicksMap[p.user_id] || 0) + 1
+        })
+
+        // Group perfect scores by user
+        const byUser = {}
+        realScores.forEach(s => {
+          if (!byUser[s.user_id]) byUser[s.user_id] = []
+          byUser[s.user_id].push(s)
+        })
+
+        const entries = Object.entries(byUser).map(([uid, scores]) => {
+          const totalPicks = totalPicksMap[uid] || scores.length
+          return {
+            uid,
+            username:     profileMap[uid]?.username || 'Unknown',
+            team:         profileMap[uid]?.favourite_team || null,
+            perfectCount: scores.length,
+            totalPicks,
+            pct: ((scores.length / totalPicks) * 100).toFixed(1),
+            games: scores
+              .map(s => ({ ...s, game: gameMap[s.game_id], pick: pickMap[`${uid}|${s.game_id}`] }))
+              .filter(s => s.game)
+              .sort((a, b) => b.round_number - a.round_number),
+          }
+        }).sort((a, b) => b.perfectCount - a.perfectCount || parseFloat(b.pct) - parseFloat(a.pct))
+
+        const rows = entries.map((entry, i) => {
+          const isMe      = entry.uid === myUserId
+          const rank      = i + 1
+          const rankClass = rank === 1 ? 'top1' : rank === 2 ? 'top2' : rank === 3 ? 'top3' : ''
+          const logoEl    = entry.team
+            ? `<img src="../logos/${teamSlug(entry.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">`
+            : ''
+
+          const gamesHtml = entry.games.map(({ game, pick }) => {
+            const pickStr = pick ? `${pick.home_score_pick}–${pick.away_score_pick}` : '—'
+            return `
+              <div class="hof-game-row">
+                <div style="min-width:0;display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                  <img src="../logos/${teamSlug(game.home_team)}.svg" style="width:10px;height:10px;object-fit:contain;flex-shrink:0;opacity:0.6;" onerror="this.style.display='none'">
+                  <span style="color:#64748b;">${escapeHtml(game.home_team)} v ${escapeHtml(game.away_team)}</span>
+                  <span style="color:#374151;">R${game.round_number}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.5rem;flex-shrink:0;">
+                  <span style="color:#4a5568;font-family:'Barlow Condensed',system-ui,sans-serif;">${game.home_score}–${game.away_score}</span>
+                  <span style="color:#22c55e;font-family:'Barlow Condensed',system-ui,sans-serif;font-weight:700;">${pickStr}</span>
+                </div>
+              </div>`
+          }).join('')
+
+          return `
+            <div>
+              <div class="lb-row hof-entry-row" data-hof-uid="${entry.uid}"
+                style="grid-template-columns:2rem 1fr auto auto auto;gap:0.5rem;${isMe ? 'background:rgba(245,158,11,0.05);' : ''}">
+                <div class="rank-badge ${rankClass}">${rank}</div>
+                <div class="flex items-center gap-1.5 min-w-0">
+                  ${logoEl}
+                  <span class="user-tip-link username text-sm font-semibold truncate ${isMe ? 'text-amber-400' : ''}"
+                    data-uid="${entry.uid}" data-username="${escapeHtml(entry.username)}">${escapeHtml(entry.username)}${isMe ? ' (you)' : ''}</span>
+                </div>
+                <div style="font-size:0.68rem;color:#4a5568;white-space:nowrap;">${entry.pct}%</div>
+                <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:#22c55e;">${entry.perfectCount}</div>
+                <div class="hof-toggle-arrow" style="font-size:0.55rem;color:#4a5568;padding-left:2px;">&#9660;</div>
+              </div>
+              <div id="hof-games-${entry.uid}" style="display:none;">${gamesHtml}</div>
+            </div>`
+        }).join('')
+
+        const legend = `
+          <div style="padding:0.5rem 0.875rem;border-bottom:1px solid #1e2a3a;display:flex;align-items:center;justify-content:space-between;font-size:0.65rem;color:#4a5568;">
+            <span>Tipster</span>
+            <div style="display:flex;gap:1rem;">
+              <span>% of picks</span>
+              <span style="color:#22c55e;">Perfect</span>
+            </div>
+          </div>`
+
+        hofPanel.innerHTML = legend + rows
+      }
+
+      // HOF expand/collapse toggle (delegated once)
+      document.addEventListener('click', e => {
+        const row = e.target.closest('.hof-entry-row')
+        if (!row || e.target.closest('.user-tip-link')) return
+        const uid      = row.dataset.hofUid
+        const gamesEl  = document.getElementById(`hof-games-${uid}`)
+        const arrow    = row.querySelector('.hof-toggle-arrow')
+        if (!gamesEl) return
+        const open = gamesEl.style.display !== 'none'
+        gamesEl.style.display = open ? 'none' : 'block'
+        if (arrow) arrow.innerHTML = open ? '&#9660;' : '&#9650;'
+      })
+
       function emptyState(msg) {
         return `<div class="p-10 text-center text-sm" style="color:#4a5568;">${msg}</div>`
       }
@@ -2003,7 +2177,7 @@
       })
 
       // Username click → user tips modal (delegated on sidebar panels + match tiles)
-      ;[seasonPanel, weekPanel, matchesEl].forEach(panel => {
+      ;[seasonPanel, weekPanel, hofPanel, matchesEl].forEach(panel => {
         panel.addEventListener('click', e => {
           const link = e.target.closest('.user-tip-link')
           if (!link) return
@@ -2027,6 +2201,7 @@
       })
 
       loadLeaderboard()
+      loadHallOfFame()
     </script>
     <div id="site-footer"></div>
     <script src="/js/load-footer.js"></script>

@@ -1,37 +1,51 @@
 // load-match-results.js
 
+const BACKEND = 'https://bsmachine-backend.onrender.com/api';
+
+const TEAM_SHORT = {
+  'Brisbane Broncos':              'Broncos',
+  'Canberra Raiders':              'Raiders',
+  'Canterbury-Bankstown Bulldogs': 'Bulldogs',
+  'Cronulla-Sutherland Sharks':    'Sharks',
+  'Dolphins':                      'Dolphins',
+  'Gold Coast Titans':             'Titans',
+  'Manly-Warringah Sea Eagles':    'Manly',
+  'Melbourne Storm':               'Storm',
+  'Newcastle Knights':             'Knights',
+  'North Queensland Cowboys':      'Cowboys',
+  'Parramatta Eels':               'Eels',
+  'Penrith Panthers':              'Panthers',
+  'South Sydney Rabbitohs':        'Rabbitohs',
+  'St George Illawarra Dragons':   'Dragons',
+  'Sydney Roosters':               'Roosters',
+  'New Zealand Warriors':          'Warriors',
+  'Wests Tigers':                  'Tigers',
+};
+
 export async function loadMatchResults() {
-    const matchResults = {};
-    // Fetch the raw match results CSV
-    const res = await fetch("../data/nrl-25.csv");
-    const text = await res.text();
-  
-    // Split into lines and parse CSV cells
-    const lines = text.trim().split(/\r?\n/);
-    const rows = lines.map(line => line.split(","));
-    
-    // Expect header: ["Match Number","Round Number","Location","Home Team","Away Team","Home Score","Away Score"]
-    // Data rows follow in the same order.
-    rows.slice(1).forEach(row => {
-      const round = parseInt(row[1], 10);
-      const homeTeam = row[3].trim();
-      const awayTeam = row[4].trim();
-      const homeScore = row[5].trim();
-      const awayScore = row[6].trim();
-  
-      // Initialize per-team objects
-      if (!matchResults[homeTeam]) matchResults[homeTeam] = {};
-      if (!matchResults[awayTeam]) matchResults[awayTeam] = {};
-  
-          // Assign result strings for each team with W/L/D prefixes
-      const homeScoreNum = parseInt(homeScore, 10);
-      const awayScoreNum = parseInt(awayScore, 10);
-      const homePrefix = homeScoreNum > awayScoreNum ? 'W ' : homeScoreNum < awayScoreNum ? 'L ' : 'D ';
-      const awayPrefix = awayScoreNum > homeScoreNum ? 'W ' : awayScoreNum < homeScoreNum ? 'L ' : 'D ';
-      matchResults[homeTeam][round] = `${homePrefix}vs ${awayTeam} ${homeScore}-${awayScore}`;
-      matchResults[awayTeam][round] = `${awayPrefix}vs ${homeTeam} ${awayScore}-${homeScore}`;
-    });
-  
-    return matchResults;
+  const res = await fetch(`${BACKEND}/season_matches/nrl`);
+  const data = await res.json();
+
+  const matchResults = {};
+
+  for (const match of data.matches || []) {
+    if (!match.is_finished) continue;
+
+    const round     = match.round_number;
+    const homeShort = TEAM_SHORT[match.home_team] || match.home_team;
+    const awayShort = TEAM_SHORT[match.away_team] || match.away_team;
+    const homeScore = match.home_score;
+    const awayScore = match.away_score;
+
+    const homePrefix = homeScore > awayScore ? 'W ' : homeScore < awayScore ? 'L ' : 'D ';
+    const awayPrefix = awayScore > homeScore ? 'W ' : awayScore < homeScore ? 'L ' : 'D ';
+
+    if (!matchResults[homeShort]) matchResults[homeShort] = {};
+    if (!matchResults[awayShort]) matchResults[awayShort] = {};
+
+    matchResults[homeShort][round] = `${homePrefix}vs ${awayShort} ${homeScore}-${awayScore}`;
+    matchResults[awayShort][round] = `${awayPrefix}vs ${homeShort} ${awayScore}-${homeScore}`;
   }
-  
+
+  return matchResults;
+}

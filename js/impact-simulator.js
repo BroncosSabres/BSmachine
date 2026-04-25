@@ -215,15 +215,26 @@ async function init() {
     const results = await fetch('https://bsmachine-backend.onrender.com/latest-results').then(r => r.json());
     results.forEach(result => {
       const matchIndex = matches.findIndex(
-        m => m.home_team.toLowerCase() === result.home.toLowerCase() &&
-             m.away_team.toLowerCase() === result.away.toLowerCase()
+        m => teamSlug(m.home_team) === teamSlug(result.home) &&
+             teamSlug(m.away_team) === teamSlug(result.away)
       );
       if (matchIndex !== -1) {
-        const radio = form.querySelector(`input[name='match-${matchIndex}'][value="${result.winner}"]`);
+        const radios = form.querySelectorAll(`input[name='match-${matchIndex}']`);
+        const radio = [...radios].find(r => teamSlug(r.value) === teamSlug(result.winner));
         if (radio) {
           radio.checked = true;
           radio.disabled = true;
-          form.querySelectorAll(`input[name='match-${matchIndex}']:not([value="${result.winner}"])`).forEach(r => r.disabled = true);
+          radios.forEach(r => {
+            r.disabled = true;
+            const label = r.closest('label');
+            if (!label) return;
+            if (r === radio) {
+              label.classList.add('text-green-400', 'font-semibold');
+              label.classList.remove('text-white');
+            } else {
+              label.classList.add('opacity-30');
+            }
+          });
         }
       }
     });

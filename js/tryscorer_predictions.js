@@ -303,27 +303,48 @@ document.addEventListener("DOMContentLoaded", function () {
     const team1Name = team === 'home' ? ht : at;
     const team2Name = team === 'home' ? at : ht;
     const N1 = lineToN(L1);
+    const L1Label = L1 === -0.5 ? 'To Win' : `${L1 < 0 ? '' : '+'}${L1}`;
     if (L2 != null) {
-      // Range: team1 wins by N1 to N2 pts
-      // N2 is derived: for team1=home, N2=floor(L2) (margin<=floor(L2));
-      //               for team1=away, -N2=floor(-L2)+1 → N2 = -(floor(-L2)+1)+1... simplify below
-      const rangeLo = N1;
-      const rangeHi = team === 'home' ? Math.floor(L2) : -(lineToN(L2)) + 1;
-      // Actually: team1=home, line2=Away+L2 → margin<=floor(L2). So hi=floor(L2).
-      // team1=away, line2=Home+L2 → margin>=lineToN(L2) → away margin <= -lineToN(L2)+1...
-      // Let me simplify using the cap directly:
-      // cap for home: margin <= capHi = floor(L2)
-      // cap for away: margin >= capLo = lineToN(L2), i.e. away wins by at most -lineToN(L2)+1 = 1-lineToN(L2)
       if (team === 'home') {
         const hi = Math.floor(L2);
-        return `${team1Name} ${L1 < 0 ? '' : '+'}${L1} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
+        return `${team1Name} ${L1Label} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
       } else {
-        const hi = -lineToN(L2) + 1; // away wins by at most this many
-        return `${team1Name} ${L1 < 0 ? '' : '+'}${L1} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
+        const hi = -lineToN(L2) + 1;
+        return `${team1Name} ${L1Label} / ${team2Name} +${L2} (${N1}–${hi} pts)`;
       }
     }
+    return `${team1Name} ${L1Label}`;
+  }
+
+  // --- INDIVIDUAL LINE LABEL HELPERS ---
+  function getLine1Label(matchId) {
+    const team = matchLineTeam1[matchId], L1 = matchLineL1[matchId];
+    if (!team || L1 == null) return null;
+    const ht = teamListCache[matchId]?.home_team || 'Home';
+    const at = teamListCache[matchId]?.away_team || 'Away';
+    const team1Name = team === 'home' ? ht : at;
+    if (L1 === -0.5) return `${team1Name} To Win`;
     const sign = L1 < 0 ? '' : '+';
     return `${team1Name} ${sign}${L1}`;
+  }
+  function getLine2Label(matchId) {
+    const team = matchLineTeam1[matchId], L2 = matchLineL2[matchId];
+    if (!team || L2 == null) return null;
+    const ht = teamListCache[matchId]?.home_team || 'Home';
+    const at = teamListCache[matchId]?.away_team || 'Away';
+    const team2Name = team === 'home' ? at : ht;
+    return `${team2Name} +${L2}`;
+  }
+  function getTotal1Label(matchId) {
+    const dir = matchTotalDir[matchId], n = matchTotalN[matchId];
+    if (!dir || n == null) return null;
+    return `${dir === 'over' ? 'Over' : 'Under'} ${n - 0.5}`;
+  }
+  function getTotalCapLabel(matchId) {
+    const dir = matchTotalDir[matchId], cap = matchTotalCapN[matchId];
+    if (!dir || cap == null) return null;
+    const capDir = dir === 'over' ? 'Under' : 'Over';
+    return `${capDir} ${cap - 0.5}`;
   }
 
   function getTotalLabel(matchId) {
@@ -1591,12 +1612,14 @@ document.addEventListener("DOMContentLoaded", function () {
     const c = buildConstraints(matchId);
     const matchLabel       = `${data.home_team} vs ${data.away_team}`;
     const hasMarginOrTotal = matchHasLine(matchId);
-    const lineLabel = [
-      getMarginLabel(matchId),
-      getTotalLabel(matchId),
+    const lineItems = [
+      getLine1Label(matchId),
+      getLine2Label(matchId),
+      getTotal1Label(matchId),
+      getTotalCapLabel(matchId),
       getHomeTotalLabel(matchId),
       getAwayTotalLabel(matchId),
-    ].filter(Boolean).join(' + ');
+    ].filter(Boolean);
     const lineLegs =
       (matchLineTeam1[matchId] && matchLineL1[matchId] != null ? 1 : 0) +
       (matchLineL2[matchId] != null ? 1 : 0) +
@@ -1682,7 +1705,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (matchId === currentMatchId) {
           updateAnytimeDisplay(matchId, _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT));
         }
-        return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineLabel, userPickCount, lineLegs };
+        return { matchId, matchLabel, picks: [], prob: blendedLineProb(machProb), lineOnly: true, lineItems, userPickCount, lineLegs };
       } catch { return null; }
     }
 
@@ -1746,7 +1769,7 @@ document.addEventListener("DOMContentLoaded", function () {
       });
     });
     const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
-    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineLabel, hasMarginOrTotal, lineProb, userPickCount, lineLegs };
+    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineItems, hasMarginOrTotal, lineProb, userPickCount, lineLegs };
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
@@ -1828,13 +1851,22 @@ document.addEventListener("DOMContentLoaded", function () {
       const gamePct  = r.prob > 0 ? `${(r.prob * 100).toFixed(1)}%` : '–';
 
       if (r.lineOnly) {
+        const items = r.lineItems || [];
+        const itemsHtml = items.map((label, i) => {
+          const isLast = i === items.length - 1;
+          return `
+            <div class="flex items-center justify-between gap-2 py-0.5">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-0.5"></span>
+                <span class="text-sm text-gray-300 italic">${label}</span>
+              </div>
+              ${isLast ? `<span class="text-sm font-bold text-amber-400 shrink-0">${gameOdds} <span class="text-xs font-normal text-gray-500">${gamePct}</span></span>` : ''}
+            </div>`;
+        }).join('');
         return `
           <div class="py-2.5 border-b border-gray-700/40 last:border-b-0">
             <div class="text-xs font-semibold text-gray-400 truncate mb-1">${r.matchLabel}</div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-sm text-gray-300 italic">${r.lineLabel}</span>
-              <span class="text-sm font-bold text-amber-400 shrink-0">${gameOdds} <span class="text-xs font-normal text-gray-500">${gamePct}</span></span>
-            </div>
+            ${itemsHtml}
           </div>`;
       }
 
@@ -1855,24 +1887,30 @@ document.addEventListener("DOMContentLoaded", function () {
           </div>`;
       }).join('');
 
+      // Line items rendered first (one row per selection), above tryscorer picks
+      // Combined line odds shown on last line item row
       const linePct  = r.lineProb ? `${(r.lineProb * 100).toFixed(1)}%` : null;
       const lineOdds = r.lineProb ? `$${(1 / r.lineProb).toFixed(2)}` : null;
-      const lineHtml = r.hasMarginOrTotal
-        ? `<div class="flex items-start justify-between gap-2 py-0.5">
-             <div class="flex items-start gap-1.5 min-w-0">
-               <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></span>
-               <span class="text-sm text-gray-400 italic">${r.lineLabel}</span>
-             </div>
-             ${linePct ? `<div class="text-right shrink-0">
-               <div class="text-sm font-semibold text-gray-300">${linePct}</div>
-               <div class="text-xs text-gray-500">${lineOdds}</div>
-             </div>` : ''}
-           </div>` : '';
+      const lineItemsArr = r.lineItems || [];
+      const lineItemsHtml = lineItemsArr.map((label, i) => {
+        const isLast = i === lineItemsArr.length - 1;
+        return `
+          <div class="flex items-center justify-between gap-2 py-0.5">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-0.5"></span>
+              <span class="text-sm text-gray-300 italic">${label}</span>
+            </div>
+            ${isLast && linePct ? `<div class="text-right shrink-0">
+              <div class="text-sm font-semibold text-gray-300">${linePct}</div>
+              <div class="text-xs text-gray-500">${lineOdds}</div>
+            </div>` : ''}
+          </div>`;
+      }).join('');
 
       return `
         <div class="py-2.5 border-b border-gray-700/40 last:border-b-0">
           <div class="text-xs font-semibold text-gray-400 truncate mb-1.5">${r.matchLabel}</div>
-          ${lineHtml}
+          ${lineItemsHtml}
           ${pickLines}
         </div>`;
     }).join('');
@@ -2077,10 +2115,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
     let picksH = 0;
     results.forEach(r => {
-      if (r.lineOnly) { picksH += LINE_H; }
+      const nLineItems = r.lineItems?.length || 0;
+      if (r.lineOnly) { picksH += nLineItems * LINE_H; }
       else {
+        picksH += nLineItems * LINE_H;  // line items rendered first
         picksH += r.picks.length * PICK_H;
-        if (r.hasMarginOrTotal) picksH += LINE_H;
       }
     });
     const H = HEADER_H + MATCH_H + 1 + picksH + (hasPicks ? 1 + COMBINED_H : 0) + FOOTER_H;
@@ -2173,25 +2212,59 @@ document.addEventListener("DOMContentLoaded", function () {
     ctx.fillRect(0, y, W, 1);
     y += 1;
 
-    // Picks
+    // Picks — line items always rendered first (above tryscorer picks)
     results.forEach(r => {
+      const items = r.lineItems || [];
       if (r.lineOnly) {
-        _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
-        ctx.font = 'italic 13px sans-serif';
-        ctx.fillStyle = GRAY400;
-        ctx.textAlign = 'left';
-        ctx.fillText(r.lineLabel || '', PAD + 14, y + LINE_H / 2);
-        if (r.prob > 0) {
-          ctx.font = 'bold 13px sans-serif';
-          ctx.fillStyle = GRAY300;
-          ctx.textAlign = 'right';
-          ctx.fillText(`${(r.prob * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
-          ctx.font = '11px sans-serif';
-          ctx.fillStyle = GRAY500;
-          ctx.fillText(`$${(1 / r.prob).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
-        }
-        y += LINE_H;
+        // Line-only result: each item is its own row; show combined odds on last item
+        items.forEach((label, i) => {
+          const isLast = i === items.length - 1;
+          _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
+          ctx.font = 'italic 13px sans-serif';
+          ctx.fillStyle = GRAY400;
+          ctx.textAlign = 'left';
+          ctx.fillText(label, PAD + 14, y + LINE_H / 2);
+          if (isLast && r.prob > 0) {
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillStyle = GRAY300;
+            ctx.textAlign = 'right';
+            ctx.fillText(`${(r.prob * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = GRAY500;
+            ctx.fillText(`$${(1 / r.prob).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
+          }
+          if (!isLast) {
+            ctx.fillStyle = DIVIDER;
+            ctx.globalAlpha = 0.5;
+            ctx.fillRect(PAD, y + LINE_H - 1, W - PAD * 2, 1);
+            ctx.globalAlpha = 1;
+          }
+          y += LINE_H;
+        });
       } else {
+        // Mixed result: line items first (combined odds on last item), then tryscorer picks
+        items.forEach((label, idx) => {
+          const isLastItem = idx === items.length - 1;
+          _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
+          ctx.font = 'italic 13px sans-serif';
+          ctx.fillStyle = GRAY400;
+          ctx.textAlign = 'left';
+          ctx.fillText(label, PAD + 14, y + LINE_H / 2);
+          if (isLastItem && r.lineProb) {
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillStyle = GRAY300;
+            ctx.textAlign = 'right';
+            ctx.fillText(`${(r.lineProb * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
+            ctx.font = '11px sans-serif';
+            ctx.fillStyle = GRAY500;
+            ctx.fillText(`$${(1 / r.lineProb).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
+          }
+          ctx.fillStyle = DIVIDER;
+          ctx.globalAlpha = 0.5;
+          ctx.fillRect(PAD, y + LINE_H - 1, W - PAD * 2, 1);
+          ctx.globalAlpha = 1;
+          y += LINE_H;
+        });
         r.picks.forEach((p, i) => {
           const rowY = y + i * PICK_H;
           _drawDot(ctx, PAD + 4, rowY + PICK_H / 2, 4, GREEN);
@@ -2209,7 +2282,7 @@ document.addEventListener("DOMContentLoaded", function () {
             ctx.fillStyle = GRAY500;
             ctx.fillText(`$${(1 / p.indivProb).toFixed(2)}`, W - PAD, rowY + PICK_H / 2 + 8);
           }
-          if (i < r.picks.length - 1 || r.hasMarginOrTotal) {
+          if (i < r.picks.length - 1) {
             ctx.fillStyle = DIVIDER;
             ctx.globalAlpha = 0.5;
             ctx.fillRect(PAD, rowY + PICK_H - 1, W - PAD * 2, 1);
@@ -2217,24 +2290,6 @@ document.addEventListener("DOMContentLoaded", function () {
           }
         });
         y += r.picks.length * PICK_H;
-
-        if (r.hasMarginOrTotal && r.lineLabel) {
-          _drawDot(ctx, PAD + 4, y + LINE_H / 2, 4, BLUE);
-          ctx.font = 'italic 13px sans-serif';
-          ctx.fillStyle = GRAY400;
-          ctx.textAlign = 'left';
-          ctx.fillText(r.lineLabel, PAD + 14, y + LINE_H / 2);
-          if (r.lineProb) {
-            ctx.font = 'bold 13px sans-serif';
-            ctx.fillStyle = GRAY300;
-            ctx.textAlign = 'right';
-            ctx.fillText(`${(r.lineProb * 100).toFixed(1)}%`, W - PAD, y + LINE_H / 2 - 6);
-            ctx.font = '11px sans-serif';
-            ctx.fillStyle = GRAY500;
-            ctx.fillText(`$${(1 / r.lineProb).toFixed(2)}`, W - PAD, y + LINE_H / 2 + 8);
-          }
-          y += LINE_H;
-        }
       }
     });
 
