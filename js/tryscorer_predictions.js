@@ -1827,6 +1827,62 @@ document.addEventListener("DOMContentLoaded", function () {
     `;
   }
 
+  // --- INSURANCE ODDS HELPERS ---
+  // Elementary symmetric polynomials e[0..n] for array x, via DP.
+  // e[k] = sum of all k-element products of x.
+  function _elemSymPoly(x) {
+    const e = new Array(x.length + 1).fill(0);
+    e[0] = 1;
+    for (let i = 0; i < x.length; i++) {
+      for (let k = Math.min(i + 1, x.length); k >= 1; k--) {
+        e[k] += e[k - 1] * x[i];
+      }
+    }
+    return e;
+  }
+  // Approximate P(exactly k legs fail, rest win) using independence.
+  // Under independence: P(exactly k legs fail) = combinedProb * e_k(failOdds)
+  // where failOdds_i = (1-p_i)/p_i.
+  // Returns [{k, prob, odds}] for k = 1 .. min(N-1, 3).
+  function _computeInsurance(results, allCombinedProb) {
+    const clamp = p => Math.min(Math.max(p, 1e-4), 1 - 1e-4);
+    const legProbs = [];
+    for (const r of results) {
+      if (r.lineOnly) {
+        // Split the joint line probability across individual constraints (geometric mean approx)
+        const n = r.lineLegs || 1;
+        if (r.prob > 0) {
+          const indivProb = Math.pow(r.prob, 1 / n);
+          for (let i = 0; i < n; i++) legProbs.push(clamp(indivProb));
+        }
+        continue;
+      }
+      for (const p of (r.picks || [])) {
+        if (p.indivProb != null && p.indivProb > 0) legProbs.push(clamp(p.indivProb));
+      }
+      // Split the joint line probability across individual constraints (geometric mean approx)
+      if (r.lineProb > 0) {
+        const n = r.lineLegs || 1;
+        const indivLineProb = Math.pow(r.lineProb, 1 / n);
+        for (let i = 0; i < n; i++) legProbs.push(clamp(indivLineProb));
+      }
+    }
+    const N = legProbs.length;
+    if (N < 2 || allCombinedProb <= 0) return [];
+    const failOdds = legProbs.map(p => (1 - p) / p);
+    const esp = _elemSymPoly(failOdds);
+    // P(at least k legs fail) = 1 - allCombinedProb * sum_{j=0}^{k-1} esp[j]
+    const maxK = Math.min(N - 1, 3);
+    const insurance = [];
+    let cumExact = allCombinedProb; // running sum of P(exactly j fail) for j < k
+    for (let k = 1; k <= maxK; k++) {
+      const prob = Math.min(Math.max(1 - cumExact, 0), 1);
+      insurance.push({ k, N, prob });
+      cumExact += allCombinedProb * esp[k];
+    }
+    return insurance;
+  }
+
   // --- RENDER BETSLIP ---
   function renderBetslip(results) {
     betslipExpanded = false;
@@ -1929,6 +1985,21 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>
       </div>` : '';
 
+    const allCombinedProb = results.reduce((acc, r) => acc * r.prob, 1);
+    const insurance = totalLegs >= 2 ? _computeInsurance(results, allCombinedProb) : [];
+    const insuranceHtml = insurance.length > 0 ? `
+      <div class="mt-3 pt-3 border-t border-gray-700/40">
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Insurance</div>
+        <div class="flex flex-col gap-1">
+          ${insurance.map(ins => `
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-gray-400">${ins.k}+ leg${ins.k > 1 ? 's' : ''} fail</span>
+              <span class="text-sm font-semibold text-gray-300">${(ins.prob * 100).toFixed(1)}%</span>
+            </div>`).join('')}
+        </div>
+        <p class="text-xs text-gray-600 mt-1.5">Approx. chance at least k legs fail.</p>
+      </div>` : '';
+
     const bmcHtml = `
       <div class="text-xs mt-3 text-gray-400 text-center leading-tight">
         Find this useful? <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" class="text-yellow-300 hover:underline">Buy me a coffee</a> to help pay server costs.
@@ -1980,6 +2051,7 @@ document.addEventListener("DOMContentLoaded", function () {
       <div id="betslip-body" class="hidden md:block mt-1">
         ${legsHtml}
         ${finalOddsHtml}
+        ${insuranceHtml}
         ${bookieOddsHtml}
         ${bmcHtml}
         ${shareHtml}
