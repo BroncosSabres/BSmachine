@@ -156,6 +156,21 @@
         .lb-team-tile-header .lb-th-margin,
         .lb-team-tile-header .lb-th-total { display: none; }
       }
+      /* BS Cup bracket */
+      .cup-bracket { display:flex; gap:0; overflow-x:auto; padding-bottom:0.5rem; }
+      .cup-round-col { display:flex; flex-direction:column; justify-content:space-around; min-width:168px; padding:0 0.5rem; }
+      .cup-matchup-card { background:#161b24; border:1px solid #2e3a4e; border-radius:8px; overflow:hidden; margin:0.3rem 0; }
+      .cup-matchup-card.cup-active { border-color:rgba(245,158,11,0.45); }
+      .cup-player-row { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0.65rem; border-bottom:1px solid #1e2a3a; font-size:0.8125rem; min-height:2.1rem; }
+      .cup-player-row:last-child { border-bottom:none; }
+      .cup-player-row.cup-winner { background:rgba(245,158,11,0.08); color:#fbbf24; font-weight:600; }
+      .cup-player-row.cup-eliminated { opacity:0.38; text-decoration:line-through; }
+      .cup-player-row.cup-bye { color:#4a5568; font-style:italic; justify-content:center; }
+      .cup-player-row.cup-me { background:rgba(59,130,246,0.07); }
+      .cup-player-row.cup-me.cup-winner { background:rgba(245,158,11,0.12); }
+      .cup-h2h-card { background:#161b24; border:1px solid #2e3a4e; border-radius:12px; overflow:hidden; margin-bottom:1.5rem; }
+      .cup-h2h-game { display:grid; grid-template-columns:1fr auto 1fr; gap:0.5rem; align-items:center; padding:0.6rem 1rem; border-bottom:1px solid #1a2233; font-size:0.8125rem; }
+      .cup-h2h-game:last-child { border-bottom:none; }
       /* Hall of Fame */
       .hof-entry-row {
         cursor: pointer;
@@ -189,6 +204,7 @@
           <div class="flex items-center gap-1 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
             <button class="lb-tab active" data-tab="individual">Individual</button>
             <button class="lb-tab" data-tab="team">Team</button>
+            <button class="lb-tab" data-tab="cup">BS Cup</button>
           </div>
           <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.45rem 0.75rem; cursor:pointer; white-space:nowrap;">My Stats</button>
         </div>
@@ -389,11 +405,19 @@
 
       async function loadLeaderboard() {
         const loading = `<div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
-        seasonPanel.innerHTML = loading
-        weekPanel.innerHTML   = loading
-        matchesEl.innerHTML   = loading
-        if (activeTab === 'individual') await loadIndividual()
-        else await loadTeam()
+        const sidebarEl = document.querySelector('.w-full.lg\\:w-72')
+        if (activeTab === 'cup') {
+          if (sidebarEl) sidebarEl.style.display = 'none'
+          matchesEl.innerHTML = loading
+          await loadCup()
+        } else {
+          if (sidebarEl) sidebarEl.style.display = ''
+          seasonPanel.innerHTML = loading
+          weekPanel.innerHTML   = loading
+          matchesEl.innerHTML   = loading
+          if (activeTab === 'individual') await loadIndividual()
+          else await loadTeam()
+        }
       }
 
       async function getScores() {
@@ -2202,6 +2226,300 @@
 
       loadLeaderboard()
       loadHallOfFame()
+
+      // ─── BS Tipping Cup ────────────────────────────────────────────────────
+
+      let cupViewRound = null   // which cup_round the H2H card is displaying
+
+      async function loadCup() {
+        const season = new Date().getFullYear()
+        let cups = []
+        try {
+          const r = await fetch(`${BACKEND_ROOT}/api/cups?season=${season}`)
+          if (r.ok) cups = await r.json()
+        } catch (e) {
+          console.warn('[cup] fetch cups failed:', e)
+        }
+
+        if (!cups.length) {
+          matchesEl.innerHTML = `
+            <div style="padding:3rem;text-align:center;color:#4a5568;">
+              <div style="font-size:1.5rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;margin-bottom:0.5rem;">No BS Cup this season yet.</div>
+              <div style="font-size:0.875rem;">Check back once the cup is announced.</div>
+            </div>`
+          return
+        }
+
+        // Default: most recent active cup, else most recent overall
+        const activeCup = cups.find(c => c.status === 'active') || cups[0]
+        let selectedCupId = activeCup.id
+
+        const selectorHtml = cups.length > 1
+          ? `<select id="cup-selector" class="round-filter" style="margin-bottom:1rem;">
+              ${cups.map(c => `<option value="${c.id}" ${c.id === activeCup.id ? 'selected' : ''}>${escapeHtml(c.name)} (${c.status})</option>`).join('')}
+             </select>`
+          : ''
+
+        matchesEl.innerHTML = `${selectorHtml}<div id="cup-content"></div>`
+
+        if (cups.length > 1) {
+          document.getElementById('cup-selector').addEventListener('change', async function () {
+            selectedCupId = parseInt(this.value)
+            cupViewRound  = null
+            await renderCup(selectedCupId)
+          })
+        }
+
+        await renderCup(selectedCupId)
+      }
+
+      async function renderCup(cupId) {
+        const contentEl = document.getElementById('cup-content')
+        if (!contentEl) return
+        contentEl.innerHTML = `<div class="p-8 animate-pulse" style="color:#4a5568;">Loading bracket…</div>`
+
+        let data = null
+        try {
+          const r = await fetch(`${BACKEND_ROOT}/api/cups/${cupId}`)
+          if (r.ok) data = await r.json()
+        } catch (e) {
+          console.warn('[cup] fetch cup failed:', e)
+        }
+        if (!data) {
+          contentEl.innerHTML = `<div style="color:#f87171;padding:1rem;">Failed to load cup data.</div>`
+          return
+        }
+
+        const { cup, participants, matchups } = data
+
+        // Build lookup maps
+        const userMap = {}
+        participants.forEach(p => { userMap[p.user_id] = p })
+
+        // Group matchups by cup_round
+        const byRound = {}
+        matchups.forEach(m => {
+          if (!byRound[m.cup_round]) byRound[m.cup_round] = []
+          byRound[m.cup_round].push(m)
+        })
+        const roundNums   = Object.keys(byRound).map(Number).sort((a,b) => a-b)
+        const totalRounds = roundNums.length  // total elimination rounds in the bracket
+
+        // Round labels (distance from final)
+        function roundLabel(cupRound) {
+          const fromEnd = totalRounds - cupRound
+          if (fromEnd === 0) return 'Grand Final'
+          if (fromEnd === 1) return 'Semi Finals'
+          if (fromEnd === 2) return 'Quarter Finals'
+          const r1Players = (byRound[cupRound] || []).length * 2
+          return `Round of ${r1Players}`
+        }
+
+        // Status badge
+        const statusColors = {
+          seeding:  'background:rgba(59,130,246,0.15);color:#60a5fa;border-color:rgba(59,130,246,0.3)',
+          active:   'background:rgba(34,197,94,0.15);color:#4ade80;border-color:rgba(34,197,94,0.3)',
+          complete: 'background:rgba(245,158,11,0.15);color:#fbbf24;border-color:rgba(245,158,11,0.3)',
+        }
+        const statusStyle = statusColors[cup.status] || ''
+        const statusBadge = `<span style="${statusStyle};border:1px solid;border-radius:4px;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;padding:2px 7px;text-transform:uppercase;vertical-align:middle;">${cup.status}</span>`
+
+        // My H2H card (if logged in and participant)
+        const myH2H = myUserId && userMap[myUserId]
+          ? buildMyH2H(cup, byRound, roundNums, userMap, matchups)
+          : ''
+
+        // Bracket columns
+        const bracketCols = roundNums.map(r => {
+          const rMatchups = byRound[r]
+          const cards = rMatchups.map(m => matchupCard(m, userMap, cup.current_cup_round)).join('')
+          return `
+            <div class="cup-round-col">
+              <div style="text-align:center;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.4rem;">${roundLabel(r)}</div>
+              ${cards}
+            </div>`
+        }).join('')
+
+        // Champion banner
+        const champBanner = cup.status === 'complete' && cup.winner_id
+          ? (() => {
+              const champ = userMap[cup.winner_id] || {}
+              return `<div style="background:linear-gradient(135deg,rgba(245,158,11,0.12),rgba(245,158,11,0.05));border:1px solid rgba(245,158,11,0.35);border-radius:10px;padding:0.875rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;gap:0.75rem;">
+                <span style="font-size:1.4rem;">🏆</span>
+                <div>
+                  <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:#f59e0b;margin-bottom:0.1rem;">BS Tipping Cup Champion</div>
+                  <div style="font-size:1.1rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;">${escapeHtml(champ.username || 'Unknown')}</div>
+                </div>
+              </div>`
+            })()
+          : ''
+
+        contentEl.innerHTML = `
+          <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
+            <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;">${escapeHtml(cup.name)}</h2>
+            ${statusBadge}
+            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">Seeding Rd ${cup.seeding_round} · ${participants.length} players · ${cup.bracket_size}-bracket</span>
+          </div>
+          ${champBanner}
+          ${myH2H}
+          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.75rem;">Full Bracket</div>
+          <div class="cup-bracket">${bracketCols}</div>`
+      }
+
+      function matchupCard(m, userMap, currentCupRound) {
+        function playerRow(uid, score, isWinner, otherUid) {
+          if (!uid) return `<div class="cup-player-row cup-bye">— BYE —</div>`
+          const p        = userMap[uid] || {}
+          const isMe     = uid === myUserId
+          const isLoser  = m.winner_id && m.winner_id !== uid
+          const classes  = ['cup-player-row', isWinner ? 'cup-winner' : '', isLoser ? 'cup-eliminated' : '', isMe ? 'cup-me' : ''].filter(Boolean).join(' ')
+          const logo     = p.favourite_team
+            ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:1rem;height:1rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            : ''
+          const seedBadge = p.seed ? `<span style="font-size:0.62rem;color:#4a5568;flex-shrink:0;">#${p.seed}</span>` : ''
+          const name     = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.username || 'Unknown')}</span>`
+          const pts      = score != null
+            ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.9rem;font-weight:700;margin-left:auto;flex-shrink:0;">${parseFloat(score).toFixed(1)}</span>`
+            : ''
+          return `<div class="${classes}">${logo}${seedBadge}${name}${pts}</div>`
+        }
+
+        const isPending = !m.is_bye && !m.winner_id && m.cup_round === currentCupRound
+        const cardClass = isPending ? 'cup-matchup-card cup-active' : 'cup-matchup-card'
+
+        return `
+          <div class="${cardClass}">
+            ${playerRow(m.player_a_id, m.score_a, m.winner_id === m.player_a_id)}
+            ${m.is_bye ? '' : playerRow(m.player_b_id, m.score_b, m.winner_id === m.player_b_id)}
+            ${isPending ? `<div style="padding:2px 6px;font-size:0.6rem;font-weight:700;letter-spacing:0.08em;color:#f59e0b;text-transform:uppercase;text-align:center;background:rgba(245,158,11,0.06);">NRL Rd ${m.nrl_round} — Pending</div>` : ''}
+          </div>`
+      }
+
+      function buildMyH2H(cup, byRound, roundNums, userMap, matchups) {
+        // Find all matchups involving me
+        const myMatchups = matchups.filter(m =>
+          m.player_a_id === myUserId || m.player_b_id === myUserId)
+        if (!myMatchups.length) return ''
+
+        // Determine which cup_round to show (default: current or most recent)
+        const currentCupRound = cup.current_cup_round || 1
+        if (cupViewRound === null) cupViewRound = currentCupRound
+
+        // Clamp to available rounds with my matchups
+        const myRounds = [...new Set(myMatchups.map(m => m.cup_round))].sort((a,b)=>a-b)
+        if (!myRounds.includes(cupViewRound)) cupViewRound = myRounds[myRounds.length - 1]
+
+        const myMatchup = myMatchups.find(m => m.cup_round === cupViewRound)
+        if (!myMatchup) return ''
+
+        const oppId   = myMatchup.player_a_id === myUserId ? myMatchup.player_b_id : myMatchup.player_a_id
+        const myScore = myMatchup.player_a_id === myUserId ? myMatchup.score_a : myMatchup.score_b
+        const oppScore= myMatchup.player_a_id === myUserId ? myMatchup.score_b : myMatchup.score_a
+
+        const me  = userMap[myUserId] || {}
+        const opp = oppId ? (userMap[oppId] || {}) : null
+
+        const iWon  = myMatchup.winner_id === myUserId
+        const oppWon= myMatchup.winner_id === oppId
+        const isBye = myMatchup.is_bye
+
+        // Round navigation
+        const totalMyRounds = myRounds.length
+        const myRoundIdx    = myRounds.indexOf(cupViewRound)
+        const prevRound     = myRoundIdx > 0 ? myRounds[myRoundIdx - 1] : null
+        const nextRound     = myRoundIdx < totalMyRounds - 1 ? myRounds[myRoundIdx + 1] : null
+
+        function navBtn(roundNum, label) {
+          if (!roundNum) return `<span style="visibility:hidden;">${label}</span>`
+          return `<button onclick="cupViewRound=${roundNum};document.getElementById('cup-h2h-section').outerHTML=buildMyH2H(window._cupRenderCache?.cup,window._cupRenderCache?.byRound,window._cupRenderCache?.roundNums,window._cupRenderCache?.userMap,window._cupRenderCache?.matchups)" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;cursor:pointer;color:#94a3b8;">${label}</button>`
+        }
+
+        const roundLabels2 = { }
+        const totalRounds = roundNums.length
+        roundNums.forEach(r => {
+          const fromEnd = totalRounds - r
+          roundLabels2[r] = fromEnd === 0 ? 'Grand Final' : fromEnd === 1 ? 'Semi Final' : fromEnd === 2 ? 'Quarter Final' : `Cup Round ${r}`
+        })
+
+        const resultLabel = isBye
+          ? `<span style="color:#4ade80;font-weight:700;">BYE — Advanced automatically</span>`
+          : myMatchup.winner_id
+            ? (iWon
+                ? `<span style="color:#4ade80;font-weight:700;">You won! ✓</span>`
+                : `<span style="color:#f87171;font-weight:700;">Eliminated</span>`)
+            : `<span style="color:#f59e0b;font-weight:700;">In progress — NRL Rd ${myMatchup.nrl_round}</span>`
+
+        // Opponent info
+        const oppBlock = isBye || !opp
+          ? `<div style="flex:1;text-align:center;color:#4a5568;font-style:italic;">— BYE —</div>`
+          : (() => {
+              const oppLogo = opp.favourite_team
+                ? `<img src="../logos/${teamSlug(opp.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
+                : ''
+              const oppPts = oppScore != null
+                ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${oppWon?'color:#fbbf24':''};">${parseFloat(oppScore).toFixed(1)}</span>`
+                : `<span style="color:#4a5568;font-size:0.875rem;">TBD</span>`
+              return `<div style="flex:1;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:0.25rem;">
+                <div style="display:flex;align-items:center;gap:0.4rem;">${oppLogo}<span style="font-weight:600;${oppWon?'color:#fbbf24':''}">${escapeHtml(opp.username||'Opponent')}</span><span style="font-size:0.7rem;color:#4a5568;">#${opp.seed||'?'}</span></div>
+                ${oppPts}
+              </div>`
+            })()
+
+        const myPts = myScore != null
+          ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${iWon?'color:#fbbf24':''};">${parseFloat(myScore).toFixed(1)}</span>`
+          : `<span style="color:#4a5568;font-size:0.875rem;">TBD</span>`
+
+        const myLogo = me.favourite_team
+          ? `<img src="../logos/${teamSlug(me.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
+          : ''
+
+        return `
+          <div id="cup-h2h-section" style="margin-bottom:1.5rem;">
+            <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.6rem;">My Match-Up — ${roundLabels2[cupViewRound] || ''}</div>
+            <div class="cup-h2h-card">
+              <!-- Header: me vs opp -->
+              <div style="display:flex;align-items:center;gap:0.5rem;padding:0.875rem 1rem;border-bottom:1px solid #1e2a3a;">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:0.25rem;">
+                  <div style="display:flex;align-items:center;gap:0.4rem;">${myLogo}<span style="font-weight:600;${iWon?'color:#fbbf24':''}">${escapeHtml(me.username||'You')}</span><span style="font-size:0.7rem;color:#4a5568;">#${me.seed||'?'}</span></div>
+                  ${myPts}
+                </div>
+                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#4a5568;padding:0 0.5rem;">vs</div>
+                ${oppBlock}
+              </div>
+              <!-- Result -->
+              <div style="padding:0.45rem 1rem;border-bottom:1px solid #1e2a3a;font-size:0.8rem;">${resultLabel}</div>
+              <!-- Nav -->
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.75rem;">
+                <button data-cup-nav="${prevRound || ''}" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;cursor:pointer;color:#94a3b8;${!prevRound?'opacity:0.3;pointer-events:none':''}">&larr; Prev</button>
+                <span style="font-size:0.75rem;color:#4a5568;">${roundLabels2[cupViewRound] || `Round ${cupViewRound}`}</span>
+                <button data-cup-nav="${nextRound || ''}" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;cursor:pointer;color:#94a3b8;${!nextRound?'opacity:0.3;pointer-events:none':''}">Next &rarr;</button>
+              </div>
+            </div>
+          </div>`
+      }
+
+      // H2H round navigation (event delegation)
+      matchesEl.addEventListener('click', async e => {
+        const btn = e.target.closest('[data-cup-nav]')
+        if (!btn || activeTab !== 'cup') return
+        const navRound = parseInt(btn.dataset.cupNav)
+        if (!navRound) return
+        cupViewRound = navRound
+        // Re-render just the H2H section by re-running renderCup for current cup
+        const sel = document.getElementById('cup-selector')
+        const cupId = sel ? parseInt(sel.value) : null
+        if (cupId) await renderCup(cupId)
+        else {
+          // Only one cup — re-fetch cups to get the id
+          const r = await fetch(`${BACKEND_ROOT}/api/cups?season=${new Date().getFullYear()}`)
+          if (r.ok) {
+            const cups = await r.json()
+            if (cups.length) await renderCup(cups[0].id)
+          }
+        }
+      })
+
+      // ───────────────────────────────────────────────────────────────────────
     </script>
     <div id="site-footer"></div>
     <script src="/js/load-footer.js"></script>
