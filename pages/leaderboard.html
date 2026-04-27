@@ -2231,6 +2231,168 @@
 
       let cupViewRound = null   // which cup_round the H2H card is displaying
 
+      function nextPowerOfTwo(n) {
+        let p = 1
+        while (p < n) p *= 2
+        return p
+      }
+
+      async function renderLiveSeeding(config) {
+        matchesEl.innerHTML = `<div class="p-8 animate-pulse" style="color:#4a5568;">Computing live seeding…</div>`
+
+        // Fetch seeding round game IDs
+        const { data: seedGames } = await supabase
+          .from('games')
+          .select('game_id, home_team, away_team, kickoff_time')
+          .eq('round_number', config.seeding_round)
+          .eq('season', new Date().getFullYear())
+        if (!seedGames?.length) return
+
+        const gameIds = seedGames.map(g => g.game_id)
+
+        // Fetch all picks for seeding round
+        const { data: picks } = await supabase
+          .from('picks')
+          .select('user_id, game_id, home_score_pick, away_score_pick')
+          .in('game_id', gameIds)
+        if (!picks?.length) {
+          matchesEl.innerHTML = `<div style="padding:2rem;text-align:center;color:#4a5568;font-size:0.875rem;">No picks submitted yet for Round ${config.seeding_round}.</div>`
+          return
+        }
+
+        // Fetch profiles
+        const allUids = [...new Set(picks.map(p => p.user_id))]
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, username, favourite_team')
+          .in('id', allUids)
+        const profileMap = {}
+        profiles?.forEach(p => { profileMap[p.id] = p })
+
+        // Compute live scores per user using liveGameMap (only scored games)
+        const userScores = {}
+        for (const pick of picks) {
+          const live = liveGameMap[pick.game_id]
+          if (!live || live.home_score == null || live.away_score == null) continue
+          if (pick.home_score_pick == null || pick.away_score_pick == null) continue
+          const ms = bellScore((live.home_score - live.away_score) - (pick.home_score_pick - pick.away_score_pick))
+          const ts = bellScore((live.home_score + live.away_score) - (pick.home_score_pick + pick.away_score_pick))
+          userScores[pick.user_id] = (userScores[pick.user_id] || 0) + ms + ts
+        }
+
+        // Sort by live score desc
+        const ranked = allUids
+          .map(uid => ({ uid, score: userScores[uid] || 0, profile: profileMap[uid] || {} }))
+          .sort((a, b) => b.score - a.score)
+
+        const n            = ranked.length
+        const bracketSize  = nextPowerOfTwo(n)
+        const nByes        = bracketSize - n
+        const completedGames = seedGames.filter(g => liveGameMap[g.game_id]?.home_score != null).length
+        const totalGames     = seedGames.length
+        const isMe           = uid => uid === myUserId
+
+        // Build seeding rows
+        const seedRows = ranked.map((entry, i) => {
+          const seed    = i + 1
+          const hasBye  = seed <= nByes
+          const prof    = entry.profile
+          const logo    = prof.favourite_team
+            ? `<img src="../logos/${teamSlug(prof.favourite_team)}.svg" style="width:1.1rem;height:1.1rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            : ''
+          const meStyle = isMe(entry.uid) ? 'background:rgba(245,158,11,0.05);' : ''
+          const pts     = userScores[entry.uid] != null
+            ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:700;">${entry.score.toFixed(1)}</span>`
+            : `<span style="color:#4a5568;font-size:0.8rem;">—</span>`
+          const byeBadge = hasBye
+            ? `<span style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;background:rgba(34,197,94,0.12);color:#4ade80;border:1px solid rgba(34,197,94,0.25);border-radius:3px;padding:1px 5px;flex-shrink:0;">BYE</span>`
+            : ''
+          const rankClr = seed === 1 ? '#fbbf24' : seed === 2 ? '#94a3b8' : seed === 3 ? '#c2906a' : '#4a5568'
+          return `
+            <div class="lb-row" style="${meStyle}display:grid;grid-template-columns:2rem 1fr auto auto;gap:0.5rem;align-items:center;">
+              <span style="font-family:'Barlow Condensed',sans-serif;font-size:0.875rem;font-weight:700;color:${rankClr};text-align:center;">${seed}</span>
+              <div style="display:flex;align-items:center;gap:0.4rem;min-width:0;">
+                ${logo}
+                <span style="font-size:0.875rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isMe(entry.uid)?'color:#fbbf24':''}">${escapeHtml(prof.username || 'Unknown')}${isMe(entry.uid)?' (you)':''}</span>
+              </div>
+              ${byeBadge}
+              ${pts}
+            </div>`
+        }).join('')
+
+        // Provisional bracket: show round-1 matchups from current seeding
+        const r1Matchups = []
+        for (let i = 0; i < n - nByes; i += 2) {
+          const seedA = nByes + 1 + i
+          const seedB = n - i
+          const entA  = ranked[seedA - 1]
+          const entB  = ranked[seedB - 1]
+          if (entA && entB) {
+            r1Matchups.push({ a: entA, seedA, b: entB, seedB })
+          }
+        }
+
+        const r1Cards = r1Matchups.map(({ a, seedA, b, seedB }) => {
+          function pRow(entry, seed) {
+            const prof = entry.profile
+            const logo = prof.favourite_team
+              ? `<img src="../logos/${teamSlug(prof.favourite_team)}.svg" style="width:0.9rem;height:0.9rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+              : ''
+            const pts = userScores[entry.uid] != null
+              ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.85rem;font-weight:700;margin-left:auto;">${entry.score.toFixed(1)}</span>`
+              : ''
+            return `<div class="cup-player-row${entry.uid === myUserId ? ' cup-me' : ''}">
+              ${logo}
+              <span style="font-size:0.6rem;color:#4a5568;flex-shrink:0;">#${seed}</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.8rem;">${escapeHtml(prof.username || 'Unknown')}</span>
+              ${pts}
+            </div>`
+          }
+          return `<div class="cup-matchup-card" style="min-width:155px;">${pRow(a, seedA)}${pRow(b, seedB)}</div>`
+        }).join('')
+
+        const progressPct = totalGames > 0 ? Math.round((completedGames / totalGames) * 100) : 0
+
+        matchesEl.innerHTML = `
+          <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+            <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;">${escapeHtml(config.name)}</h2>
+            <span style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;padding:2px 7px;text-transform:uppercase;">● Live Seeding</span>
+            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">${completedGames}/${totalGames} games complete · ${n} entrants · ${bracketSize}-bracket · ${nByes} byes</span>
+          </div>
+
+          <!-- Progress bar -->
+          <div style="height:3px;background:#1e2a3a;border-radius:2px;margin-bottom:1.5rem;overflow:hidden;">
+            <div style="height:100%;width:${progressPct}%;background:linear-gradient(90deg,#ef4444,#f97316);border-radius:2px;transition:width 0.3s;"></div>
+          </div>
+
+          <!-- Two column: seeding table + provisional round 1 -->
+          <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:flex-start;">
+
+            <!-- Seeding table -->
+            <div style="flex:1;min-width:240px;">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">Current Seeding</div>
+              <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;">
+                ${seedRows}
+              </div>
+            </div>
+
+            <!-- Provisional round 1 bracket -->
+            ${r1Cards.length ? `
+            <div style="flex:1;min-width:200px;">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">
+                Provisional Round 1 Matchups
+                <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#374151;margin-left:0.4rem;">(if results stand)</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:0.25rem;">${r1Cards}</div>
+            </div>` : ''}
+
+          </div>
+
+          <div style="margin-top:1rem;font-size:0.75rem;color:#374151;">
+            Seedings update as Round ${config.seeding_round} games complete. Bracket locks in after the round is scored.
+          </div>`
+      }
+
       async function loadCup() {
         const season = new Date().getFullYear()
         let cups = []
@@ -2242,11 +2404,36 @@
         }
 
         if (!cups.length) {
-          matchesEl.innerHTML = `
-            <div style="padding:3rem;text-align:center;color:#4a5568;">
-              <div style="font-size:1.5rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;margin-bottom:0.5rem;">No BS Cup this season yet.</div>
-              <div style="font-size:0.875rem;">Check back once the cup is announced.</div>
-            </div>`
+          // Check if a cup is scheduled but not yet started
+          const { data: configs } = await supabase
+            .from('cup_configs')
+            .select('name, seeding_round, season')
+            .eq('season', new Date().getFullYear())
+            .order('seeding_round', { ascending: true })
+          const scheduled = configs?.[0]
+          if (scheduled) {
+            // If the seeding round is live right now, show live seeding
+            const hasLiveScores = liveRoundNumber === scheduled.seeding_round &&
+              Object.values(liveGameMap).some(g => g.home_score != null)
+            if (hasLiveScores) {
+              await renderLiveSeeding(scheduled)
+            } else {
+              matchesEl.innerHTML = `
+                <div style="padding:3rem;text-align:center;">
+                  <div style="font-size:1.5rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;margin-bottom:0.5rem;">${escapeHtml(scheduled.name)}</div>
+                  <div style="display:inline-flex;align-items:center;gap:0.5rem;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:0.5rem 1rem;margin-bottom:0.75rem;">
+                    <span style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#60a5fa;">Seeding Round ${scheduled.seeding_round}</span>
+                  </div>
+                  <div style="font-size:0.875rem;color:#8892a4;">Everyone who tips Round ${scheduled.seeding_round} is automatically entered.<br>The bracket will be revealed once the round is scored.</div>
+                </div>`
+            }
+          } else {
+            matchesEl.innerHTML = `
+              <div style="padding:3rem;text-align:center;color:#4a5568;">
+                <div style="font-size:1.5rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;margin-bottom:0.5rem;">No BS Cup this season yet.</div>
+                <div style="font-size:0.875rem;">Check back once the cup is announced.</div>
+              </div>`
+          }
           return
         }
 
