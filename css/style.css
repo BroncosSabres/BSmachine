@@ -439,3 +439,16 @@ h2, h3 {
     max-height: 70vh;
   }
 }
+
+/* ---- Skeleton shimmer (probability loading state) ---- */
+.bsm-skeleton {
+  display: inline-block;
+  background: linear-gradient(90deg, #252d3a 25%, #2e3a4e 50%, #252d3a 75%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: bsm-shimmer 1.4s infinite;
+}
+@keyframes bsm-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

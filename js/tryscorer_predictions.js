@@ -599,6 +599,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Compute round sigma scale in background so KDE bandwidth matches predictions page
     computeRoundSigmaScale();
+
+    // Background-warm team lists for all matches so loadMatch() renders instantly from cache.
+    // For the first (soonest) match, also prefetch tryscorer data — most likely selection.
+    sorted.forEach((m, idx) => {
+      if (!teamListCache[m.match_id]) {
+        fetch(`${API_BASE}/match_team_lists/${m.match_id}/${competition}`)
+          .then(r => r.json())
+          .then(data => {
+            teamListCache[m.match_id] = data;
+            if (idx === 0) prefetchTryscorerDataForMatch(m.match_id, data);
+          })
+          .catch(() => {});
+      } else if (idx === 0) {
+        // Team list already cached — still prefetch tryscorer if needed
+        prefetchTryscorerDataForMatch(m.match_id, teamListCache[m.match_id]);
+      }
+    });
   }
 
   fetchMatchesAndPopulate().then(() => {
@@ -639,6 +656,35 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     loadMatch(matchId);
   });
+
+  // Background-warm tryscorer data for a match (pure cache fill, no DOM changes).
+  // Called after team list is already loaded so player/teamId info is available.
+  function prefetchTryscorerDataForMatch(matchId, teamListData) {
+    if (!allTryscorerData[matchId]) {
+      allTryscorerData[matchId] = { home: null, away: null, _loadingCount: 0 };
+    }
+    ['home', 'away'].forEach(side => {
+      if (allTryscorerData[matchId][side]) return; // already cached
+      const players = teamListData[`${side}_players`];
+      const teamId  = players?.[0]?.team_id;
+      if (!teamId) return;
+
+      allTryscorerData[matchId]._loadingCount++;
+      Promise.all([
+        fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
+        fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json()),
+        fetch(`${API_BASE}/player_try_stats/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({})),
+        fetch(`${API_BASE}/opponent_try_concession/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({}))
+      ]).then(([tryProbs, tryDist, tryStats, oppConcession]) => {
+        allTryscorerData[matchId][side] = {
+          teamName: teamListData[`${side}_team`], teamId, players, tryProbs, tryDist, tryStats, oppConcession
+        };
+        allTryscorerData[matchId]._loadingCount--;
+      }).catch(() => {
+        allTryscorerData[matchId]._loadingCount--;
+      });
+    });
+  }
 
   function loadMatch(matchId) {
     currentMatchId = matchId;
@@ -1008,24 +1054,7 @@ document.addEventListener("DOMContentLoaded", function () {
     teamsContainer.innerHTML = '';
     if (!allPlayerInputs[matchId]) allPlayerInputs[matchId] = { home: {}, away: {} };
 
-    // Show loading overlay unless both sides already cached
-    const cached = allTryscorerData[matchId];
-    if (!cached || !cached.home || !cached.away) {
-      const overlay = document.createElement('div');
-      overlay.id = 'prob-loading-overlay';
-      overlay.style.cssText = 'position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0.75rem;background:rgba(15,17,23,0.85);border-radius:12px;';
-      overlay.innerHTML = `
-        <style>@keyframes bsm-spin{to{transform:rotate(360deg)}}</style>
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style="animation:bsm-spin 0.8s linear infinite;">
-          <circle cx="12" cy="12" r="10" stroke="rgba(245,158,11,0.2)" stroke-width="3"/>
-          <path d="M12 2a10 10 0 0 1 10 10" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
-        </svg>
-        <span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9375rem;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;color:#8892a4;">Loading Probabilities…</span>
-      `;
-      // teamsContainer needs position:relative for the overlay to anchor correctly
-      teamsContainer.style.position = 'relative';
-      teamsContainer.appendChild(overlay);
-    }
+    // Probability slots start as shimmer skeletons; removeOverlay() is a no-op kept for compat
     const inputs = allPlayerInputs[matchId];
 
     ['home', 'away'].forEach(side => {
@@ -1062,7 +1091,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <span class="text-xs text-gray-500 ml-1">(${p.position})</span>
                 <span id="badge-${side}-${p.id}" class="inline-flex gap-0.5 ml-1"></span>
               </div>
-              <div id="anytime-${side}-${p.id}" class="w-20 text-right shrink-0"><div class="text-xs font-semibold text-gray-600">·</div></div>
+              <div id="anytime-${side}-${p.id}" class="w-20 text-right shrink-0"><span class="bsm-skeleton h-3 w-14 ml-auto block"></span></div>
               <div class="flex items-center gap-1">
                 <button type="button"
                   class="sgm-minus-btn w-6 h-6 border border-gray-700 text-gray-600 rounded flex items-center justify-center text-sm font-bold transition-colors"
