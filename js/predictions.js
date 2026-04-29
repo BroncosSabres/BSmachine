@@ -96,12 +96,6 @@ function formatKickoff(isoString) {
 }
 
 // --- USER MODEL: STATS HELPERS ---
-function median(arr) {
-  if (!arr.length) return null;
-  const s = [...arr].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-}
 function mean(arr) {
   return arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
 }
@@ -915,12 +909,12 @@ function renderBlendedDisplay(matchKey) {
 // --- USER MODEL: RENDER ---
 function renderUserModel(matchKey, pickData, modelHomeScore, modelAwayScore) {
   const n         = pickData?.margins?.length ?? 0;
-  const medMargin = n > 0 ? median(pickData.margins) : null;
-  const medTotal  = n > 0 ? median(pickData.totals)  : null;
+  const avgMargin = n > 0 ? mean(pickData.margins) : null;
+  const avgTotal  = n > 0 ? mean(pickData.totals)  : null;
   const matchId   = pickData?.matchId ?? null;
 
-  const userHome = (medMargin !== null && medTotal !== null) ? Math.round((medTotal + medMargin) / 2) : null;
-  const userAway = (medMargin !== null && medTotal !== null) ? Math.round((medTotal - medMargin) / 2) : null;
+  const userHome = (avgMargin !== null && avgTotal !== null) ? Math.round((avgTotal + avgMargin) / 2) : null;
+  const userAway = (avgMargin !== null && avgTotal !== null) ? Math.round((avgTotal - avgMargin) / 2) : null;
 
   const cachedMachineDist = matchId ? machineDistCache[matchId] : null;
   const cachedMarginBins  = cachedMachineDist?.margins ? normaliseMachineBins(cachedMachineDist.margins, 1, -100, 100) : null;
