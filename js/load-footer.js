@@ -29,7 +29,7 @@ import('/js/my-stats.js').catch(function () {});
 
 // Set to the active prize round number to show the banner, or null to hide it entirely.
 // Changing this number also resets the dismiss state for all users (round-specific key).
-var PRIZE_ROUND = 8;
+var PRIZE_ROUND = 9;
 
 // Global dismiss function — called from onclick in the injected header HTML
 function dismissPrizeBanner() {
