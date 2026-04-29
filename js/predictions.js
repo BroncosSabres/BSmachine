@@ -1527,6 +1527,8 @@ async function fetchPredictionsForRound(roundNumber) {
 const TRACKER_BUCKETS = ['0–10%','10–20%','20–30%','30–40%','40–50%','50–60%','60–70%','70–80%','80–90%','90–100%'];
 let trackerEntries = null; // raw entries: { roundFolder, prob, won, predictedTotal, actualTotal }
 let trackerFilter  = 'last5'; // 'season' | 'last10' | 'last5'
+let trackerMode    = 'machine'; // 'machine' | 'user'
+let userTrackerEntries = null;
 
 async function buildTrackerEntries() {
   if (trackerEntries) return trackerEntries;
@@ -1577,6 +1579,84 @@ async function buildTrackerEntries() {
   return trackerEntries;
 }
 
+async function buildUserTrackerEntries() {
+  if (userTrackerEntries) return userTrackerEntries;
+
+  const roundNums = [];
+  for (let r = 1; r <= latestRound; r++) roundNums.push(r);
+
+  const [liveResults, currentMatches] = await Promise.all([getLiveResults(), getTryscorerMatches()]);
+  const allEntries = [];
+
+  await Promise.all(roundNums.map(async r => {
+    const [picks, preds] = await Promise.all([
+      fetchUserPicksForRound(r),
+      fetchPredictionsForRound(r),
+    ]);
+
+    let results;
+    if (r === latestRound) {
+      results = currentMatches.map(m => {
+        const lv = liveResults.find(l => teamsMatch(m.home_team, l.home) && teamsMatch(m.away_team, l.away));
+        return lv ? { ...m, home_score: lv.home_score, away_score: lv.away_score } : m;
+      });
+    } else {
+      results = await getRoundMatches(r);
+    }
+
+    // Fetch machine distributions for this round's matches (same as loadRound does for the
+    // current round) so we can use machineSigma in kdeProbGte — matching the tile calculation.
+    await Promise.all(preds.map(p => p.match_id ? fetchMachineDistributions(p.match_id) : null));
+
+    for (const [, gameData] of Object.entries(picks.byGame)) {
+      const margins = gameData.margins ?? [];
+      const totals  = gameData.totals  ?? [];
+      if (margins.length === 0) continue;
+
+      // Resolve actual result — prefer prediction endpoint (has scores for finished games)
+      let homeScore = null, awayScore = null;
+      const pred = preds.find(p =>
+        teamsMatch(p.home_team, gameData.home_team) && teamsMatch(p.away_team, gameData.away_team)
+      );
+      if (pred && typeof pred.home_score === 'number') {
+        homeScore = pred.home_score;
+        awayScore = pred.away_score;
+      } else {
+        const result = results.find(m =>
+          teamsMatch(m.home_team, gameData.home_team) && teamsMatch(m.away_team, gameData.away_team)
+        );
+        if (result && typeof result.home_score === 'number') {
+          homeScore = result.home_score;
+          awayScore = result.away_score;
+        }
+      }
+      if (homeScore === null || awayScore === null) continue;
+
+      const homeWon = homeScore > awayScore;
+      const awayWon = awayScore > homeScore;
+
+      // Use the same modelSigma path as the tiles: machineSigma from the cached
+      // distribution (now guaranteed to be fetched above). This produces the same
+      // KDE bandwidth as the tile's fallback path, giving consistent probabilities.
+      const matchId     = pred?.match_id ?? null;
+      const cachedDist  = matchId ? machineDistCache[matchId] : null;
+      const cachedBins  = cachedDist?.margins ? normaliseMachineBins(cachedDist.margins, 1, -100, 100) : null;
+      const modelSigma  = machineSigma(cachedBins); // null → Silverman fallback if dist unavailable
+
+      const homePickFrac = kdeProbGte(margins, +0.5, modelSigma);
+      const awayPickFrac = 1 - kdeProbGte(margins, -0.5, modelSigma);
+      const predictedTotal = mean(totals);
+      const actualTotal    = homeScore + awayScore;
+
+      allEntries.push({ roundFolder: r, prob: homePickFrac, won: homeWon, predictedTotal, actualTotal });
+      allEntries.push({ roundFolder: r, prob: awayPickFrac, won: awayWon, predictedTotal: null, actualTotal: null });
+    }
+  }));
+
+  userTrackerEntries = allEntries;
+  return userTrackerEntries;
+}
+
 function applyTrackerFilter(entries) {
   if (trackerFilter === 'season') return entries;
   const n = trackerFilter === 'last5' ? 5 : 10;
@@ -1606,12 +1686,25 @@ function bucketEntries(entries) {
   return { buckets, avgPredicted: totalGames ? sumPredicted / totalGames : null, avgActual: totalGames ? sumActual / totalGames : null, totalGames };
 }
 
-function renderTracker() {
+function renderTracker(entries) {
   const el = document.getElementById('prediction-tracker');
-  if (!el || !trackerEntries) return;
+  if (!el) return;
 
-  const filtered = applyTrackerFilter(trackerEntries);
+  const activeEntries = entries ?? (trackerMode === 'user' ? userTrackerEntries : trackerEntries);
+  if (!activeEntries) return;
+
+  const filtered = applyTrackerFilter(activeEntries);
   const { buckets, avgPredicted, avgActual, totalGames } = bucketEntries(filtered);
+
+  const modeTabs = [
+    { id: 'machine', label: 'BS Machine' },
+    { id: 'user',    label: 'User Model' },
+  ].map(({ id, label }) => {
+    const active = trackerMode === id;
+    return `<button data-mode="${id}"
+      class="tracker-mode-btn px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+             ${active ? 'bg-amber-500 text-gray-900' : 'text-gray-500 hover:text-gray-300'}">${label}</button>`;
+  }).join('');
 
   const filterBtns = ['season','last10','last5'].map(f => {
     const label = f === 'season' ? 'Season' : f === 'last10' ? 'Last 10 Rds' : 'Last 5 Rds';
@@ -1636,6 +1729,10 @@ function renderTracker() {
       </div>`;
   }).join('');
 
+  const subtitle = trackerMode === 'user'
+    ? `Win rate by pick consensus (${totalGames} games)`
+    : `Win rate by predicted probability (${totalGames} games)`;
+
   const totalHtml = avgPredicted !== null ? `
     <div class="mt-3 pt-3 border-t border-gray-700/50 grid grid-cols-2 gap-2 text-center">
       <div>
@@ -1650,15 +1747,28 @@ function renderTracker() {
 
   el.innerHTML = `
     <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
-      <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center justify-between mb-2">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Prediction Tracker</span>
-        <div class="flex items-center gap-1">${filterBtns}</div>
+        <div class="flex items-center gap-1">${modeTabs}</div>
       </div>
-      <div class="text-xs text-gray-600 mb-2.5">Win rate by predicted probability (${totalGames} games)</div>
+      <div class="flex items-center justify-end gap-1 mb-3">${filterBtns}</div>
+      <div class="text-xs text-gray-600 mb-2.5">${subtitle}</div>
       <div class="flex flex-col gap-1.5">${rowsHtml}</div>
       ${totalHtml}
     </div>
   `;
+
+  el.querySelectorAll('.tracker-mode-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (btn.dataset.mode === trackerMode) return;
+      trackerMode = btn.dataset.mode;
+      if (trackerMode === 'user' && !userTrackerEntries) {
+        el.innerHTML = `<div class="bg-gray-800 border border-gray-700 rounded-xl p-4 text-xs text-gray-500 animate-pulse">Loading user model data…</div>`;
+        await buildUserTrackerEntries();
+      }
+      renderTracker();
+    });
+  });
 
   el.querySelectorAll('.tracker-filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
