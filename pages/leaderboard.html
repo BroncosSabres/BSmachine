@@ -289,7 +289,9 @@
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
-      let activeTab          = 'individual'
+      const VALID_TABS = ['individual', 'team', 'cup']
+      const hashTab = window.location.hash.replace('#', '')
+      let activeTab = VALID_TABS.includes(hashTab) ? hashTab : 'individual'
       let roundFilter        = 'season'
       let myUserId           = null
       let rounds             = []
@@ -299,6 +301,7 @@
       let currentDisplayRound = null  // round currently shown in the match tiles
       let machinePicks       = {}     // { game_id: { home, away } } — BS Machine predicted scores
       let crowdPicks         = {}     // { game_id: { home, away } } — crowd average picks
+      let cupPollInterval    = null   // setInterval handle for live seeding auto-refresh
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -400,11 +403,21 @@
         loadLeaderboard()
       })
 
+      // Sync initial active class to match the hash-derived tab
+      document.querySelectorAll('.lb-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === activeTab)
+      })
+
       document.querySelectorAll('.lb-tab').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.lb-tab').forEach(b => b.classList.remove('active'))
           btn.classList.add('active')
+          if (activeTab !== btn.dataset.tab && cupPollInterval) {
+            clearInterval(cupPollInterval)
+            cupPollInterval = null
+          }
           activeTab = btn.dataset.tab
+          window.location.hash = activeTab
           loadLeaderboard()
         })
       })
@@ -2397,6 +2410,53 @@
           <div style="margin-top:1rem;font-size:0.75rem;color:#374151;">
             Seedings update as Round ${config.seeding_round} games complete. Bracket locks in after the round is scored.
           </div>`
+
+        // Start polling if not already running
+        if (!cupPollInterval) {
+          cupPollInterval = setInterval(async () => {
+            if (activeTab !== 'cup') {
+              clearInterval(cupPollInterval)
+              cupPollInterval = null
+              return
+            }
+            // Re-fetch live scores
+            try {
+              const lrResp = await fetch(`${BACKEND_ROOT}/latest-results`)
+              if (!lrResp.ok) return
+              const liveResults = await lrResp.json()
+
+              function isWithin3Hours(kickoffTime) {
+                if (!kickoffTime) return true
+                return new Date() < new Date(new Date(kickoffTime).getTime() + 3 * 60 * 60 * 1000)
+              }
+
+              // Update liveGameMap entries for seeding round games only
+              let changed = false
+              for (const [gid, g] of Object.entries(liveGameMap)) {
+                const lr = liveResults.find(l =>
+                  teamSlug(g.home_team) === teamSlug(l.home) &&
+                  teamSlug(g.away_team) === teamSlug(l.away)
+                )
+                const newHome = lr?.home_score ?? g.home_score
+                const newAway = lr?.away_score ?? g.away_score
+                if (newHome !== g.home_score || newAway !== g.away_score) {
+                  liveGameMap[gid] = {
+                    ...g,
+                    home_score: newHome,
+                    away_score: newAway,
+                    is_live: lr != null && !g.is_complete && isWithin3Hours(g.kickoff_time),
+                  }
+                  changed = true
+                }
+              }
+
+              // Also check if any game completed (is_complete changed)
+              if (changed) await renderLiveSeeding(config)
+            } catch (e) {
+              console.warn('[cup poll] live results fetch failed:', e)
+            }
+          }, 60_000)
+        }
       }
 
       async function loadCup() {
@@ -2432,6 +2492,48 @@
                   </div>
                   <div style="font-size:0.875rem;color:#8892a4;">Everyone who tips Round ${scheduled.seeding_round} is automatically entered.<br>The bracket will be revealed once the round is scored.</div>
                 </div>`
+              // Poll until scores arrive, then switch to live seeding view
+              if (!cupPollInterval && liveRoundNumber === scheduled.seeding_round) {
+                cupPollInterval = setInterval(async () => {
+                  if (activeTab !== 'cup') {
+                    clearInterval(cupPollInterval)
+                    cupPollInterval = null
+                    return
+                  }
+                  try {
+                    const lrResp = await fetch(`${BACKEND_ROOT}/latest-results`)
+                    if (!lrResp.ok) return
+                    const liveResults = await lrResp.json()
+
+                    function isWithin3Hours(kickoffTime) {
+                      if (!kickoffTime) return true
+                      return new Date() < new Date(new Date(kickoffTime).getTime() + 3 * 60 * 60 * 1000)
+                    }
+
+                    for (const [gid, g] of Object.entries(liveGameMap)) {
+                      const lr = liveResults.find(l =>
+                        teamSlug(g.home_team) === teamSlug(l.home) &&
+                        teamSlug(g.away_team) === teamSlug(l.away)
+                      )
+                      liveGameMap[gid] = {
+                        ...g,
+                        home_score: lr?.home_score ?? g.home_score,
+                        away_score: lr?.away_score ?? g.away_score,
+                        is_live: lr != null && !g.is_complete && isWithin3Hours(g.kickoff_time),
+                      }
+                    }
+
+                    const nowHasScores = Object.values(liveGameMap).some(g => g.home_score != null)
+                    if (nowHasScores) {
+                      clearInterval(cupPollInterval)
+                      cupPollInterval = null
+                      await renderLiveSeeding(scheduled)
+                    }
+                  } catch (e) {
+                    console.warn('[cup poll] pre-seeding check failed:', e)
+                  }
+                }, 60_000)
+              }
             }
           } else {
             matchesEl.innerHTML = `
