@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Stats — BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+      .stat-tile {
+        background: #0f1117;
+        border: 1px solid #1e2a3a;
+        border-radius: 10px;
+        padding: 1rem;
+      }
+      .stat-tile-label {
+        font-size: 0.6rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #4a5568;
+        margin-bottom: 0.35rem;
+      }
+      .stat-tile-value {
+        font-family: 'Barlow Condensed', system-ui, sans-serif;
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: #e2e8f0;
+        line-height: 1.15;
+      }
+      .stat-tile-sub {
+        font-size: 0.7rem;
+        color: #4a5568;
+        margin-top: 0.25rem;
+        line-height: 1.4;
+      }
+      .badge-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.3rem 0.6rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        position: relative;
+        cursor: default;
+      }
+      .badge-chip.gold   { background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.35); color: #fbbf24; }
+      .badge-chip.silver { background: rgba(148,163,184,0.12); border: 1px solid rgba(148,163,184,0.3); color: #cbd5e1; }
+      .badge-chip.bronze { background: rgba(180,83,9,0.15); border: 1px solid rgba(180,83,9,0.35); color: #fb923c; }
+      .badge-chip.locked { background: rgba(30,42,58,0.5); border: 1px solid #1e2a3a; color: #2e3a4e; }
+      .badge-count {
+        background: rgba(0,0,0,0.3);
+        border-radius: 9999px;
+        padding: 0 0.375rem;
+        font-size: 0.65rem;
+        font-weight: 700;
+      }
+      .badge-tooltip {
+        position: absolute;
+        bottom: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #161b24;
+        border: 1px solid #2e3a4e;
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.7rem;
+        color: #94a3b8;
+        white-space: nowrap;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.12s;
+        z-index: 50;
+        font-weight: 400;
+      }
+      .badge-chip:hover .badge-tooltip { opacity: 1; }
+    </style>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-5xl mx-auto px-4 sm:px-6 py-8" id="main-content" style="display:none;">
+
+      <!-- Page header -->
+      <div class="flex items-center gap-4 mb-8">
+        <div id="user-avatar" style="width:3rem;height:3rem;border-radius:50%;background:#161b24;border:2px solid #2e3a4e;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;"></div>
+        <div>
+          <h1 class="text-3xl font-bold" id="page-username">My Stats</h1>
+          <p class="text-gray-400 text-sm" id="page-subtitle">Loading…</p>
+        </div>
+      </div>
+
+      <!-- Summary tiles -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8" id="summary-tiles">
+        <div class="stat-tile"><div class="stat-tile-label">Total Points</div><div class="stat-tile-value" id="tile-total-pts">—</div><div class="stat-tile-sub" id="tile-total-pts-sub"></div></div>
+        <div class="stat-tile"><div class="stat-tile-label">Games Scored</div><div class="stat-tile-value" id="tile-games">—</div><div class="stat-tile-sub" id="tile-games-sub"></div></div>
+        <div class="stat-tile"><div class="stat-tile-label">Win Rate</div><div class="stat-tile-value" id="tile-winrate">—</div><div class="stat-tile-sub" id="tile-winrate-sub"></div></div>
+        <div class="stat-tile"><div class="stat-tile-label">vs Machine</div><div class="stat-tile-value" id="tile-h2h">—</div><div class="stat-tile-sub" id="tile-h2h-sub"></div></div>
+      </div>
+
+      <!-- Round performance chart -->
+      <div class="card mb-6">
+        <h2 class="text-lg font-semibold mb-1 text-gray-100">Round Performance</h2>
+        <p class="text-gray-500 text-xs mb-4">Your score vs BS Machine each round</p>
+        <div style="position:relative;height:260px;">
+          <canvas id="round-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Team accuracy + Calibration side by side -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <div class="card">
+          <h2 class="text-lg font-semibold mb-1 text-gray-100">Team Accuracy</h2>
+          <p class="text-gray-500 text-xs mb-4">Avg score on games involving each team</p>
+          <div style="position:relative;" id="team-chart-container">
+            <canvas id="team-chart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="text-lg font-semibold mb-1 text-gray-100">Your Calibration</h2>
+          <p class="text-gray-500 text-xs mb-4">How you score when picking favourites vs underdogs</p>
+          <div style="position:relative;height:220px;">
+            <canvas id="calibration-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alignment timeline -->
+      <div class="card mb-8">
+        <h2 class="text-lg font-semibold mb-1 text-gray-100">Agreement with the Machine</h2>
+        <p class="text-gray-500 text-xs mb-4">% of picks per round where you backed the same winner as BS Machine</p>
+        <div style="position:relative;height:200px;">
+          <canvas id="alignment-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Achievements section -->
+      <div class="card" id="achievements-section">
+        <h2 class="text-lg font-semibold mb-1 text-gray-100">Achievements</h2>
+        <p class="text-gray-500 text-xs mb-5">Badges earned through the season. Keep tipping to unlock more!</p>
+        <div id="badge-gallery" class="flex flex-wrap gap-3">
+          <div class="text-gray-600 text-sm">Loading badges…</div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Auth guard -->
+    <div id="auth-gate" class="max-w-5xl mx-auto px-6 py-20 text-center" style="display:none;">
+      <p class="text-gray-400 mb-4">Sign in to view your stats.</p>
+      <a href="/pages/login.html" class="inline-block px-5 py-2 bg-amber-500 text-black font-bold rounded-lg text-sm">Sign In</a>
+    </div>
+
+    <div id="site-footer"></div>
+
+    <script type="module">
+      import { supabase, getSession, updateAuthNav } from '../js/supabase-client.js'
+      updateAuthNav()
+
+      const BACKEND = 'https://bsmachine-backend.onrender.com'
+
+      function slug(name) {
+        const n = (name || '').toLowerCase()
+        if (n.includes('broncos'))   return 'broncos'
+        if (n.includes('bulldogs'))  return 'bulldogs'
+        if (n.includes('cowboys'))   return 'cowboys'
+        if (n.includes('dolphins'))  return 'dolphins'
+        if (n.includes('dragons'))   return 'dragons'
+        if (n.includes('eels'))      return 'eels'
+        if (n.includes('knights'))   return 'knights'
+        if (n.includes('sea eagles') || n.includes('manly')) return 'manly'
+        if (n.includes('panthers'))  return 'panthers'
+        if (n.includes('rabbitohs')) return 'rabbitohs'
+        if (n.includes('raiders'))   return 'raiders'
+        if (n.includes('roosters'))  return 'roosters'
+        if (n.includes('sharks'))    return 'sharks'
+        if (n.includes('storm'))     return 'storm'
+        if (n.includes('tigers'))    return 'tigers'
+        if (n.includes('titans'))    return 'titans'
+        if (n.includes('warriors'))  return 'warriors'
+        return (name || '').toLowerCase().replace(/\s+/g, '_')
+      }
+
+      const CHART_DEFAULTS = {
+        color: '#94a3b8',
+        borderColor: 'transparent',
+        plugins: { legend: { labels: { color: '#94a3b8', font: { size: 11 } } }, tooltip: { backgroundColor: '#161b24', borderColor: '#2e3a4e', borderWidth: 1, titleColor: '#e2e8f0', bodyColor: '#94a3b8' } },
+        scales: {
+          x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        },
+      }
+
+      function destroyChart(id) {
+        const existing = Chart.getChart(id)
+        if (existing) existing.destroy()
+      }
+
+      function renderRoundChart(roundScores) {
+        destroyChart('round-chart')
+        if (!roundScores.length) return
+        const labels  = roundScores.map(r => `Rd ${r.round}`)
+        const user    = roundScores.map(r => +r.points.toFixed(2))
+        const machine = roundScores.map(r => +r.machine_points.toFixed(2))
+
+        new Chart(document.getElementById('round-chart'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'You',
+                data: user,
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245,158,11,0.08)',
+                pointBackgroundColor: '#f59e0b',
+                pointRadius: 3,
+                tension: 0.3,
+                fill: false,
+              },
+              {
+                label: 'BS Machine',
+                data: machine,
+                borderColor: '#60a5fa',
+                backgroundColor: 'rgba(96,165,250,0.05)',
+                pointBackgroundColor: '#60a5fa',
+                pointRadius: 3,
+                tension: 0.3,
+                borderDash: [4, 3],
+                fill: false,
+              },
+            ],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              ...CHART_DEFAULTS.plugins,
+              tooltip: {
+                ...CHART_DEFAULTS.plugins.tooltip,
+                callbacks: {
+                  label: ctx => ` ${ctx.dataset.label}: ${ctx.raw} pts (${roundScores[ctx.dataIndex]?.games_count || 0} games)`,
+                },
+              },
+            },
+            scales: {
+              x: CHART_DEFAULTS.scales.x,
+              y: { ...CHART_DEFAULTS.scales.y, min: 0, title: { display: true, text: 'Points', color: '#4a5568', font: { size: 10 } } },
+            },
+          },
+        })
+      }
+
+      function renderTeamChart(teamAccuracy) {
+        destroyChart('team-chart')
+        if (!teamAccuracy.length) return
+        const data    = teamAccuracy.slice(0, 16)   // top 16 teams by accuracy
+        const labels  = data.map(t => t.team)
+        const scores  = data.map(t => +t.avg_score.toFixed(2))
+        const overall = scores.reduce((a, b) => a + b, 0) / scores.length
+        const colors  = scores.map(s => s >= overall ? 'rgba(74,222,128,0.7)' : 'rgba(248,113,113,0.7)')
+        const container = document.getElementById('team-chart-container')
+        const barH = 28
+        container.style.height = `${data.length * barH + 20}px`
+
+        new Chart(document.getElementById('team-chart'), {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Avg Score',
+              data: scores,
+              backgroundColor: colors,
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              ...CHART_DEFAULTS.plugins,
+              legend: { display: false },
+              tooltip: {
+                ...CHART_DEFAULTS.plugins.tooltip,
+                callbacks: {
+                  label: (ctx) => {
+                    const t = data[ctx.dataIndex]
+                    return ` ${ctx.raw} pts avg (${t.games_played} games)`
+                  },
+                },
+              },
+            },
+            scales: {
+              x: { ...CHART_DEFAULTS.scales.x, min: 0, max: 10, title: { display: true, text: 'Avg pts / game', color: '#4a5568', font: { size: 10 } } },
+              y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
+            },
+          },
+        })
+      }
+
+      function renderCalibrationChart(calibration) {
+        destroyChart('calibration-chart')
+        const valid = calibration.filter(b => b.game_count > 0)
+        if (!valid.length) return
+        const labels  = valid.map(b => b.bucket_label)
+        const user    = valid.map(b => b.user_avg_score != null ? +b.user_avg_score.toFixed(2) : null)
+        const machine = valid.map(b => b.machine_avg_score != null ? +b.machine_avg_score.toFixed(2) : null)
+
+        new Chart(document.getElementById('calibration-chart'), {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [
+              { label: 'You', data: user, backgroundColor: 'rgba(245,158,11,0.7)', borderRadius: 3 },
+              { label: 'BS Machine', data: machine, backgroundColor: 'rgba(96,165,250,0.5)', borderRadius: 3 },
+            ],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              ...CHART_DEFAULTS.plugins,
+              tooltip: {
+                ...CHART_DEFAULTS.plugins.tooltip,
+                callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.raw ?? '—'} pts avg` },
+              },
+            },
+            scales: {
+              x: CHART_DEFAULTS.scales.x,
+              y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 10, title: { display: true, text: 'Avg pts / game', color: '#4a5568', font: { size: 10 } } },
+            },
+          },
+        })
+      }
+
+      function renderAlignmentChart(alignment) {
+        destroyChart('alignment-chart')
+        if (!alignment.length) return
+        const labels = alignment.map(a => `Rd ${a.round}`)
+        const pcts   = alignment.map(a => a.total_picks > 0 ? +(a.picks_agreeing / a.total_picks * 100).toFixed(1) : null)
+
+        new Chart(document.getElementById('alignment-chart'), {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Agreement %',
+              data: pcts,
+              borderColor: '#a78bfa',
+              backgroundColor: 'rgba(167,139,250,0.08)',
+              pointBackgroundColor: '#a78bfa',
+              pointRadius: 3,
+              tension: 0.35,
+              fill: true,
+            }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              ...CHART_DEFAULTS.plugins,
+              legend: { display: false },
+              tooltip: {
+                ...CHART_DEFAULTS.plugins.tooltip,
+                callbacks: {
+                  label: (ctx) => {
+                    const a = alignment[ctx.dataIndex]
+                    return ` ${ctx.raw}% (${a.picks_agreeing}/${a.total_picks} picks)`
+                  },
+                },
+              },
+            },
+            scales: {
+              x: CHART_DEFAULTS.scales.x,
+              y: { ...CHART_DEFAULTS.scales.y, min: 0, max: 100, title: { display: true, text: '% agreeing', color: '#4a5568', font: { size: 10 } },
+                   ticks: { color: '#64748b', font: { size: 10 }, callback: v => `${v}%` } },
+            },
+          },
+        })
+      }
+
+      function renderBadgeGallery(badgeDefs, earned) {
+        const gallery = document.getElementById('badge-gallery')
+        if (!gallery) return
+        const earnedMap = {}
+        for (const e of earned) earnedMap[e.badge_id] = e
+
+        gallery.innerHTML = ''
+        const frag = document.createDocumentFragment()
+        for (const def of badgeDefs) {
+          const e = earnedMap[def.id]
+          const div = document.createElement('div')
+          div.className = `badge-chip ${e ? def.tier : 'locked'}`
+          const roundText = e
+            ? (e.count > 1 ? `Earned ${e.count}× — last Rd ${e.rounds[e.rounds.length - 1]}` : `Earned Rd ${e.rounds[0]}`)
+            : 'Not yet earned'
+          div.innerHTML = `
+            <span>${e ? def.emoji : '🔒'}</span>
+            <span>${def.name}</span>
+            ${e && e.count > 1 ? `<span class="badge-count">×${e.count}</span>` : ''}
+            <div class="badge-tooltip">${def.description}<br><span style="color:#4a5568">${roundText}</span></div>
+          `
+          frag.appendChild(div)
+        }
+        gallery.appendChild(frag)
+      }
+
+      async function init() {
+        const session = await getSession()
+        if (!session) {
+          document.getElementById('auth-gate').style.display = ''
+          return
+        }
+        document.getElementById('main-content').style.display = ''
+
+        const userId = session.user.id
+
+        // Fetch profile + stats + badges in parallel
+        const [profileRes, statsRes, badgeDefsRes, earnedRes] = await Promise.all([
+          supabase.from('profiles').select('username, favourite_team').eq('id', userId).single(),
+          fetch(`${BACKEND}/api/user_stats/${userId}`).then(r => r.ok ? r.json() : null),
+          fetch(`${BACKEND}/api/achievements`).then(r => r.ok ? r.json() : []),
+          fetch(`${BACKEND}/api/user_achievements/${userId}`).then(r => r.ok ? r.json() : []),
+        ])
+
+        const profile = profileRes?.data
+        const stats   = statsRes
+        const earned  = earnedRes
+
+        // Page header
+        const username = profile?.username || 'Tipper'
+        document.getElementById('page-username').textContent = username
+        if (profile?.favourite_team) {
+          document.getElementById('user-avatar').innerHTML =
+            `<img src="/logos/${slug(profile.favourite_team)}.svg" style="width:2.5rem;height:2.5rem;object-fit:contain;" onerror="this.parentElement.innerHTML='<span style=\'font-size:1.25rem;\'>🏉</span>'">`
+        } else {
+          document.getElementById('user-avatar').innerHTML = '<span style="font-size:1.25rem;">🏉</span>'
+        }
+
+        if (!stats) {
+          document.getElementById('page-subtitle').textContent = 'No stats yet — start tipping!'
+          return
+        }
+
+        const totalPts   = stats.round_scores.reduce((s, r) => s + r.points, 0)
+        const gamesCount = stats.round_scores.reduce((s, r) => s + r.games_count, 0)
+        const roundCount = stats.round_scores.length
+        document.getElementById('page-subtitle').textContent = `${gamesCount} game${gamesCount !== 1 ? 's' : ''} scored · ${roundCount} round${roundCount !== 1 ? 's' : ''}`
+
+        // Summary tiles — use the existing modal's h2h for wins data if available
+        document.getElementById('tile-total-pts').textContent  = totalPts.toFixed(1)
+        document.getElementById('tile-total-pts-sub').textContent = `across ${roundCount} rounds`
+        document.getElementById('tile-games').textContent = String(gamesCount)
+        document.getElementById('tile-games-sub').textContent = gamesCount > 0 ? `${(totalPts / gamesCount).toFixed(2)} pts avg` : ''
+
+        // Win rate from alignment (proxy: picked correct team)
+        const alignTotals = stats.alignment_by_round.reduce((acc, a) => {
+          acc.agree += a.picks_agreeing; acc.total += a.total_picks; return acc
+        }, { agree: 0, total: 0 })
+        const alignPct = alignTotals.total > 0 ? (alignTotals.agree / alignTotals.total * 100) : null
+        document.getElementById('tile-winrate').textContent = alignPct != null ? `${alignPct.toFixed(0)}%` : '—'
+        document.getElementById('tile-winrate-sub').textContent = 'picks agreeing with machine'
+
+        // H2H — count rounds where user beat machine
+        const beatRounds = stats.round_scores.filter(r => r.points > r.machine_points).length
+        document.getElementById('tile-h2h').textContent = `${beatRounds}/${roundCount}`
+        document.getElementById('tile-h2h-sub').textContent = 'rounds beating BS Machine'
+
+        // Charts
+        renderRoundChart(stats.round_scores)
+        renderTeamChart(stats.team_accuracy)
+        renderCalibrationChart(stats.calibration)
+        renderAlignmentChart(stats.alignment_by_round)
+
+        // Badges
+        renderBadgeGallery(badgeDefsRes, earned)
+      }
+
+      init()
+    </script>
+
+    <script>
+      fetch('../components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const menuToggle = document.getElementById('menu-toggle')
+          const mobileMenu = document.getElementById('mobile-menu')
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener('click', () => {
+              mobileMenu.classList.toggle('hidden')
+            })
+          }
+        })
+      fetch('../components/footer.html').then(r => r.text()).then(h => {
+        document.getElementById('site-footer').innerHTML = h
+      }).catch(() => {})
+    </script>
+  </body>
+</html>

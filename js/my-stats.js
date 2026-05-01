@@ -460,6 +460,24 @@ function renderStats(stats, { bodyEl = null, subEl = null } = {}) {
           : tile('Worst Team to Tip', '—', 'not enough data yet', '#4a5568')
         }
       </div>
+    </div>
+
+    <!-- Achievements section (populated async) -->
+    <div id="msc-achievements" style="padding:0 1.5rem 1.25rem;">
+      <div style="height:1px;background:#1e2a3a;margin-bottom:1.125rem;"></div>
+      <div style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#4a5568;margin-bottom:0.625rem;">Achievements</div>
+      <div id="msc-badge-list" style="display:flex;flex-wrap:wrap;gap:0.4rem;min-height:1.75rem;">
+        <div style="font-size:0.75rem;color:#2e3a4e;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Full stats link -->
+    <div style="padding:0 1.5rem 1.25rem;">
+      <a href="/pages/my-stats.html" style="display:flex;align-items:center;justify-content:center;gap:0.375rem;padding:0.625rem;border:1px solid #2e3a4e;border-radius:8px;font-size:0.8125rem;font-weight:600;color:#94a3b8;text-decoration:none;transition:all 0.12s;"
+         onmouseover="this.style.borderColor='#4a5568';this.style.color='#e2e8f0';"
+         onmouseout="this.style.borderColor='#2e3a4e';this.style.color='#94a3b8';">
+        View full stats →
+      </a>
     </div>`
 }
 
@@ -483,11 +501,52 @@ async function openMyStats() {
   }
 
   try {
-    const stats = await fetchAllData(session.user.id)
+    const [stats] = await Promise.all([
+      fetchAllData(session.user.id),
+    ])
     renderStats(stats)
+    // Load badges async after main stats render
+    loadModalBadges(session.user.id)
   } catch (err) {
     console.error('[my-stats] failed to load stats:', err)
     if (bodyEl) bodyEl.innerHTML = `<div style="padding:2rem;text-align:center;font-size:0.875rem;color:#f87171;">Failed to load stats. Please try again.</div>`
+  }
+}
+
+async function loadModalBadges(userId) {
+  const listEl = document.getElementById('msc-badge-list')
+  if (!listEl) return
+  try {
+    const [defs, earned] = await Promise.all([
+      fetch(`${BACKEND}/achievements`).then(r => r.ok ? r.json() : []),
+      fetch(`${BACKEND}/user_achievements/${userId}`).then(r => r.ok ? r.json() : []),
+    ])
+    const earnedMap = {}
+    for (const e of earned) earnedMap[e.badge_id] = e
+    const earnedDefs = defs.filter(d => earnedMap[d.id])
+
+    if (!earnedDefs.length) {
+      listEl.innerHTML = `<div style="font-size:0.75rem;color:#2e3a4e;">No badges yet — keep tipping!</div>`
+      return
+    }
+    const tierClass = { gold: 'gold', silver: 'silver', bronze: 'bronze' }
+    const tierStyle = {
+      gold:   'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.35);color:#fbbf24;',
+      silver: 'background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.3);color:#cbd5e1;',
+      bronze: 'background:rgba(180,83,9,0.15);border:1px solid rgba(180,83,9,0.35);color:#fb923c;',
+    }
+    listEl.innerHTML = earnedDefs.map(d => {
+      const e = earnedMap[d.id]
+      const style = tierStyle[d.tier] || tierStyle.bronze
+      const countBadge = e.count > 1
+        ? `<span style="background:rgba(0,0,0,0.3);border-radius:9999px;padding:0 0.3rem;font-size:0.65rem;font-weight:700;">×${e.count}</span>`
+        : ''
+      return `<span title="${d.description}" style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.25rem 0.55rem;border-radius:9999px;font-size:0.7rem;font-weight:600;cursor:default;${style}">
+        ${d.emoji} ${d.name}${countBadge}
+      </span>`
+    }).join('')
+  } catch (e) {
+    if (listEl) listEl.innerHTML = ''
   }
 }
 

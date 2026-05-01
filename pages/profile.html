@@ -243,6 +243,17 @@
 
       </div>
 
+      <!-- Achievements -->
+      <div id="achievements-card" style="background:#161b24; border:1px solid #2e3a4e; border-radius:16px; padding:1.5rem; margin-bottom:1rem;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+          <div style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.8125rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#4a5568;">Achievements</div>
+          <a href="/pages/my-stats.html" style="font-size:0.75rem;color:#4a5568;text-decoration:none;" onmouseover="this.style.color='#94a3b8'" onmouseout="this.style.color='#4a5568'">View full stats →</a>
+        </div>
+        <div id="profile-badge-gallery" style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+          <div style="font-size:0.8rem;color:#2e3a4e;">Loading badges…</div>
+        </div>
+      </div>
+
       <!-- Danger zone -->
       <div style="background:#161b24; border:1px solid rgba(239,68,68,0.2); border-radius:16px; padding:1.5rem;">
         <div style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8125rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:rgba(239,68,68,0.5); margin-bottom:1rem;">
@@ -461,6 +472,50 @@
         teamSaveBtn.disabled = false
         teamSaveBtn.textContent = 'Save'
       })
+
+      // ---- Badge gallery ----
+      const BACKEND = 'https://bsmachine-backend.onrender.com/api'
+      const TIER_STYLE_PROFILE = {
+        gold:   'background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);color:#fbbf24;',
+        silver: 'background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.35);color:#cbd5e1;',
+        bronze: 'background:rgba(180,83,9,0.15);border:1px solid rgba(180,83,9,0.4);color:#fb923c;',
+      }
+      async function loadProfileBadges(userId) {
+        const galleryEl = document.getElementById('profile-badge-gallery')
+        if (!galleryEl) return
+        try {
+          const [defsRes, earnedRes] = await Promise.all([
+            fetch(`${BACKEND}/achievements`),
+            fetch(`${BACKEND}/user_achievements/${userId}`),
+          ])
+          const defs   = defsRes.ok   ? await defsRes.json()   : []
+          const earned = earnedRes.ok ? await earnedRes.json() : []
+          const earnedMap = {}
+          for (const e of earned) earnedMap[e.badge_id] = e
+
+          const html = defs.map(def => {
+            const e     = earnedMap[def.id]
+            const style = e ? (TIER_STYLE_PROFILE[def.tier] || TIER_STYLE_PROFILE.bronze) : 'background:rgba(30,42,58,0.5);border:1px solid #1e2a3a;color:#2e3a4e;'
+            const roundText = e
+              ? (e.count > 1 ? `Earned ${e.count}× — last Rd ${e.rounds[e.rounds.length - 1]}` : `Earned Rd ${e.rounds[0]}`)
+              : 'Not yet earned'
+            const countBadge = e && e.count > 1
+              ? `<span style="background:rgba(0,0,0,0.3);border-radius:9999px;padding:0 0.3rem;font-size:0.65rem;font-weight:700;">×${e.count}</span>`
+              : ''
+            return `<span title="${def.description} — ${roundText}" style="display:inline-flex;align-items:center;gap:0.3rem;padding:0.3rem 0.625rem;border-radius:9999px;font-size:0.75rem;font-weight:600;cursor:default;${style}">
+              ${e ? def.emoji : '🔒'} ${def.name}${countBadge}
+            </span>`
+          }).join('')
+
+          galleryEl.innerHTML = earned.length
+            ? html
+            : `<div style="font-size:0.8rem;color:#2e3a4e;">No badges yet — start tipping to earn your first!</div>${html}`
+        } catch {
+          const galleryEl2 = document.getElementById('profile-badge-gallery')
+          if (galleryEl2) galleryEl2.innerHTML = ''
+        }
+      }
+      loadProfileBadges(session.user.id)
 
       // ---- Delete account ----
       const deleteBtn        = document.getElementById('delete-btn')

@@ -1,5 +1,6 @@
 // supabase-client.js — shared Supabase client for all tipping pages
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+import { initAchievementToasts } from './achievements.js'
 
 const SUPABASE_URL     = 'https://xjqpyyhqzatzlmlojcxv.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_5HgdhAE4ePEAF103sINpqQ_qL3a2E9W'
@@ -101,6 +102,9 @@ export async function updateAuthNav() {
     navEl.querySelector('#my-stats-btn').addEventListener('click', () => {
       window.openMyStats?.()
     })
+
+    // Fire achievement toasts for newly earned badges (non-blocking)
+    initAchievementToasts(session.user.id)
     navEl.querySelector('#sign-out-btn').addEventListener('click', async () => {
       await supabase.auth.signOut()
       window.location.href = '/index.html'

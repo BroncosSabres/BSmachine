@@ -211,6 +211,7 @@
             <button class="lb-tab active" data-tab="individual">Individual</button>
             <button class="lb-tab" data-tab="team">Team</button>
             <button class="lb-tab" data-tab="cup">BS Cup</button>
+            <button class="lb-tab" data-tab="badges">🏆 Badges</button>
           </div>
           <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.45rem 0.75rem; cursor:pointer; white-space:nowrap;">My Stats</button>
         </div>
@@ -289,7 +290,7 @@
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
-      const VALID_TABS = ['individual', 'team', 'cup']
+      const VALID_TABS = ['individual', 'team', 'cup', 'badges']
       const hashTab = window.location.hash.replace('#', '')
       let activeTab = VALID_TABS.includes(hashTab) ? hashTab : 'individual'
       let roundFilter        = 'season'
@@ -429,6 +430,10 @@
           if (sidebarEl) sidebarEl.style.display = 'none'
           matchesEl.innerHTML = loading
           await loadCup()
+        } else if (activeTab === 'badges') {
+          if (sidebarEl) sidebarEl.style.display = 'none'
+          matchesEl.innerHTML = loading
+          await loadBadgesTab()
         } else {
           if (sidebarEl) sidebarEl.style.display = ''
           seasonPanel.innerHTML = loading
@@ -436,6 +441,79 @@
           matchesEl.innerHTML   = loading
           if (activeTab === 'individual') await loadIndividual()
           else await loadTeam()
+        }
+      }
+
+      // ── Badges tab ──────────────────────────────────────────────────────────
+      async function loadBadgesTab() {
+        try {
+          const [defsRes, lbRes] = await Promise.all([
+            fetch(`${BACKEND}/achievements`),
+            fetch(`${BACKEND}/badge_leaderboard`),
+          ])
+          const defs = defsRes.ok ? await defsRes.json() : []
+          const lb   = lbRes.ok  ? await lbRes.json()   : { badges: [] }
+
+          // Build map: badge_id -> leaders array
+          const lbMap = {}
+          for (const b of (lb.badges || [])) lbMap[b.badge_id] = b.leaders || []
+
+          const TIER_COLORS = {
+            gold:   { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)', text: '#fbbf24', badge: 'rgba(245,158,11,0.2)' },
+            silver: { bg: 'rgba(148,163,184,0.08)', border: 'rgba(148,163,184,0.25)', text: '#cbd5e1', badge: 'rgba(148,163,184,0.15)' },
+            bronze: { bg: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.3)', text: '#fb923c', badge: 'rgba(180,83,9,0.15)' },
+          }
+
+          const cardsHtml = defs.map(def => {
+            const c       = TIER_COLORS[def.tier] || TIER_COLORS.bronze
+            const leaders = lbMap[def.id] || []
+            const myEntry = myUserId ? leaders.find(l => l.user_id === myUserId) : null
+
+            const leadersHtml = leaders.length
+              ? leaders.slice(0, 5).map((l, i) => {
+                  const isMe = l.user_id === myUserId
+                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`
+                  return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0;${i > 0 ? 'border-top:1px solid rgba(255,255,255,0.05);' : ''}">
+                    <span style="font-size:0.75rem;width:1.25rem;text-align:center;flex-shrink:0;">${medal}</span>
+                    <span style="font-size:0.8rem;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isMe ? `color:${c.text};` : 'color:#e2e8f0;'}">${escapeHtml(l.username)}${isMe ? ' (you)' : ''}</span>
+                    <span style="font-size:0.75rem;font-weight:700;color:${c.text};background:${c.badge};padding:0.1rem 0.45rem;border-radius:9999px;">×${l.count}</span>
+                  </div>`
+                }).join('')
+              : `<div style="font-size:0.75rem;color:#2e3a4e;padding:0.35rem 0;">No one yet — be the first!</div>`
+
+            const myCountHtml = myEntry && myEntry.count > 5
+              ? `<div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:0.5rem;margin-top:0.25rem;display:flex;align-items:center;gap:0.5rem;">
+                  <span style="font-size:0.7rem;color:#4a5568;">You:</span>
+                  <span style="font-size:0.75rem;font-weight:700;color:${c.text};">×${myEntry.count}</span>
+                </div>`
+              : ''
+
+            return `
+              <div style="background:${c.bg};border:1px solid ${c.border};border-radius:12px;padding:1rem;display:flex;flex-direction:column;gap:0.75rem;">
+                <div style="display:flex;align-items:flex-start;gap:0.625rem;">
+                  <span style="font-size:1.75rem;line-height:1;flex-shrink:0;">${def.emoji}</span>
+                  <div>
+                    <div style="font-size:0.9rem;font-weight:700;color:${c.text};line-height:1.2;">${def.name}</div>
+                    <div style="font-size:0.7rem;color:#64748b;margin-top:0.2rem;line-height:1.4;">${def.description}</div>
+                  </div>
+                </div>
+                <div style="border-top:1px solid rgba(255,255,255,0.07);padding-top:0.625rem;">
+                  ${leadersHtml}
+                  ${myCountHtml}
+                </div>
+              </div>`
+          }).join('')
+
+          matchesEl.innerHTML = `
+            <div style="margin-bottom:1.25rem;">
+              <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.375rem;font-weight:700;color:#e2e8f0;margin-bottom:0.25rem;">Badge Leaderboard</h2>
+              <p style="font-size:0.8125rem;color:#4a5568;">Earn badges by tipping well. Badges can be earned multiple times — one per qualifying round or game.</p>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:0.875rem;">
+              ${cardsHtml}
+            </div>`
+        } catch (err) {
+          matchesEl.innerHTML = `<div style="padding:2rem;text-align:center;color:#f87171;font-size:0.875rem;">Failed to load badges.</div>`
         }
       }
 
@@ -492,11 +570,43 @@
 
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }] = await Promise.all([
+        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }, badgeLbData] = await Promise.all([
           supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number'),
           supabase.from('profiles').select('id, username, favourite_team'),
           supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null),
+          fetch(`${BACKEND}/badge_leaderboard`).then(r => r.ok ? r.json() : { badges: [] }).catch(() => ({ badges: [] })),
         ])
+
+        // Build per-user badge map: { userId: [{emoji, name, tier, count}] } (top 3 by tier)
+        const TIER_ORDER = { gold: 0, silver: 1, bronze: 2 }
+        const userBadgesMap = {}
+        for (const b of (badgeLbData?.badges || [])) {
+          for (const l of (b.leaders || [])) {
+            if (!userBadgesMap[l.user_id]) userBadgesMap[l.user_id] = []
+            userBadgesMap[l.user_id].push({ badge_id: b.badge_id, count: l.count })
+          }
+        }
+        // Fetch badge defs for emoji/tier lookup (uses cached _defsCache if already fetched)
+        let _badgeDefs = []
+        try {
+          const r = await fetch(`${BACKEND}/achievements`); if (r.ok) _badgeDefs = await r.json()
+        } catch {}
+        const _badgeDefMap = {}
+        for (const d of _badgeDefs) _badgeDefMap[d.id] = d
+
+        function getUserBadgeChips(userId) {
+          const entries = userBadgesMap[userId] || []
+          if (!entries.length) return ''
+          // Sort by tier then count
+          const sorted = entries
+            .map(e => ({ ...e, def: _badgeDefMap[e.badge_id] }))
+            .filter(e => e.def)
+            .sort((a, b) => (TIER_ORDER[a.def.tier] ?? 3) - (TIER_ORDER[b.def.tier] ?? 3) || b.count - a.count)
+            .slice(0, 3)
+          return sorted.map(e =>
+            `<span title="${e.def.name}${e.count > 1 ? ` ×${e.count}` : ''}" style="font-size:0.75rem;line-height:1;cursor:default;">${e.def.emoji}</span>`
+          ).join('')
+        }
 
         // Compute live scores for current-round games not yet in the scores table
         let liveComputedScores = []
@@ -647,12 +757,14 @@
             : r.isCrowd
             ? `<span style="font-size:0.9rem;line-height:1;flex-shrink:0;">👥</span>`
             : (r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : '')
+          const badgeChips = isVirtual ? '' : getUserBadgeChips(r.uid)
           return `
             <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;${isVirtual ? 'border-top:2px solid #2e3a4e;' : ''}">
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
               <div class="flex items-center gap-1.5 min-w-0">
                 ${logoEl}
                 ${nameEl}
+                ${badgeChips ? `<span style="display:inline-flex;gap:0.15rem;flex-shrink:0;">${badgeChips}</span>` : ''}
               </div>
               <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
               <div class="pts-display text-right" style="${r.isMachine ? 'color:#f59e0b;' : r.isCrowd ? 'color:#38bdf8;' : ''}">${r.pts.toFixed(1)}</div>
