@@ -2248,12 +2248,115 @@
 
       // ─── BS Tipping Cup ────────────────────────────────────────────────────
 
-      let cupViewRound = null   // which cup_round the H2H card is displaying
+      let cupViewRound       = null   // which cup_round the H2H card is displaying
+      let cupShowFullBracket = false  // toggle for live seeding: full bracket vs matchup list
+      let cupLiveConfig      = null   // stored so the toggle button can re-render
 
-      function nextPowerOfTwo(n) {
+      function largestPowerOfTwo(n) {
         let p = 1
-        while (p < n) p *= 2
+        while (p * 2 <= n) p *= 2
         return p
+      }
+
+      // Returns seed numbers in visual top-to-bottom order for a bracket of given size.
+      // Ensures seed 1 and seed 2 can only meet in the final.
+      function getBracketOrder(size) {
+        if (size === 2) return [1, 2]
+        const h = getBracketOrder(size / 2)
+        const r = []
+        for (const s of h) { r.push(s); r.push(size + 1 - s) }
+        return r
+      }
+
+      function buildTwoSidedBracket(bracketSize, ranked, userScores) {
+        const fullOrder = getBracketOrder(bracketSize)
+        const allR1 = []
+        for (let i = 0; i < fullOrder.length; i += 2)
+          allR1.push([fullOrder[i], fullOrder[i + 1]])
+
+        const mid        = allR1.length / 2
+        const leftPairs  = allR1.slice(0, mid)
+        const rightPairs = allR1.slice(mid)
+        const sideRounds = Math.log2(bracketSize) - 1  // rounds per side before Final
+
+        function roundLabel(r) {
+          // r=1 is outermost (R1), r=sideRounds is innermost (SF)
+          const fromFinal = sideRounds - r + 1
+          if (fromFinal === 1) return 'Semi Final'
+          if (fromFinal === 2) return 'Quarter Final'
+          if (r === 1)         return 'Round 1'
+          return `Round ${r}`
+        }
+
+        function bRow(entry, seed) {
+          const prof = entry.profile
+          const logo = prof.favourite_team
+            ? `<img src="../logos/${teamSlug(prof.favourite_team)}.svg" style="width:0.8rem;height:0.8rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            : ''
+          const pts = userScores[entry.uid] != null
+            ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;margin-left:auto;flex-shrink:0;">${entry.score.toFixed(1)}</span>`
+            : ''
+          return `<div class="cup-player-row${entry.uid === myUserId ? ' cup-me' : ''}" style="padding:0.28rem 0.5rem;">
+            ${logo}
+            <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${seed}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;">${escapeHtml(prof.username || '?')}</span>
+            ${pts}
+          </div>`
+        }
+
+        function bCard(seedA, seedB) {
+          const entA = ranked[seedA - 1], entB = ranked[seedB - 1]
+          if (!entA || !entB) return tbdCard()
+          return `<div class="cup-matchup-card">${bRow(entA, seedA)}${bRow(entB, seedB)}</div>`
+        }
+
+        function tbdCard() {
+          return `<div class="cup-matchup-card" style="opacity:0.22;">
+            <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.7rem;">TBD</div>
+            <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.7rem;">TBD</div>
+          </div>`
+        }
+
+        // Build one column. Each card is wrapped in a flex slot whose flex value
+        // doubles every round so that later-round cards are perfectly centered
+        // between the two earlier-round cards that feed into them.
+        // r=1 → flex:1 per slot (R1), r=2 → flex:2 (R2), r=k → flex:2^(k-1)
+        function buildColumn(label, cards, flexPerSlot, labelColor) {
+          const slots = cards.map(card =>
+            `<div style="flex:${flexPerSlot};display:flex;align-items:center;padding:2px 0;">${card}</div>`
+          ).join('')
+          return `<div style="min-width:138px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+            <div style="text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};margin-bottom:0.35rem;flex-shrink:0;">${label}</div>
+            <div style="display:flex;flex-direction:column;flex:1;">${slots}</div>
+          </div>`
+        }
+
+        function buildSide(r1Pairs, isRight) {
+          const cols = []
+          for (let r = 1; r <= sideRounds; r++) {
+            const count       = r1Pairs.length / Math.pow(2, r - 1)
+            const flexPerSlot = Math.pow(2, r - 1)
+            const cards = r === 1
+              ? r1Pairs.map(([a, b]) => bCard(a, b))
+              : Array(Math.round(count)).fill(null).map(() => tbdCard())
+            cols.push({ r, cards, flexPerSlot })
+          }
+          if (isRight) cols.reverse()   // right side reads SF→R1 left to right
+          return cols.map(({ r, cards, flexPerSlot }) =>
+            buildColumn(roundLabel(r), cards, flexPerSlot)
+          ).join('')
+        }
+
+        const finalCard = `<div style="min-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+          <div style="text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;margin-bottom:0.35rem;flex-shrink:0;">Grand Final</div>
+          <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${tbdCard()}</div>
+        </div>`
+
+        return `<div style="display:flex;align-items:stretch;overflow-x:auto;padding-bottom:0.5rem;">
+          ${buildSide(leftPairs, false)}
+          ${finalCard}
+          ${buildSide(rightPairs, true)}
+        </div>`
       }
 
       async function renderLiveSeeding(config) {
@@ -2305,53 +2408,65 @@
           .sort((a, b) => b.score - a.score)
 
         const n            = ranked.length
-        const bracketSize  = nextPowerOfTwo(n)
-        const nByes        = bracketSize - n
+        const bracketSize  = largestPowerOfTwo(n)
+        const nEliminated  = n - bracketSize
         const completedGames = seedGames.filter(g => liveGameMap[g.game_id]?.home_score != null).length
         const totalGames     = seedGames.length
         const isMe           = uid => uid === myUserId
 
         // Build seeding rows
-        const seedRows = ranked.map((entry, i) => {
-          const seed    = i + 1
-          const hasBye  = seed <= nByes
-          const prof    = entry.profile
-          const logo    = prof.favourite_team
-            ? `<img src="../logos/${teamSlug(prof.favourite_team)}.svg" style="width:1.1rem;height:1.1rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+        const seedRowItems = ranked.map((entry, i) => {
+          const seed      = i + 1
+          const isElim    = seed > bracketSize   // bottom seeds eliminated in seeding round
+          const prof      = entry.profile
+          const logo      = prof.favourite_team
+            ? `<img src="../logos/${teamSlug(prof.favourite_team)}.svg" style="width:1.1rem;height:1.1rem;object-fit:contain;flex-shrink:0;${isElim?'opacity:0.4':''}" onerror="this.style.display='none'">`
             : ''
-          const meStyle = isMe(entry.uid) ? 'background:rgba(245,158,11,0.05);' : ''
-          const pts     = userScores[entry.uid] != null
+          const meStyle   = isMe(entry.uid) ? 'background:rgba(245,158,11,0.05);' : ''
+          const elimStyle = isElim ? 'opacity:0.4;' : ''
+          const pts       = userScores[entry.uid] != null
             ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:700;">${entry.score.toFixed(1)}</span>`
             : `<span style="color:#4a5568;font-size:0.8rem;">—</span>`
-          const byeBadge = hasBye
-            ? `<span style="font-size:0.6rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;background:rgba(34,197,94,0.12);color:#4ade80;border:1px solid rgba(34,197,94,0.25);border-radius:3px;padding:1px 5px;flex-shrink:0;">BYE</span>`
-            : ''
-          const rankClr = seed === 1 ? '#fbbf24' : seed === 2 ? '#94a3b8' : seed === 3 ? '#c2906a' : '#4a5568'
-          return `
-            <div class="lb-row" style="${meStyle}display:grid;grid-template-columns:2rem 1fr auto auto;gap:0.5rem;align-items:center;">
+          const rankClr = isElim ? '#374151' : seed === 1 ? '#fbbf24' : seed === 2 ? '#94a3b8' : seed === 3 ? '#c2906a' : '#4a5568'
+          return {
+            seed,
+            isElim,
+            html: `
+            <div class="lb-row" style="${meStyle}${elimStyle}display:grid;grid-template-columns:2rem 1fr auto;gap:0.5rem;align-items:center;">
               <span style="font-family:'Barlow Condensed',sans-serif;font-size:0.875rem;font-weight:700;color:${rankClr};text-align:center;">${seed}</span>
               <div style="display:flex;align-items:center;gap:0.4rem;min-width:0;">
                 ${logo}
                 <span style="font-size:0.875rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isMe(entry.uid)?'color:#fbbf24':''}">${escapeHtml(prof.username || 'Unknown')}${isMe(entry.uid)?' (you)':''}</span>
               </div>
-              ${byeBadge}
               ${pts}
             </div>`
-        }).join('')
-
-        // Provisional bracket: show round-1 matchups from current seeding
-        const r1Matchups = []
-        for (let i = 0; i < n - nByes; i += 2) {
-          const seedA = nByes + 1 + i
-          const seedB = n - i
-          const entA  = ranked[seedA - 1]
-          const entB  = ranked[seedB - 1]
-          if (entA && entB) {
-            r1Matchups.push({ a: entA, seedA, b: entB, seedB })
           }
-        }
+        })
 
-        const r1Cards = r1Matchups.map(({ a, seedA, b, seedB }) => {
+        // Insert elimination separator between bracket and eliminated players
+        const elimSeparator = nEliminated > 0
+          ? `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0.75rem;margin:0.15rem 0;">
+               <div style="flex:1;height:1px;background:rgba(239,68,68,0.3);"></div>
+               <span style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#f87171;white-space:nowrap;">Elimination &#9660;</span>
+               <div style="flex:1;height:1px;background:rgba(239,68,68,0.3);"></div>
+             </div>`
+          : ''
+
+        const seedRows = seedRowItems.map(item =>
+          item.seed === bracketSize + 1 ? elimSeparator + item.html : item.html
+        ).join('')
+
+        cupLiveConfig = config
+
+        const progressPct = totalGames > 0 ? Math.round((completedGames / totalGames) * 100) : 0
+
+        // R1 provisional matchup cards (default view) — uses proper bracket seeding order
+        const r1Order = getBracketOrder(bracketSize)
+        const r1Cards = []
+        for (let i = 0; i < r1Order.length; i += 2) {
+          const seedA = r1Order[i], seedB = r1Order[i + 1]
+          const entA = ranked[seedA - 1], entB = ranked[seedB - 1]
+          if (!entA || !entB) continue
           function pRow(entry, seed) {
             const prof = entry.profile
             const logo = prof.favourite_team
@@ -2367,49 +2482,50 @@
               ${pts}
             </div>`
           }
-          return `<div class="cup-matchup-card" style="min-width:155px;">${pRow(a, seedA)}${pRow(b, seedB)}</div>`
-        }).join('')
+          r1Cards.push(`<div class="cup-matchup-card">${pRow(entA, seedA)}${pRow(entB, seedB)}</div>`)
+        }
 
-        const progressPct = totalGames > 0 ? Math.round((completedGames / totalGames) * 100) : 0
+        const toggleBtn = cupShowFullBracket
+          ? `<button id="cup-bracket-toggle" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.35rem 0.85rem;font-size:0.78rem;font-weight:600;color:#94a3b8;cursor:pointer;">← Back</button>`
+          : `<button id="cup-bracket-toggle" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);border-radius:6px;padding:0.35rem 0.85rem;font-size:0.78rem;font-weight:600;color:#60a5fa;cursor:pointer;">View full bracket →</button>`
+
+        const mainContent = cupShowFullBracket
+          ? `<!-- Two-sided bracket -->
+             <div style="overflow-x:auto;">${buildTwoSidedBracket(bracketSize, ranked, userScores)}</div>`
+          : `<!-- Seeding table + R1 matchups -->
+             <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:flex-start;">
+               <div style="flex:1;min-width:240px;">
+                 <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">Current Seeding</div>
+                 <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:10px;overflow:hidden;">${seedRows}</div>
+               </div>
+               <div style="flex:1;min-width:200px;">
+                 <div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">
+                   Provisional Round 1
+                   <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#374151;margin-left:0.35rem;">(if results stand)</span>
+                 </div>
+                 <div style="display:flex;flex-direction:column;gap:0.25rem;">${r1Cards.join('')}</div>
+               </div>
+             </div>`
 
         matchesEl.innerHTML = `
           <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:1.25rem;">
             <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;">${escapeHtml(config.name)}</h2>
             <span style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;padding:2px 7px;text-transform:uppercase;">● Live Seeding</span>
-            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">${completedGames}/${totalGames} games complete · ${n} entrants · ${bracketSize}-bracket · ${nByes} byes</span>
+            ${toggleBtn}
+            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">${completedGames}/${totalGames} games complete · ${n} entrants · ${bracketSize}-player bracket${nEliminated > 0 ? ` · bottom ${nEliminated} eliminated` : ''}</span>
           </div>
-
-          <!-- Progress bar -->
-          <div style="height:3px;background:#1e2a3a;border-radius:2px;margin-bottom:1.5rem;overflow:hidden;">
+          <div style="height:3px;background:#1e2a3a;border-radius:2px;margin-bottom:1.25rem;overflow:hidden;">
             <div style="height:100%;width:${progressPct}%;background:linear-gradient(90deg,#ef4444,#f97316);border-radius:2px;transition:width 0.3s;"></div>
           </div>
-
-          <!-- Two column: seeding table + provisional round 1 -->
-          <div style="display:flex;gap:1.5rem;flex-wrap:wrap;align-items:flex-start;">
-
-            <!-- Seeding table -->
-            <div style="flex:1;min-width:240px;">
-              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">Current Seeding</div>
-              <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:12px;overflow:hidden;">
-                ${seedRows}
-              </div>
-            </div>
-
-            <!-- Provisional round 1 bracket -->
-            ${r1Cards.length ? `
-            <div style="flex:1;min-width:200px;">
-              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.5rem;">
-                Provisional Round 1 Matchups
-                <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#374151;margin-left:0.4rem;">(if results stand)</span>
-              </div>
-              <div style="display:flex;flex-direction:column;gap:0.25rem;">${r1Cards}</div>
-            </div>` : ''}
-
-          </div>
-
-          <div style="margin-top:1rem;font-size:0.75rem;color:#374151;">
+          ${mainContent}
+          <div style="margin-top:0.875rem;font-size:0.72rem;color:#374151;">
             Seedings update as Round ${config.seeding_round} games complete. Bracket locks in after the round is scored.
           </div>`
+
+        document.getElementById('cup-bracket-toggle')?.addEventListener('click', () => {
+          cupShowFullBracket = !cupShowFullBracket
+          renderLiveSeeding(cupLiveConfig)
+        })
 
         // Start polling if not already running
         if (!cupPollInterval) {
