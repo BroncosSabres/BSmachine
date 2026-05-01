@@ -2323,10 +2323,10 @@
         // r=1 → flex:1 per slot (R1), r=2 → flex:2 (R2), r=k → flex:2^(k-1)
         function buildColumn(label, cards, flexPerSlot, labelColor) {
           const slots = cards.map(card =>
-            `<div style="flex:${flexPerSlot};display:flex;align-items:center;padding:2px 0;">${card}</div>`
+            `<div style="flex:${flexPerSlot};display:flex;flex-direction:column;justify-content:center;padding:2px 0;">${card}</div>`
           ).join('')
-          return `<div style="min-width:138px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
-            <div style="text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};margin-bottom:0.35rem;flex-shrink:0;">${label}</div>
+          return `<div style="width:138px;min-width:138px;max-width:138px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+            <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};flex-shrink:0;">${label}</div>
             <div style="display:flex;flex-direction:column;flex:1;">${slots}</div>
           </div>`
         }
@@ -2347,8 +2347,8 @@
           ).join('')
         }
 
-        const finalCard = `<div style="min-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
-          <div style="text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;margin-bottom:0.35rem;flex-shrink:0;">Grand Final</div>
+        const finalCard = `<div style="width:120px;min-width:120px;max-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+          <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;flex-shrink:0;">Grand Final</div>
           <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${tbdCard()}</div>
         </div>`
 
