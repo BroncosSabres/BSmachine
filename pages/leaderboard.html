@@ -1978,7 +1978,7 @@
         // Fetch games, picks, scores, profile in parallel
         const { data: games } = await supabase
           .from('games')
-          .select('game_id, home_team, away_team, home_score, away_score, is_complete')
+          .select('game_id, home_team, away_team, home_score, away_score, is_complete, kickoff_time')
           .eq('round_number', roundNumber)
           .order('game_id', { ascending: true })
 
@@ -2032,6 +2032,8 @@
           const hasScore  = homeScore != null && awayScore != null
           const isLive    = lg?.is_live === true
 
+          const isGameLocked = game.kickoff_time ? new Date(game.kickoff_time) <= new Date() : hasScore
+
           const pick  = pickMap[game.game_id]
           const score = scoreMap[game.game_id]
           if (pick)  pickedCount++
@@ -2041,9 +2043,11 @@
             ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.25rem;font-weight:700;color:#e2e8f0;letter-spacing:0.03em;">${homeScore}–${awayScore}</span>${isLive ? '<br><span style="font-size:0.55rem;font-weight:700;letter-spacing:0.1em;color:#f87171;">● LIVE</span>' : ''}`
             : `<span style="font-size:0.7rem;font-weight:600;color:#2e3a4e;text-transform:uppercase;letter-spacing:0.05em;">Upcoming</span>`
 
-          const pickDisplay = pick
-            ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9rem;font-weight:600;color:#cbd5e1;">${pick.home_score_pick}–${pick.away_score_pick}</span>`
-            : `<span style="font-size:0.75rem;color:#2e3a4e;font-style:italic;">No pick</span>`
+          const pickDisplay = !isGameLocked
+            ? `<span style="font-size:0.75rem;color:#2e3a4e;font-style:italic;">Hidden until game starts</span>`
+            : pick
+              ? `<span style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:0.9rem;font-weight:600;color:#cbd5e1;">${pick.home_score_pick}–${pick.away_score_pick}</span>`
+              : `<span style="font-size:0.75rem;color:#2e3a4e;font-style:italic;">No pick</span>`
 
           const mScore  = score?.margin_score != null ? score.margin_score.toFixed(1) : null
           const tScore  = score?.total_score  != null ? score.total_score.toFixed(1)  : null
