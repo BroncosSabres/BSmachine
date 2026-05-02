@@ -570,43 +570,11 @@
 
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }, badgeLbData] = await Promise.all([
+        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }] = await Promise.all([
           supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number'),
           supabase.from('profiles').select('id, username, favourite_team'),
           supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null),
-          fetch(`${BACKEND}/badge_leaderboard`).then(r => r.ok ? r.json() : { badges: [] }).catch(() => ({ badges: [] })),
         ])
-
-        // Build per-user badge map: { userId: [{emoji, name, tier, count}] } (top 3 by tier)
-        const TIER_ORDER = { gold: 0, silver: 1, bronze: 2 }
-        const userBadgesMap = {}
-        for (const b of (badgeLbData?.badges || [])) {
-          for (const l of (b.leaders || [])) {
-            if (!userBadgesMap[l.user_id]) userBadgesMap[l.user_id] = []
-            userBadgesMap[l.user_id].push({ badge_id: b.badge_id, count: l.count })
-          }
-        }
-        // Fetch badge defs for emoji/tier lookup (uses cached _defsCache if already fetched)
-        let _badgeDefs = []
-        try {
-          const r = await fetch(`${BACKEND}/achievements`); if (r.ok) _badgeDefs = await r.json()
-        } catch {}
-        const _badgeDefMap = {}
-        for (const d of _badgeDefs) _badgeDefMap[d.id] = d
-
-        function getUserBadgeChips(userId) {
-          const entries = userBadgesMap[userId] || []
-          if (!entries.length) return ''
-          // Sort by tier then count
-          const sorted = entries
-            .map(e => ({ ...e, def: _badgeDefMap[e.badge_id] }))
-            .filter(e => e.def)
-            .sort((a, b) => (TIER_ORDER[a.def.tier] ?? 3) - (TIER_ORDER[b.def.tier] ?? 3) || b.count - a.count)
-            .slice(0, 3)
-          return sorted.map(e =>
-            `<span title="${e.def.name}${e.count > 1 ? ` ×${e.count}` : ''}" style="font-size:0.75rem;line-height:1;cursor:default;">${e.def.emoji}</span>`
-          ).join('')
-        }
 
         // Compute live scores for current-round games not yet in the scores table
         let liveComputedScores = []
@@ -757,14 +725,12 @@
             : r.isCrowd
             ? `<span style="font-size:0.9rem;line-height:1;flex-shrink:0;">👥</span>`
             : (r.team ? `<img src="../logos/${teamSlug(r.team)}.svg" class="w-4 h-4 object-contain shrink-0 opacity-70" onerror="this.style.display='none'">` : '')
-          const badgeChips = isVirtual ? '' : getUserBadgeChips(r.uid)
           return `
             <div class="lb-row ${isMe ? 'me-row' : ''}" style="grid-template-columns:2rem 1fr auto auto; gap:0.5rem;${isVirtual ? 'border-top:2px solid #2e3a4e;' : ''}">
               <div class="rank-badge ${rankClass}">${rankLabel}</div>
               <div class="flex items-center gap-1.5 min-w-0">
                 ${logoEl}
                 ${nameEl}
-                ${badgeChips ? `<span style="display:inline-flex;gap:0.15rem;flex-shrink:0;">${badgeChips}</span>` : ''}
               </div>
               <div class="text-right text-xs" style="color:#4a5568; white-space:nowrap;">${r.avg}</div>
               <div class="pts-display text-right" style="${r.isMachine ? 'color:#f59e0b;' : r.isCrowd ? 'color:#38bdf8;' : ''}">${r.pts.toFixed(1)}</div>
