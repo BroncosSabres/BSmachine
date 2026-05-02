@@ -465,28 +465,46 @@
           }
 
           const cardsHtml = defs.map(def => {
-            const c       = TIER_COLORS[def.tier] || TIER_COLORS.bronze
-            const leaders = lbMap[def.id] || []
-            const myEntry = myUserId ? leaders.find(l => l.user_id === myUserId) : null
+            const c              = TIER_COLORS[def.tier] || TIER_COLORS.bronze
+            const leaders        = lbMap[def.id] || []
+            const isRecordStreak = def.id === 'record_streak'
+            const myEntry        = myUserId ? leaders.find(l => l.user_id === myUserId) : null
 
             const leadersHtml = leaders.length
               ? leaders.slice(0, 5).map((l, i) => {
-                  const isMe = l.user_id === myUserId
-                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`
+                  const isMe  = l.user_id === myUserId
+                  const label = isRecordStreak
+                    ? `${l.streak_length} in a row`
+                    : `×${l.count}`
+                  // Record streak is ordered by recency — show numbered positions, not medals
+                  const pos   = isRecordStreak
+                    ? `<span style="font-size:0.7rem;color:#4a5568;width:1.25rem;text-align:center;flex-shrink:0;">${i + 1}.</span>`
+                    : `<span style="font-size:0.75rem;width:1.25rem;text-align:center;flex-shrink:0;">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`}</span>`
                   return `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.35rem 0;${i > 0 ? 'border-top:1px solid rgba(255,255,255,0.05);' : ''}">
-                    <span style="font-size:0.75rem;width:1.25rem;text-align:center;flex-shrink:0;">${medal}</span>
+                    ${pos}
                     <span style="font-size:0.8rem;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isMe ? `color:${c.text};` : 'color:#e2e8f0;'}">${escapeHtml(l.username)}${isMe ? ' (you)' : ''}</span>
-                    <span style="font-size:0.75rem;font-weight:700;color:${c.text};background:${c.badge};padding:0.1rem 0.45rem;border-radius:9999px;">×${l.count}</span>
+                    <span style="font-size:0.75rem;font-weight:700;color:${c.text};background:${c.badge};padding:0.1rem 0.45rem;border-radius:9999px;">${label}</span>
                   </div>`
                 }).join('')
               : `<div style="font-size:0.75rem;color:#2e3a4e;padding:0.35rem 0;">No one yet — be the first!</div>`
 
-            const myCountHtml = myEntry && myEntry.count > 5
-              ? `<div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:0.5rem;margin-top:0.25rem;display:flex;align-items:center;gap:0.5rem;">
-                  <span style="font-size:0.7rem;color:#4a5568;">You:</span>
-                  <span style="font-size:0.75rem;font-weight:700;color:${c.text};">×${myEntry.count}</span>
-                </div>`
-              : ''
+            // "You" footer: count for standard badges; streak for record_streak
+            const myCountHtml = (() => {
+              if (isRecordStreak) {
+                return myEntry
+                  ? `<div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:0.5rem;margin-top:0.25rem;display:flex;align-items:center;gap:0.5rem;">
+                      <span style="font-size:0.7rem;color:#4a5568;">You:</span>
+                      <span style="font-size:0.75rem;font-weight:700;color:${c.text};">${myEntry.streak_length} in a row</span>
+                    </div>`
+                  : ''
+              }
+              return myEntry && myEntry.count > 5
+                ? `<div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:0.5rem;margin-top:0.25rem;display:flex;align-items:center;gap:0.5rem;">
+                    <span style="font-size:0.7rem;color:#4a5568;">You:</span>
+                    <span style="font-size:0.75rem;font-weight:700;color:${c.text};">×${myEntry.count}</span>
+                  </div>`
+                : ''
+            })()
 
             return `
               <div style="background:${c.bg};border:1px solid ${c.border};border-radius:12px;padding:1rem;display:flex;flex-direction:column;gap:0.75rem;">
