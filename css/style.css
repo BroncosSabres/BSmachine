@@ -436,7 +436,7 @@ h2, h3 {
   }
 
   .sgm-result.betslip-open {
-    max-height: 70vh;
+    max-height: none;
   }
 }
 

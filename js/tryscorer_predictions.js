@@ -1870,9 +1870,10 @@ document.addEventListener("DOMContentLoaded", function () {
     return e;
   }
   // Approximate P(exactly k legs fail, rest win) using independence.
-  // Under independence: P(exactly k legs fail) = combinedProb * e_k(failOdds)
+  // Under independence: P(exactly k legs fail) = allCombinedProb * e_k(failOdds)
   // where failOdds_i = (1-p_i)/p_i.
-  // Returns [{k, prob, odds}] for k = 1 .. min(N-1, 3).
+  // P(at least X legs succeed) = allCombinedProb * sum_{k=0}^{N-X} esp[k]
+  // Returns [{X, N, prob, odds}] for X = 2 .. N-1.
   function _computeInsurance(results, allCombinedProb) {
     const clamp = p => Math.min(Math.max(p, 1e-4), 1 - 1e-4);
     const legProbs = [];
@@ -1900,25 +1901,25 @@ document.addEventListener("DOMContentLoaded", function () {
     if (N < 2 || allCombinedProb <= 0) return [];
     const failOdds = legProbs.map(p => (1 - p) / p);
     const esp = _elemSymPoly(failOdds);
-    // P(at least k legs fail) = 1 - allCombinedProb * sum_{j=0}^{k-1} esp[j]
-    const maxK = Math.min(N - 1, 3);
-    const insurance = [];
-    let cumExact = allCombinedProb; // running sum of P(exactly j fail) for j < k
-    for (let k = 1; k <= maxK; k++) {
-      const prob = Math.min(Math.max(1 - cumExact, 0), 1);
-      insurance.push({ k, N, prob });
-      cumExact += allCombinedProb * esp[k];
+    // Build cumulative prefix sums of esp to efficiently compute P(at least X succeed)
+    const prefixEsp = [0];
+    for (let k = 0; k <= N; k++) prefixEsp[k + 1] = prefixEsp[k] + (esp[k] || 0);
+    const combinations = [];
+    for (let X = 2; X <= N - 1; X++) {
+      const cumSum = prefixEsp[N - X + 1]; // sum of esp[0..N-X]
+      const prob = Math.min(Math.max(allCombinedProb * cumSum, 0), 1);
+      const odds = prob > 0 ? (1 / prob).toFixed(2) : '∞';
+      combinations.push({ X, N, prob, odds });
     }
-    return insurance;
+    return combinations;
   }
 
   // --- RENDER BETSLIP ---
   function renderBetslip(results) {
-    betslipExpanded = false;
-
     if (results.length === 0) {
       resultDiv.innerHTML = '';
       resultDiv.classList.remove('betslip-open');
+      betslipExpanded = false;
       return;
     }
 
@@ -2018,15 +2019,17 @@ document.addEventListener("DOMContentLoaded", function () {
     const insurance = totalLegs >= 2 ? _computeInsurance(results, allCombinedProb) : [];
     const insuranceHtml = insurance.length > 0 ? `
       <div class="mt-3 pt-3 border-t border-gray-700/40">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Insurance</div>
+        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Combinations</div>
         <div class="flex flex-col gap-1">
           ${insurance.map(ins => `
             <div class="flex items-center justify-between gap-2">
-              <span class="text-xs text-gray-400">${ins.k}+ leg${ins.k > 1 ? 's' : ''} fail</span>
-              <span class="text-sm font-semibold text-gray-300">${(ins.prob * 100).toFixed(1)}%</span>
+              <span class="text-xs text-gray-400">${ins.X}+ legs win</span>
+              <div class="text-right">
+                <div class="text-sm font-semibold text-gray-300">${(ins.prob * 100).toFixed(1)}%</div>
+                <div class="text-xs text-gray-500">$${ins.odds}</div>
+              </div>
             </div>`).join('')}
         </div>
-        <p class="text-xs text-gray-600 mt-1.5">Approx. chance at least k legs fail.</p>
       </div>` : '';
 
     const bmcHtml = `
@@ -2067,17 +2070,17 @@ document.addEventListener("DOMContentLoaded", function () {
       : '';
 
     resultDiv.innerHTML = `
-      <div id="betslip-toggle" class="flex items-center justify-between md:cursor-default select-none">
+      <div id="betslip-toggle" class="flex items-center justify-between cursor-pointer select-none">
         <div class="flex items-center gap-2">
           <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Betslip</span>
           ${blendBadge}
         </div>
-        <div class="flex items-center gap-2 md:hidden">
+        <div class="flex items-center gap-2">
           <span class="text-base font-bold text-amber-400">${summaryText}</span>
           <span id="betslip-chevron" class="text-gray-400 text-xs">▲</span>
         </div>
       </div>
-      <div id="betslip-body" class="hidden md:block mt-1">
+      <div id="betslip-body" class="hidden mt-1">
         ${legsHtml}
         ${finalOddsHtml}
         ${insuranceHtml}
@@ -2087,8 +2090,16 @@ document.addEventListener("DOMContentLoaded", function () {
       </div>
     `;
 
+    // Restore expanded state after re-render
+    if (betslipExpanded) {
+      resultDiv.classList.add('betslip-open');
+      const body    = resultDiv.querySelector('#betslip-body');
+      const chevron = resultDiv.querySelector('#betslip-chevron');
+      if (body)    body.classList.remove('hidden');
+      if (chevron) chevron.textContent = '▼';
+    }
+
     resultDiv.querySelector('#betslip-toggle').addEventListener('click', () => {
-      if (window.innerWidth >= 768) return;
       betslipExpanded = !betslipExpanded;
       resultDiv.classList.toggle('betslip-open', betslipExpanded);
       const body    = resultDiv.querySelector('#betslip-body');
