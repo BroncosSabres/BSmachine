@@ -3224,12 +3224,19 @@
 
         let data = null, predictions = null
         try {
-          const [cupResp, predResp] = await Promise.all([
-            fetch(`${BACKEND_ROOT}/api/cups/${cupId}`),
-            fetch(`${BACKEND_ROOT}/api/cups/${cupId}/predictions`),
-          ])
+          const cupResp = await fetch(`${BACKEND_ROOT}/api/cups/${cupId}`)
           if (cupResp.ok) data = await cupResp.json()
-          if (predResp.ok) predictions = await predResp.json()
+          try {
+            const predController = new AbortController()
+            const predTimeout = setTimeout(() => predController.abort(), 8000)
+            const predResp = await fetch(`${BACKEND_ROOT}/api/cups/${cupId}/predictions`, {
+              signal: predController.signal,
+            })
+            clearTimeout(predTimeout)
+            if (predResp.ok) predictions = await predResp.json()
+          } catch (e) {
+            console.warn('[cup] predictions fetch failed or timed out:', e)
+          }
         } catch (e) {
           console.warn('[cup] fetch cup failed:', e)
         }
@@ -3420,6 +3427,19 @@
           roundLabels2[r] = fromEnd === 0 ? 'Grand Final' : fromEnd === 1 ? 'Semi Final' : fromEnd === 2 ? 'Quarter Final' : `Cup Round ${r}`
         })
 
+        // Stats + prob data
+        const K = predictions?.games_in_round || 8
+        const statsMap = {}
+        ;(predictions?.player_stats || []).forEach(s => { statsMap[s.user_id] = s })
+        const matchupKey = `${cupViewRound}:${myMatchup.slot}`
+        const probs  = predictions?.matchup_probs?.[matchupKey] || null
+        const h2h    = predictions?.matchup_h2h?.[matchupKey]   || null
+        const myProb = probs ? (myMatchup.player_a_id === myUserId ? probs.prob_a : probs.prob_b) : null
+        const oppProb= probs ? (myMatchup.player_a_id === myUserId ? probs.prob_b : probs.prob_a) : null
+
+        const isLiveH2H   = !!probs?.live && probs.games_played > 0
+        const isSealedH2H = !!probs?.sealed
+
         const resultLabel = isBye
           ? `<span style="color:#4ade80;font-weight:700;">BYE — Advanced automatically</span>`
           : myMatchup.winner_id
@@ -3433,19 +3453,6 @@
           : isLiveH2H
             ? `<span style="color:#4ade80;font-weight:700;display:flex;align-items:center;gap:5px;"><span class="cup-live-dot"></span>Live · ${probs.games_played}/${probs.games_total} games complete</span>`
             : `<span style="color:#f59e0b;font-weight:700;">In progress — NRL Rd ${myMatchup.nrl_round}</span>`
-
-        // Stats + prob data
-        const K = predictions?.games_in_round || 8
-        const statsMap = {}
-        ;(predictions?.player_stats || []).forEach(s => { statsMap[s.user_id] = s })
-        const matchupKey = `${cupViewRound}:${myMatchup.slot}`
-        const probs  = predictions?.matchup_probs?.[matchupKey] || null
-        const h2h    = predictions?.matchup_h2h?.[matchupKey]   || null
-        const myProb = probs ? (myMatchup.player_a_id === myUserId ? probs.prob_a : probs.prob_b) : null
-        const oppProb= probs ? (myMatchup.player_a_id === myUserId ? probs.prob_b : probs.prob_a) : null
-
-        const isLiveH2H   = !!probs?.live && probs.games_played > 0
-        const isSealedH2H = !!probs?.sealed
 
         // Player column builder (mirrors buildMatchupPreview.playerCol)
         function playerCol(uid, score, isWinner, alignRight) {
