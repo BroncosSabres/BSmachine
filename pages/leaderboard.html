@@ -167,6 +167,10 @@
       .cup-round-col { display:flex; flex-direction:column; justify-content:space-around; min-width:168px; padding:0 0.5rem; }
       .cup-matchup-card { background:#161b24; border:1px solid #2e3a4e; border-radius:8px; overflow:hidden; margin:0.3rem 0; }
       .cup-matchup-card.cup-active { border-color:rgba(245,158,11,0.45); }
+      .cup-matchup-card.cup-live   { border-color:rgba(74,222,128,0.45); }
+      .cup-matchup-card.cup-sealed { border-color:rgba(96,165,250,0.45); }
+      @keyframes cup-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+      .cup-live-dot { display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;animation:cup-pulse 1.4s ease-in-out infinite;vertical-align:middle;margin-right:3px; }
       .cup-player-row { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0.65rem; border-bottom:1px solid #1e2a3a; font-size:0.8125rem; min-height:2.1rem; }
       .cup-player-row:last-child { border-bottom:none; }
       .cup-player-row.cup-winner { background:rgba(245,158,11,0.08); color:#fbbf24; font-weight:600; }
@@ -2351,6 +2355,8 @@
       let cupViewRound       = null   // which cup_round the H2H card is displaying
       let cupShowFullBracket = false  // toggle for live seeding: full bracket vs matchup list
       let cupLiveConfig      = null   // stored so the toggle button can re-render
+      let cupBracketView     = 'bracket'  // 'bracket' | 'list'
+      let selectedMatchupKey = null       // key of bracket matchup currently previewed
 
       function largestPowerOfTwo(n) {
         let p = 1
@@ -2366,6 +2372,17 @@
         const r = []
         for (const s of h) { r.push(s); r.push(size + 1 - s) }
         return r
+      }
+
+      // Shared bracket column builder — used by both buildTwoSidedBracket and buildActiveBracket
+      function buildColumn(label, cards, flexPerSlot, labelColor) {
+        const slots = cards.map(card =>
+          `<div style="flex:${flexPerSlot};display:flex;flex-direction:column;justify-content:center;padding:2px 0;">${card}</div>`
+        ).join('')
+        return `<div style="width:138px;min-width:138px;max-width:138px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+          <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};flex-shrink:0;">${label}</div>
+          <div style="display:flex;flex-direction:column;flex:1;">${slots}</div>
+        </div>`
       }
 
       function buildTwoSidedBracket(bracketSize, ranked, userScores) {
@@ -2417,20 +2434,6 @@
           </div>`
         }
 
-        // Build one column. Each card is wrapped in a flex slot whose flex value
-        // doubles every round so that later-round cards are perfectly centered
-        // between the two earlier-round cards that feed into them.
-        // r=1 → flex:1 per slot (R1), r=2 → flex:2 (R2), r=k → flex:2^(k-1)
-        function buildColumn(label, cards, flexPerSlot, labelColor) {
-          const slots = cards.map(card =>
-            `<div style="flex:${flexPerSlot};display:flex;flex-direction:column;justify-content:center;padding:2px 0;">${card}</div>`
-          ).join('')
-          return `<div style="width:138px;min-width:138px;max-width:138px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
-            <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};flex-shrink:0;">${label}</div>
-            <div style="display:flex;flex-direction:column;flex:1;">${slots}</div>
-          </div>`
-        }
-
         function buildSide(r1Pairs, isRight) {
           const cols = []
           for (let r = 1; r <= sideRounds; r++) {
@@ -2450,6 +2453,436 @@
         const finalCard = `<div style="width:120px;min-width:120px;max-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
           <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;flex-shrink:0;">Grand Final</div>
           <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${tbdCard()}</div>
+        </div>`
+
+        return `<div style="display:flex;align-items:stretch;overflow-x:auto;padding-bottom:0.5rem;">
+          ${buildSide(leftPairs, false)}
+          ${finalCard}
+          ${buildSide(rightPairs, true)}
+        </div>`
+      }
+
+      function buildProbBar(probA, probB) {
+        const pctA = Math.round(probA * 100)
+        const pctB = 100 - pctA
+        const isClose = Math.abs(pctA - 50) <= 8
+        return `<div style="display:flex;height:3px;overflow:hidden;margin:0 0.5rem;">
+          <div style="flex:${pctA};background:rgba(96,165,250,0.7);"></div>
+          <div style="flex:${pctB};background:rgba(248,113,113,0.6);"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;padding:1px 6px;font-size:0.6rem;color:#4a5568;font-family:'Barlow Condensed',sans-serif;letter-spacing:0.02em;">
+          <span style="${pctA > pctB ? 'color:#60a5fa;font-weight:700;' : ''}">${pctA}%</span>
+          ${isClose ? `<span style="color:#374151;font-size:0.55rem;">EVEN</span>` : '<span></span>'}
+          <span style="${pctB > pctA ? 'color:#f87171;font-weight:700;' : ''}">${pctB}%</span>
+        </div>`
+      }
+
+      function buildCupOddsPanel(cup, participants, userMap, predictions) {
+        if (!predictions?.cup_odds || Object.keys(predictions.cup_odds).length === 0) return ''
+        const remaining = participants.filter(p => !p.eliminated)
+        if (!remaining.length) return ''
+
+        const statsMap   = {}
+        const progMap    = predictions.round_progression || {}
+        ;(predictions.player_stats || []).forEach(s => { statsMap[s.user_id] = s })
+
+        const totalRounds = Math.log2(cup.bracket_size)
+
+        // Round label for each round number
+        function roundLabel(r) {
+          const fromEnd = totalRounds - r
+          if (fromEnd === 0) return 'Win'
+          if (fromEnd === 1) return 'GF'
+          if (fromEnd === 2) return 'SF'
+          if (fromEnd === 3) return 'QF'
+          return `R${r}`
+        }
+
+        // Segment colours per round (outermost = earliest, innermost = cup win)
+        const segColors = ['#3b82f6','#8b5cf6','#f59e0b','#f59e0b']
+        // For >4 rounds, extend: more rounds means add teal before blue
+        const allSegColors = ['#0ea5e9','#3b82f6','#8b5cf6','#f97316','#f59e0b']
+
+        const sorted = remaining
+          .map(p => ({ ...p, odds: predictions.cup_odds[p.user_id] || 0 }))
+          .sort((a, b) => b.odds - a.odds)
+
+        const rows = sorted.map((p, i) => {
+          const u    = userMap[p.user_id] || {}
+          const pct  = (p.odds * 100).toFixed(1)
+          const isMe = p.user_id === myUserId
+          const st   = statsMap[p.user_id]
+          const caveat = st && st.games_scored < 10
+            ? `<span style="font-size:0.58rem;color:#4a5568;margin-left:0.25rem;" title="${st.games_scored} games scored">(low data)</span>`
+            : ''
+          const logo = u.favourite_team
+            ? `<img src="../logos/${teamSlug(u.favourite_team)}.svg" style="width:0.9rem;height:0.9rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            : ''
+
+          // Build layered progress bar from round_progression
+          const prog = progMap[p.user_id] || {}
+          const rounds = Array.from({length: totalRounds}, (_, i) => i + 1)
+          // Outermost layer = R1 win prob (widest), innermost = cup win (narrowest)
+          const colorPalette = allSegColors.slice(-(totalRounds))
+          const layers = rounds.map((r, idx) => {
+            const pRound = prog[String(r)] || 0
+            const color  = colorPalette[idx] || '#f59e0b'
+            const w      = Math.round(pRound * 100)
+            return `<div style="position:absolute;left:0;top:0;height:100%;width:${w}%;background:${color};border-radius:2px;"></div>`
+          }).join('')
+
+          // Milestone labels (only show rounds where they have meaningful probability)
+          const milestones = rounds.map((r, idx) => {
+            const pRound = prog[String(r)] || 0
+            if (pRound < 0.001) return ''
+            const color = colorPalette[idx] || '#f59e0b'
+            return `<span style="font-size:0.58rem;color:${color};font-weight:600;">${roundLabel(r)}: ${(pRound*100).toFixed(1)}%</span>`
+          }).filter(Boolean).join('<span style="color:#374151;margin:0 3px;">·</span>')
+
+          return `<div style="padding:0.35rem 0.75rem;${isMe?'background:rgba(245,158,11,0.05);':''}">
+            <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:4px;">
+              <span style="font-size:0.72rem;font-weight:700;color:${i===0?'#f59e0b':'#4a5568'};min-width:1.2rem;text-align:right;">${i+1}</span>
+              ${logo}
+              <span style="font-size:0.8rem;font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(u.username||'?')}</span>
+              ${caveat}
+              <span style="margin-left:auto;font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:700;color:${i===0?'#fbbf24':'#94a3b8'};">${pct}%</span>
+            </div>
+            <div style="position:relative;height:6px;background:#1e2a3a;border-radius:2px;overflow:hidden;margin:0 0 3px 1.6rem;">
+              ${layers}
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:1.6rem;">${milestones}</div>
+          </div>`
+        }).join('')
+
+        // Legend
+        const legendItems = Array.from({length: totalRounds}, (_, i) => i + 1).map((r, idx) => {
+          const color = allSegColors.slice(-(totalRounds))[idx] || '#f59e0b'
+          return `<span style="display:inline-flex;align-items:center;gap:3px;">
+            <span style="width:8px;height:8px;border-radius:1px;background:${color};display:inline-block;"></span>
+            <span style="font-size:0.6rem;color:#4a5568;">${roundLabel(r)}</span>
+          </span>`
+        }).join('')
+
+        return `<div style="margin-bottom:1.5rem;">
+          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.6rem;">Cup Winning Odds</div>
+          <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:10px;overflow:hidden;padding:0.25rem 0;">
+            ${rows}
+            <div style="padding:0.4rem 0.75rem;border-top:1px solid #1e2a3a;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
+              ${legendItems}
+              <span style="font-size:0.62rem;color:#374151;margin-left:auto;">Exact · bracket DP</span>
+            </div>
+          </div>
+        </div>`
+      }
+
+      function buildMatchupPreview(matchup, userMap, predictions, cup) {
+        const K        = predictions?.games_in_round || 8
+        const statsMap = {}
+        ;(predictions?.player_stats || []).forEach(s => { statsMap[s.user_id] = s })
+
+        const uidA = matchup.player_a_id
+        const uidB = matchup.player_b_id
+        const pA   = userMap[uidA] || {}
+        const pB   = userMap[uidB] || {}
+        const stA  = statsMap[uidA]
+        const stB  = statsMap[uidB]
+
+        const expA = stA ? ((stA.mean_margin + stA.mean_total) * K).toFixed(1) : null
+        const expB = stB ? ((stB.mean_margin + stB.mean_total) * K).toFixed(1) : null
+
+        const probKey = `${matchup.cup_round}:${matchup.slot}`
+        const probs   = predictions?.matchup_probs?.[probKey]
+        const h2h     = predictions?.matchup_h2h?.[probKey] || null
+
+        const totalRounds = Math.log2(cup.bracket_size)
+        const fromEnd     = totalRounds - matchup.cup_round
+        const roundLabel  = fromEnd === 0 ? 'Grand Final' : fromEnd === 1 ? 'Semi Final' : fromEnd === 2 ? 'Quarter Final' : `Cup Round ${matchup.cup_round}`
+
+        const hasResult = !!matchup.winner_id
+
+        const isLiveMatchup   = !!probs?.live && probs.games_played > 0
+        const isSealedMatchup = !!probs?.sealed
+
+        function playerCol(uid, score, isWinner, alignRight) {
+          const p    = userMap[uid] || {}
+          const st   = statsMap[uid]
+          const isMe = uid === myUserId
+          const logo = p.favourite_team
+            ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
+            : ''
+          const isUidA    = uid === uidA
+          const liveScore = isLiveMatchup ? (isUidA ? probs.actual_a : probs.actual_b) : null
+          const projected = isLiveMatchup ? (isUidA ? probs.projected_a : probs.projected_b) : null
+
+          let ptsBlock
+          if (score != null) {
+            ptsBlock = `<div style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${isWinner?'color:#fbbf24':''}">${parseFloat(score).toFixed(1)}</div>`
+          } else if (liveScore != null) {
+            ptsBlock = `<div>
+              <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;">${parseFloat(liveScore).toFixed(1)}</span>
+              ${!isSealedMatchup && projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ~${parseFloat(projected).toFixed(1)}</span>` : ''}
+            </div>`
+          } else {
+            ptsBlock = `<div style="color:#4a5568;font-size:0.875rem;">TBD</div>`
+          }
+          const expPts = st && !score && !liveScore
+            ? `<div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Exp: ${((st.mean_margin + st.mean_total) * K).toFixed(1)}</div>`
+            : ''
+          // H2H dots: results are from uid_a perspective (1=a won, -1=b won, 0=tie)
+          // Flip for player B so green always means this player won
+          const dots = h2h?.results?.length
+            ? `<div style="display:flex;gap:3px;margin-top:5px;${alignRight?'justify-content:flex-end':''}">
+                ${h2h.results.map(r => {
+                  const myResult = uid === uidA ? r : -r
+                  const clr   = myResult > 0 ? '#4ade80' : myResult < 0 ? '#f87171' : '#6b7280'
+                  const label = myResult > 0 ? 'W' : myResult < 0 ? 'L' : 'T'
+                  return `<div title="${label}" style="width:8px;height:8px;border-radius:50%;background:${clr};flex-shrink:0;"></div>`
+                }).join('')}
+              </div>`
+            : ''
+          const nameRow = `<div style="display:flex;align-items:center;gap:0.4rem;${alignRight?'justify-content:flex-end':''}">
+            ${alignRight ? `<span style="font-size:0.7rem;color:#4a5568;">#${p.seed||'?'}</span><span style="font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(p.username||'?')}</span>${logo}` : `${logo}<span style="font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(p.username||'?')}</span><span style="font-size:0.7rem;color:#4a5568;">#${p.seed||'?'}</span>`}
+          </div>`
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:${alignRight?'flex-end':'flex-start'};gap:0.15rem;">
+            ${nameRow}
+            ${ptsBlock}
+            ${expPts}
+            ${dots}
+          </div>`
+        }
+
+        // H2H record summary line
+        const h2hSummary = h2h?.results?.length
+          ? (() => {
+              const aW = h2h.a_wins, bW = h2h.b_wins, t = h2h.ties
+              const total = h2h.results.length
+              return `<div style="font-size:0.68rem;color:#4a5568;text-align:center;padding:0.2rem 0 0;">
+                Last ${total} shared games — <span style="color:#60a5fa;">${escapeHtml(pA.username||'?')} ${aW}</span> · <span style="color:#f87171;">${escapeHtml(pB?.username||'?')} ${bW}</span>${t ? ` · ${t} tied` : ''}
+              </div>`
+            })()
+          : ''
+
+        const probCenter = probs && !hasResult
+          ? `<div style="text-align:center;padding:0 0.3rem;flex-shrink:0;">
+               <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;color:#60a5fa;line-height:1;">${Math.round(probs.prob_a*100)}%</div>
+               <div style="font-size:0.55rem;color:#4a5568;text-transform:uppercase;letter-spacing:0.04em;">vs</div>
+               <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;color:#f87171;line-height:1;">${Math.round(probs.prob_b*100)}%</div>
+             </div>`
+          : `<div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#4a5568;padding:0 0.5rem;flex-shrink:0;">vs</div>`
+
+        const statusRow = hasResult
+          ? `<div style="padding:0.4rem 1rem;font-size:0.8rem;border-top:1px solid #1e2a3a;">
+               <span style="color:${matchup.winner_id===uidA?'#fbbf24':'#4a5568'};font-weight:700;">${escapeHtml(pA.username||'?')}</span>
+               <span style="color:#4a5568;"> won · </span>
+               <span style="font-family:'Barlow Condensed',sans-serif;">${parseFloat(matchup.score_a||0).toFixed(1)} – ${parseFloat(matchup.score_b||0).toFixed(1)}</span>
+             </div>`
+          : isSealedMatchup
+          ? `<div style="padding:0.4rem 1rem;font-size:0.75rem;color:#60a5fa;font-weight:700;border-top:1px solid #1e2a3a;">Sealed — ${probs.games_total - probs.games_played} game${probs.games_total - probs.games_played !== 1 ? 's' : ''} remaining</div>`
+          : isLiveMatchup
+          ? `<div style="padding:0.4rem 1rem;font-size:0.75rem;color:#4ade80;font-weight:700;border-top:1px solid #1e2a3a;display:flex;align-items:center;gap:6px;"><span class="cup-live-dot"></span>Live · ${probs.games_played}/${probs.games_total} games complete</div>`
+          : `<div style="padding:0.4rem 1rem;font-size:0.75rem;color:#f59e0b;font-weight:700;border-top:1px solid #1e2a3a;">In progress — NRL Rd ${matchup.nrl_round}</div>`
+
+        const probBarRow = probs && !hasResult
+          ? `<div style="padding:0.3rem 1rem 0.4rem;">${buildProbBar(probs.prob_a, probs.prob_b)}</div>`
+          : ''
+
+        return `<div style="margin-bottom:1.25rem;">
+          <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.6rem;">
+            <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;">${roundLabel} Preview</div>
+            <button data-cup-close-preview style="margin-left:auto;background:none;border:none;color:#4a5568;font-size:1rem;cursor:pointer;line-height:1;padding:0 0.25rem;">✕</button>
+          </div>
+          <div class="cup-h2h-card">
+            <div style="display:flex;align-items:flex-start;gap:0.5rem;padding:0.875rem 1rem;">
+              ${playerCol(uidA, matchup.score_a, matchup.winner_id === uidA, false)}
+              ${probCenter}
+              ${uidB ? playerCol(uidB, matchup.score_b, matchup.winner_id === uidB, true) : '<div style="flex:1;text-align:center;color:#4a5568;font-style:italic;">TBD</div>'}
+            </div>
+            ${probBarRow}
+            ${statusRow}
+          </div>
+        </div>`
+      }
+
+      function buildActiveBracket(cup, byRound, userMap, predictions) {
+        const bracketSize  = cup.bracket_size
+        const totalRounds  = Math.log2(bracketSize)
+        const sideRounds   = totalRounds - 1
+        const fullOrder    = getBracketOrder(bracketSize)
+        const allR1        = []
+        for (let i = 0; i < fullOrder.length; i += 2)
+          allR1.push([fullOrder[i], fullOrder[i + 1]])
+        const mid       = allR1.length / 2
+        const leftPairs = allR1.slice(0, mid)
+        const rightPairs= allR1.slice(mid)
+
+        const seedMap = {}
+        Object.values(userMap).forEach(p => { if (p.seed) seedMap[p.seed] = p.user_id })
+
+        function getMatchup(r, s) {
+          return (byRound[r] || []).find(m => m.slot === s) || null
+        }
+
+        // Helper: resolved winner uid for a round-1 matchup (DB winner or sealed)
+        function resolvedUid(m) {
+          if (!m) return null
+          if (m.winner_id) return m.winner_id
+          const pd = predictions?.matchup_probs?.[`${m.cup_round}:${m.slot}`]
+          return pd?.sealed ? pd.sealed_winner_id : null
+        }
+
+        function bRow(uid, score, isWinner, hasResult, liveScore, projected) {
+          if (!uid) return `<div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>`
+          const p = userMap[uid] || {}
+          const isMe = uid === myUserId
+          const isLoser = hasResult && !isWinner
+          const logo = p.favourite_team
+            ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:0.8rem;height:0.8rem;object-fit:contain;flex-shrink:0;${isLoser?'opacity:0.4':''}" onerror="this.style.display='none'">`
+            : ''
+          let ptsHtml = ''
+          if (score != null) {
+            // Completed round score
+            ptsHtml = `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;margin-left:auto;flex-shrink:0;${isWinner?'color:#fbbf24':''}">${parseFloat(score).toFixed(1)}</span>`
+          } else if (liveScore != null) {
+            // Live: actual so far + projected final
+            ptsHtml = `<span style="margin-left:auto;flex-shrink:0;text-align:right;">
+              <span style="font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;${isWinner?'color:#fbbf24':''}">${parseFloat(liveScore).toFixed(1)}</span>
+              ${projected != null ? `<span style="font-size:0.55rem;color:#4a5568;display:block;line-height:1;">~${parseFloat(projected).toFixed(1)}</span>` : ''}
+            </span>`
+          }
+          return `<div class="cup-player-row${isMe?' cup-me':''}${isWinner?' cup-winner':''}${isLoser?' cup-eliminated':''}" style="padding:0.28rem 0.5rem;">
+            ${logo}
+            <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;${isLoser?'opacity:0.5':''}${isMe&&isWinner?'color:#fbbf24;font-weight:700;':''}">${escapeHtml(p.username||'?')}</span>
+            ${ptsHtml}
+          </div>`
+        }
+
+        function realCard(m) {
+          const probKey  = `${m.cup_round}:${m.slot}`
+          const probData = predictions?.matchup_probs?.[probKey] || null
+          const hasResult = !!m.winner_id
+
+          // Determine effective winner (DB or sealed)
+          const effectiveWinner = m.winner_id
+            || (probData?.sealed ? probData.sealed_winner_id : null)
+          const isSealed = !m.winner_id && !!probData?.sealed
+          const isLive   = !!probData?.live && probData.games_played > 0
+
+          // Per-player live scores
+          const liveScoreA = isLive ? probData.actual_a : null
+          const liveScoreB = isLive ? probData.actual_b : null
+          const projectedA = isLive && !isSealed ? probData.projected_a : null
+          const projectedB = isLive && !isSealed ? probData.projected_b : null
+
+          const cardA = bRow(m.player_a_id, m.score_a,
+            effectiveWinner === m.player_a_id, !!effectiveWinner,
+            liveScoreA, projectedA)
+          const cardB = m.is_bye ? '' : bRow(m.player_b_id, m.score_b,
+            effectiveWinner === m.player_b_id, !!effectiveWinner,
+            liveScoreB, projectedB)
+
+          const probBar = probData && !effectiveWinner && !m.is_bye
+            ? buildProbBar(probData.prob_a, probData.prob_b) : ''
+
+          let badge = ''
+          if (!m.winner_id && !m.is_bye) {
+            if (isSealed) {
+              badge = `<div style="padding:1px 6px;font-size:0.58rem;font-weight:700;letter-spacing:0.07em;color:#60a5fa;text-transform:uppercase;text-align:center;background:rgba(96,165,250,0.07);">Sealed</div>`
+            } else if (isLive) {
+              badge = `<div style="padding:1px 6px;font-size:0.58rem;font-weight:700;letter-spacing:0.06em;color:#4ade80;text-align:center;background:rgba(74,222,128,0.06);"><span class="cup-live-dot"></span>Live · ${probData.games_played}/${probData.games_total} games</div>`
+            } else {
+              badge = `<div style="padding:1px 6px;font-size:0.58rem;font-weight:700;letter-spacing:0.07em;color:#f59e0b;text-transform:uppercase;text-align:center;background:rgba(245,158,11,0.06);">NRL Rd ${m.nrl_round}</div>`
+            }
+          }
+
+          const cls = m.winner_id ? 'cup-matchup-card'
+            : isSealed ? 'cup-matchup-card cup-sealed'
+            : isLive   ? 'cup-matchup-card cup-live'
+            : 'cup-matchup-card cup-active'
+          const isSelected = selectedMatchupKey === probKey
+          return `<div class="${cls}" data-cup-matchup-key="${probKey}" style="cursor:pointer;${isSelected?'outline:2px solid rgba(96,165,250,0.5);outline-offset:-2px;':''}">${cardA}${m.is_bye?'':cardB}${probBar}${badge}</div>`
+        }
+
+        function tbdCard() {
+          return `<div class="cup-matchup-card" style="opacity:0.22;">
+            <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>
+            <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>
+          </div>`
+        }
+
+        // Project an advancing player into a TBD slot when their feeder is resolved
+        function projectedAdvancerCard(uidA, uidB) {
+          function advRow(uid) {
+            if (!uid) return `<div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;opacity:0.55;">TBD</div>`
+            const p    = userMap[uid] || {}
+            const isMe = uid === myUserId
+            const logo = p.favourite_team
+              ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:0.8rem;height:0.8rem;object-fit:contain;flex-shrink:0;opacity:0.7;" onerror="this.style.display='none'">`
+              : ''
+            return `<div class="cup-player-row${isMe?' cup-me':''}" style="padding:0.28rem 0.5rem;opacity:0.65;">
+              ${logo}
+              <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;">${escapeHtml(p.username||'?')}</span>
+            </div>`
+          }
+          const badge = `<div style="padding:1px 6px;font-size:0.55rem;font-weight:700;letter-spacing:0.07em;color:#60a5fa;text-transform:uppercase;text-align:center;background:rgba(96,165,250,0.05);opacity:0.8;">Advancing</div>`
+          return `<div class="cup-matchup-card" style="border-color:rgba(96,165,250,0.2);">${advRow(uidA)}${advRow(uidB)}${badge}</div>`
+        }
+
+        function rLabel(r) {
+          const fromEnd = totalRounds - r
+          if (fromEnd === 0) return 'Grand Final'
+          if (fromEnd === 1) return 'Semi Finals'
+          if (fromEnd === 2) return 'Quarter Finals'
+          if (r === 1) return 'Round 1'
+          return `Round ${r}`
+        }
+
+        function buildSide(r1PairSeedsList, isRight) {
+          const cols = []
+          for (let r = 1; r <= sideRounds; r++) {
+            const nCards   = r1PairSeedsList.length / Math.pow(2, r - 1)
+            const flexPerSlot = Math.pow(2, r - 1)
+            let cards
+            if (r === 1) {
+              cards = r1PairSeedsList.map(([seedA, seedB]) => {
+                const m = (byRound[1] || []).find(mu =>
+                  (userMap[mu.player_a_id]?.seed === seedA && userMap[mu.player_b_id]?.seed === seedB) ||
+                  (userMap[mu.player_a_id]?.seed === seedB && userMap[mu.player_b_id]?.seed === seedA)
+                )
+                return m ? realCard(m) : tbdCard()
+              })
+            } else {
+              const roundMatchups = (byRound[r] || [])
+              const nMatchupsInRound = Math.round(nCards)
+              cards = Array.from({length: nMatchupsInRound}, (_, i) => {
+                const m = roundMatchups[i] || null
+                if (m) return realCard(m)
+                // No DB matchup yet — check if both feeders from previous round are resolved
+                // Previous round DB slot numbers that feed this slot (1-indexed, sequential pairing)
+                const prevSlotA = 2 * i + 1   // 1-indexed slot in round r-1
+                const prevSlotB = 2 * i + 2
+                const feederA = (byRound[r - 1] || []).find(mu => mu.slot === prevSlotA)
+                const feederB = (byRound[r - 1] || []).find(mu => mu.slot === prevSlotB)
+                const advA = resolvedUid(feederA)
+                const advB = resolvedUid(feederB)
+                return (advA || advB) ? projectedAdvancerCard(advA, advB) : tbdCard()
+              })
+            }
+            if (isRight) cards.reverse()
+            cols.push({ r, cards, flexPerSlot })
+          }
+          if (isRight) cols.reverse()
+          return cols.map(({r, cards, flexPerSlot}) =>
+            buildColumn(rLabel(r), cards, flexPerSlot)
+          ).join('')
+        }
+
+        const finalRound = totalRounds
+        const finalMatchup = (byRound[finalRound] || [])[0] || null
+        const finalCard = `<div style="width:120px;min-width:120px;max-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
+          <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;flex-shrink:0;">Grand Final</div>
+          <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${finalMatchup ? realCard(finalMatchup) : tbdCard()}</div>
         </div>`
 
         return `<div style="display:flex;align-items:stretch;overflow-x:auto;padding-bottom:0.5rem;">
@@ -2789,10 +3222,14 @@
         if (!contentEl) return
         contentEl.innerHTML = `<div class="p-8 animate-pulse" style="color:#4a5568;">Loading bracket…</div>`
 
-        let data = null
+        let data = null, predictions = null
         try {
-          const r = await fetch(`${BACKEND_ROOT}/api/cups/${cupId}`)
-          if (r.ok) data = await r.json()
+          const [cupResp, predResp] = await Promise.all([
+            fetch(`${BACKEND_ROOT}/api/cups/${cupId}`),
+            fetch(`${BACKEND_ROOT}/api/cups/${cupId}/predictions`),
+          ])
+          if (cupResp.ok) data = await cupResp.json()
+          if (predResp.ok) predictions = await predResp.json()
         } catch (e) {
           console.warn('[cup] fetch cup failed:', e)
         }
@@ -2813,16 +3250,16 @@
           if (!byRound[m.cup_round]) byRound[m.cup_round] = []
           byRound[m.cup_round].push(m)
         })
-        const roundNums   = Object.keys(byRound).map(Number).sort((a,b) => a-b)
-        const totalRounds = roundNums.length  // total elimination rounds in the bracket
+        const roundNums          = Object.keys(byRound).map(Number).sort((a,b) => a-b)
+        const totalRoundsInBracket = Math.log2(cup.bracket_size)  // true total rounds
 
         // Round labels (distance from final)
         function roundLabel(cupRound) {
-          const fromEnd = totalRounds - cupRound
+          const fromEnd = totalRoundsInBracket - cupRound
           if (fromEnd === 0) return 'Grand Final'
           if (fromEnd === 1) return 'Semi Finals'
           if (fromEnd === 2) return 'Quarter Finals'
-          const r1Players = (byRound[cupRound] || []).length * 2
+          const r1Players = cup.bracket_size / Math.pow(2, cupRound - 1)
           return `Round of ${r1Players}`
         }
 
@@ -2837,19 +3274,27 @@
 
         // My H2H card (if logged in and participant)
         const myH2H = myUserId && userMap[myUserId]
-          ? buildMyH2H(cup, byRound, roundNums, userMap, matchups)
+          ? buildMyH2H(cup, byRound, roundNums, userMap, matchups, predictions)
           : ''
 
-        // Bracket columns
-        const bracketCols = roundNums.map(r => {
+        // List view (existing style)
+        const bracketColsHtml = roundNums.map(r => {
           const rMatchups = byRound[r]
-          const cards = rMatchups.map(m => matchupCard(m, userMap, cup.current_cup_round)).join('')
+          const cards = rMatchups.map(m => matchupCard(m, userMap, cup.current_cup_round, predictions)).join('')
           return `
             <div class="cup-round-col">
               <div style="text-align:center;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.4rem;">${roundLabel(r)}</div>
               ${cards}
             </div>`
         }).join('')
+
+        const cupOddsPanel = buildCupOddsPanel(cup, participants, userMap, predictions)
+
+        const toggleViewBtn = `<button id="cup-view-toggle" style="${cupBracketView==='bracket'?'background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;color:#94a3b8;':'background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:#60a5fa;'}border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;font-weight:600;cursor:pointer;">${cupBracketView==='bracket'?'List View':'Bracket View'}</button>`
+
+        const bracketAreaHtml = cupBracketView === 'bracket'
+          ? `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions)}</div>`
+          : `<div class="cup-bracket">${bracketColsHtml}</div>`
 
         // Champion banner
         const champBanner = cup.status === 'complete' && cup.winner_id
@@ -2865,19 +3310,37 @@
             })()
           : ''
 
+        // Build selected matchup preview (if one is set)
+        let matchupPreviewHtml = ''
+        if (selectedMatchupKey) {
+          const [selR, selS] = selectedMatchupKey.split(':').map(Number)
+          const selMatchup = (byRound[selR] || []).find(m => m.slot === selS)
+          if (selMatchup && !selMatchup.is_bye) {
+            matchupPreviewHtml = buildMatchupPreview(selMatchup, userMap, predictions, cup)
+          } else {
+            selectedMatchupKey = null
+          }
+        }
+
+        // Cache render data for click handlers to use without re-fetching
+        window._cupRenderData = { cup, byRound, roundNums, userMap, predictions, matchups }
+
         contentEl.innerHTML = `
           <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
             <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;">${escapeHtml(cup.name)}</h2>
             ${statusBadge}
+            ${toggleViewBtn}
             <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">Seeding Rd ${cup.seeding_round} · ${participants.length} players · ${cup.bracket_size}-bracket</span>
           </div>
           ${champBanner}
           ${myH2H}
+          <div id="cup-matchup-preview">${matchupPreviewHtml}</div>
           <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.75rem;">Full Bracket</div>
-          <div class="cup-bracket">${bracketCols}</div>`
+          <div id="cup-bracket-area">${bracketAreaHtml}</div>
+          ${cupOddsPanel}`
       }
 
-      function matchupCard(m, userMap, currentCupRound) {
+      function matchupCard(m, userMap, currentCupRound, predictions) {
         function playerRow(uid, score, isWinner, otherUid) {
           if (!uid) return `<div class="cup-player-row cup-bye">— BYE —</div>`
           const p        = userMap[uid] || {}
@@ -2898,15 +3361,20 @@
         const isPending = !m.is_bye && !m.winner_id && m.cup_round === currentCupRound
         const cardClass = isPending ? 'cup-matchup-card cup-active' : 'cup-matchup-card'
 
+        const probKey  = `${m.cup_round}:${m.slot}`
+        const probData = predictions?.matchup_probs?.[probKey] || null
+        const probBar  = probData && isPending ? buildProbBar(probData.prob_a, probData.prob_b) : ''
+
         return `
           <div class="${cardClass}">
             ${playerRow(m.player_a_id, m.score_a, m.winner_id === m.player_a_id)}
             ${m.is_bye ? '' : playerRow(m.player_b_id, m.score_b, m.winner_id === m.player_b_id)}
+            ${probBar}
             ${isPending ? `<div style="padding:2px 6px;font-size:0.6rem;font-weight:700;letter-spacing:0.08em;color:#f59e0b;text-transform:uppercase;text-align:center;background:rgba(245,158,11,0.06);">NRL Rd ${m.nrl_round} — Pending</div>` : ''}
           </div>`
       }
 
-      function buildMyH2H(cup, byRound, roundNums, userMap, matchups) {
+      function buildMyH2H(cup, byRound, roundNums, userMap, matchups, predictions) {
         // Find all matchups involving me
         const myMatchups = matchups.filter(m =>
           m.player_a_id === myUserId || m.player_b_id === myUserId)
@@ -2946,9 +3414,9 @@
         }
 
         const roundLabels2 = { }
-        const totalRounds = roundNums.length
+        const totalRoundsInBracket2 = Math.log2(cup.bracket_size)
         roundNums.forEach(r => {
-          const fromEnd = totalRounds - r
+          const fromEnd = totalRoundsInBracket2 - r
           roundLabels2[r] = fromEnd === 0 ? 'Grand Final' : fromEnd === 1 ? 'Semi Final' : fromEnd === 2 ? 'Quarter Final' : `Cup Round ${r}`
         })
 
@@ -2958,49 +3426,116 @@
             ? (iWon
                 ? `<span style="color:#4ade80;font-weight:700;">You won! ✓</span>`
                 : `<span style="color:#f87171;font-weight:700;">Eliminated</span>`)
+          : isSealedH2H
+            ? (probs.sealed_winner_id === myUserId
+                ? `<span style="color:#60a5fa;font-weight:700;">Sealed — you advance ✓</span>`
+                : `<span style="color:#f87171;font-weight:700;">Sealed — ${escapeHtml(opp?.username||'opponent')} advances</span>`)
+          : isLiveH2H
+            ? `<span style="color:#4ade80;font-weight:700;display:flex;align-items:center;gap:5px;"><span class="cup-live-dot"></span>Live · ${probs.games_played}/${probs.games_total} games complete</span>`
             : `<span style="color:#f59e0b;font-weight:700;">In progress — NRL Rd ${myMatchup.nrl_round}</span>`
 
-        // Opponent info
-        const oppBlock = isBye || !opp
-          ? `<div style="flex:1;text-align:center;color:#4a5568;font-style:italic;">— BYE —</div>`
-          : (() => {
-              const oppLogo = opp.favourite_team
-                ? `<img src="../logos/${teamSlug(opp.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
-                : ''
-              const oppPts = oppScore != null
-                ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${oppWon?'color:#fbbf24':''};">${parseFloat(oppScore).toFixed(1)}</span>`
-                : `<span style="color:#4a5568;font-size:0.875rem;">TBD</span>`
-              return `<div style="flex:1;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:0.25rem;">
-                <div style="display:flex;align-items:center;gap:0.4rem;">${oppLogo}<span style="font-weight:600;${oppWon?'color:#fbbf24':''}">${escapeHtml(opp.username||'Opponent')}</span><span style="font-size:0.7rem;color:#4a5568;">#${opp.seed||'?'}</span></div>
-                ${oppPts}
+        // Stats + prob data
+        const K = predictions?.games_in_round || 8
+        const statsMap = {}
+        ;(predictions?.player_stats || []).forEach(s => { statsMap[s.user_id] = s })
+        const matchupKey = `${cupViewRound}:${myMatchup.slot}`
+        const probs  = predictions?.matchup_probs?.[matchupKey] || null
+        const h2h    = predictions?.matchup_h2h?.[matchupKey]   || null
+        const myProb = probs ? (myMatchup.player_a_id === myUserId ? probs.prob_a : probs.prob_b) : null
+        const oppProb= probs ? (myMatchup.player_a_id === myUserId ? probs.prob_b : probs.prob_a) : null
+
+        const isLiveH2H   = !!probs?.live && probs.games_played > 0
+        const isSealedH2H = !!probs?.sealed
+
+        // Player column builder (mirrors buildMatchupPreview.playerCol)
+        function playerCol(uid, score, isWinner, alignRight) {
+          const p    = userMap[uid] || {}
+          const st   = statsMap[uid]
+          const isMe = uid === myUserId
+          const logo = p.favourite_team
+            ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
+            : ''
+          const isUidA    = uid === myMatchup.player_a_id
+          const liveScore = isLiveH2H ? (isUidA ? probs.actual_a : probs.actual_b) : null
+          const projected = isLiveH2H && !isSealedH2H ? (isUidA ? probs.projected_a : probs.projected_b) : null
+
+          let ptsBlock
+          if (score != null) {
+            ptsBlock = `<div style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${isWinner?'color:#fbbf24':''}">${parseFloat(score).toFixed(1)}</div>`
+          } else if (liveScore != null) {
+            ptsBlock = `<div>
+              <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;">${parseFloat(liveScore).toFixed(1)}</span>
+              ${projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ~${parseFloat(projected).toFixed(1)}</span>` : ''}
+            </div>`
+          } else {
+            ptsBlock = `<div style="color:#4a5568;font-size:0.875rem;">TBD</div>`
+          }
+          const expPts = st && !myMatchup.winner_id && !liveScore
+            ? `<div style="font-size:0.7rem;color:#4a5568;margin-top:1px;">Exp: ${((st.mean_margin + st.mean_total) * K).toFixed(1)}</div>`
+            : ''
+          const dots = h2h?.results?.length
+            ? `<div style="display:flex;gap:3px;margin-top:5px;${alignRight?'justify-content:flex-end':''}">
+                ${h2h.results.map(r => {
+                  const myResult = uid === myMatchup.player_a_id ? r : -r
+                  const clr   = myResult > 0 ? '#4ade80' : myResult < 0 ? '#f87171' : '#6b7280'
+                  const label = myResult > 0 ? 'W' : myResult < 0 ? 'L' : 'T'
+                  return `<div title="${label}" style="width:8px;height:8px;border-radius:50%;background:${clr};flex-shrink:0;"></div>`
+                }).join('')}
+              </div>`
+            : ''
+          const nameRow = `<div style="display:flex;align-items:center;gap:0.4rem;${alignRight?'justify-content:flex-end':''}">
+            ${alignRight
+              ? `<span style="font-size:0.7rem;color:#4a5568;">#${p.seed||'?'}</span><span style="font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(p.username||'?')}</span>${logo}`
+              : `${logo}<span style="font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(p.username||'?')}</span><span style="font-size:0.7rem;color:#4a5568;">#${p.seed||'?'}</span>`}
+          </div>`
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:${alignRight?'flex-end':'flex-start'};gap:0.15rem;">
+            ${nameRow}
+            ${ptsBlock}
+            ${expPts}
+            ${dots}
+          </div>`
+        }
+
+        const probCenter = probs && !myMatchup.winner_id && !isBye
+          ? `<div style="text-align:center;padding:0 0.3rem;flex-shrink:0;">
+               <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;color:#60a5fa;line-height:1;">${Math.round(myProb*100)}%</div>
+               <div style="font-size:0.55rem;color:#4a5568;text-transform:uppercase;letter-spacing:0.04em;">vs</div>
+               <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.1rem;font-weight:700;color:#f87171;line-height:1;">${Math.round(oppProb*100)}%</div>
+             </div>`
+          : `<div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#4a5568;padding:0 0.5rem;flex-shrink:0;">vs</div>`
+
+        const byeCol = `<div style="flex:1;text-align:center;color:#4a5568;font-style:italic;align-self:center;">— BYE —</div>`
+
+        const probBarRow = probs && !myMatchup.winner_id && !isBye
+          ? `<div style="padding:0.3rem 1rem 0.4rem;">${buildProbBar(probs.prob_a, probs.prob_b)}</div>`
+          : ''
+
+        const h2hSummary = h2h?.results?.length
+          ? (() => {
+              const aW = h2h.a_wins, bW = h2h.b_wins, t = h2h.ties
+              const total = h2h.results.length
+              const meIsA = myMatchup.player_a_id === myUserId
+              return `<div style="font-size:0.68rem;color:#4a5568;text-align:center;padding:0.15rem 0 0;">
+                Last ${total} shared games —
+                <span style="color:#60a5fa;">${escapeHtml(me.username||'You')} ${meIsA ? aW : bW}</span> ·
+                <span style="color:#f87171;">${escapeHtml(opp?.username||'Opp')} ${meIsA ? bW : aW}</span>${t ? ` · ${t} tied` : ''}
               </div>`
             })()
-
-        const myPts = myScore != null
-          ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;${iWon?'color:#fbbf24':''};">${parseFloat(myScore).toFixed(1)}</span>`
-          : `<span style="color:#4a5568;font-size:0.875rem;">TBD</span>`
-
-        const myLogo = me.favourite_team
-          ? `<img src="../logos/${teamSlug(me.favourite_team)}.svg" style="width:1.5rem;height:1.5rem;object-fit:contain;" onerror="this.style.display='none'">`
           : ''
 
         return `
           <div id="cup-h2h-section" style="margin-bottom:1.5rem;">
             <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.6rem;">My Match-Up — ${roundLabels2[cupViewRound] || ''}</div>
             <div class="cup-h2h-card">
-              <!-- Header: me vs opp -->
-              <div style="display:flex;align-items:center;gap:0.5rem;padding:0.875rem 1rem;border-bottom:1px solid #1e2a3a;">
-                <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:0.25rem;">
-                  <div style="display:flex;align-items:center;gap:0.4rem;">${myLogo}<span style="font-weight:600;${iWon?'color:#fbbf24':''}">${escapeHtml(me.username||'You')}</span><span style="font-size:0.7rem;color:#4a5568;">#${me.seed||'?'}</span></div>
-                  ${myPts}
-                </div>
-                <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;color:#4a5568;padding:0 0.5rem;">vs</div>
-                ${oppBlock}
+              <div style="display:flex;align-items:flex-start;gap:0.5rem;padding:0.875rem 1rem;">
+                ${playerCol(myUserId, myScore, iWon, false)}
+                ${probCenter}
+                ${isBye || !opp ? byeCol : playerCol(oppId, oppScore, oppWon, true)}
               </div>
-              <!-- Result -->
-              <div style="padding:0.45rem 1rem;border-bottom:1px solid #1e2a3a;font-size:0.8rem;">${resultLabel}</div>
-              <!-- Nav -->
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.75rem;">
+              ${h2hSummary ? `<div style="padding:0 1rem 0.5rem;">${h2hSummary}</div>` : ''}
+              ${probBarRow}
+              <div style="padding:0.45rem 1rem;border-top:1px solid #1e2a3a;font-size:0.8rem;">${resultLabel}</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0.75rem;border-top:1px solid #1e2a3a;">
                 <button data-cup-nav="${prevRound || ''}" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;cursor:pointer;color:#94a3b8;${!prevRound?'opacity:0.3;pointer-events:none':''}">&larr; Prev</button>
                 <span style="font-size:0.75rem;color:#4a5568;">${roundLabels2[cupViewRound] || `Round ${cupViewRound}`}</span>
                 <button data-cup-nav="${nextRound || ''}" style="background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;cursor:pointer;color:#94a3b8;${!nextRound?'opacity:0.3;pointer-events:none':''}">Next &rarr;</button>
@@ -3008,6 +3543,20 @@
             </div>
           </div>`
       }
+
+      // Cup bracket view toggle
+      matchesEl.addEventListener('click', async e => {
+        if (!e.target.closest('#cup-view-toggle')) return
+        if (activeTab !== 'cup') return
+        cupBracketView = cupBracketView === 'bracket' ? 'list' : 'bracket'
+        const sel = document.getElementById('cup-selector')
+        const cupId = sel ? parseInt(sel.value) : null
+        if (cupId) await renderCup(cupId)
+        else {
+          const r = await fetch(`${BACKEND_ROOT}/api/cups?season=${new Date().getFullYear()}`)
+          if (r.ok) { const cups = await r.json(); if (cups.length) await renderCup(cups[0].id) }
+        }
+      })
 
       // H2H round navigation (event delegation)
       matchesEl.addEventListener('click', async e => {
@@ -3027,6 +3576,45 @@
             const cups = await r.json()
             if (cups.length) await renderCup(cups[0].id)
           }
+        }
+      })
+
+      // Bracket matchup card click → show preview panel
+      matchesEl.addEventListener('click', e => {
+        if (activeTab !== 'cup') return
+        // Close preview
+        if (e.target.closest('[data-cup-close-preview]')) {
+          selectedMatchupKey = null
+          const preview = document.getElementById('cup-matchup-preview')
+          if (preview) preview.innerHTML = ''
+          return
+        }
+        // Open / toggle preview
+        const card = e.target.closest('[data-cup-matchup-key]')
+        if (!card) return
+        const key = card.dataset.cupMatchupKey
+        const preview = document.getElementById('cup-matchup-preview')
+        if (!preview || !window._cupRenderData) return
+        if (selectedMatchupKey === key) {
+          selectedMatchupKey = null
+          preview.innerHTML = ''
+          // Remove highlight from card
+          document.querySelectorAll('[data-cup-matchup-key]').forEach(c => {
+            c.style.outline = ''
+          })
+          return
+        }
+        selectedMatchupKey = key
+        // Highlight selected card, unhighlight others
+        document.querySelectorAll('[data-cup-matchup-key]').forEach(c => {
+          c.style.outline = c.dataset.cupMatchupKey === key
+            ? '2px solid rgba(96,165,250,0.5)' : ''
+        })
+        const { cup, byRound, userMap, predictions } = window._cupRenderData
+        const [r, s] = key.split(':').map(Number)
+        const matchup = (byRound[r] || []).find(m => m.slot === s)
+        if (matchup && !matchup.is_bye) {
+          preview.innerHTML = buildMatchupPreview(matchup, userMap, predictions, cup)
         }
       })
 
