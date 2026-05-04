@@ -353,6 +353,17 @@ h2, h3 {
   background: #fde68a;
 }
 
+.prize-banner-cta--secondary {
+  color: #d4a017;
+  background: transparent;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+}
+
+.prize-banner-cta--secondary:hover {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--accent-bright);
+}
+
 .prize-banner-close {
   background: none;
   border: none;

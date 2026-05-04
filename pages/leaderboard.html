@@ -169,6 +169,22 @@
       .cup-matchup-card.cup-active { border-color:rgba(245,158,11,0.45); }
       .cup-matchup-card.cup-live   { border-color:rgba(74,222,128,0.45); }
       .cup-matchup-card.cup-sealed { border-color:rgba(96,165,250,0.45); }
+      .cup-matchup-card.cup-scenario { border-color:rgba(139,92,246,0.45); border-style:dashed; transition:border-color 0.15s,background 0.15s; }
+      .cup-matchup-card.cup-scenario-active { border-color:rgba(139,92,246,0.7); border-style:solid; }
+      .cup-scenario-header { padding:2px 8px; font-size:0.52rem; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:rgba(139,92,246,0.6); border-bottom:1px solid rgba(139,92,246,0.12); background:rgba(139,92,246,0.04); text-align:center; }
+      .cup-scenario-row { display:flex; align-items:center; gap:0.5rem; padding:0.32rem 0.5rem; border-bottom:1px solid #1e2a3a; font-size:0.72rem; min-height:1.9rem; cursor:pointer; transition:background 0.12s; }
+      .cup-scenario-row:last-of-type { border-bottom:none; }
+      .cup-scenario-row:hover { background:rgba(139,92,246,0.1); }
+      .cup-scenario-row.cup-me { background:rgba(59,130,246,0.07); }
+      .cup-scenario-row.cup-sc-picked { background:rgba(139,92,246,0.12); font-weight:700; }
+      .cup-scenario-row.cup-sc-loser { opacity:0.35; cursor:pointer; }
+      .cup-scenario-row.cup-sc-loser:hover { opacity:0.7; background:rgba(139,92,246,0.07); }
+      .cup-sc-indicator { flex-shrink:0; width:0.75rem; height:0.75rem; border-radius:50%; border:1.5px solid rgba(139,92,246,0.4); margin-left:auto; transition:background 0.12s,border-color 0.12s; }
+      .cup-sc-indicator.cup-sc-filled { background:#8b5cf6; border-color:#8b5cf6; }
+      .cup-scenario-clear { display:block; width:100%; padding:2px 0; font-size:0.55rem; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; color:#8b5cf6; background:rgba(139,92,246,0.06); border:none; border-top:1px solid rgba(139,92,246,0.15); cursor:pointer; text-align:center; transition:background 0.1s; }
+      .cup-scenario-clear:hover { background:rgba(139,92,246,0.13); }
+      .cup-scenario-hint { background:rgba(139,92,246,0.08); border:1px solid rgba(139,92,246,0.25); border-radius:8px; padding:0.45rem 0.75rem; font-size:0.7rem; color:#a78bfa; display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; }
+      .cup-scenario-hint button { margin-left:auto; background:none; border:none; color:#6b7280; font-size:0.75rem; cursor:pointer; flex-shrink:0; padding:0 0.25rem; line-height:1; }
       @keyframes cup-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
       .cup-live-dot { display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;animation:cup-pulse 1.4s ease-in-out infinite;vertical-align:middle;margin-right:3px; }
       .cup-player-row { display:flex; align-items:center; gap:0.5rem; padding:0.4rem 0.65rem; border-bottom:1px solid #1e2a3a; font-size:0.8125rem; min-height:2.1rem; }
@@ -178,6 +194,11 @@
       .cup-player-row.cup-bye { color:#4a5568; font-style:italic; justify-content:center; }
       .cup-player-row.cup-me { background:rgba(59,130,246,0.07); }
       .cup-player-row.cup-me.cup-winner { background:rgba(245,158,11,0.12); }
+      .cup-player-row[data-cup-pick] { cursor:pointer; }
+      .cup-player-row[data-cup-pick]:hover { background:rgba(139,92,246,0.08); }
+      .cup-player-row[data-cup-pick].cup-sc-picked { background:rgba(139,92,246,0.12); font-weight:700; }
+      .cup-player-row[data-cup-pick].cup-sc-loser { opacity:0.35; }
+      .cup-player-row[data-cup-pick].cup-sc-loser:hover { opacity:0.7; background:rgba(139,92,246,0.07); }
       .cup-h2h-card { background:#161b24; border:1px solid #2e3a4e; border-radius:12px; overflow:hidden; margin-bottom:1.5rem; }
       .cup-h2h-game { display:grid; grid-template-columns:1fr auto 1fr; gap:0.5rem; align-items:center; padding:0.6rem 1rem; border-bottom:1px solid #1a2233; font-size:0.8125rem; }
       .cup-h2h-game:last-child { border-bottom:none; }
@@ -2357,6 +2378,8 @@
       let cupLiveConfig      = null   // stored so the toggle button can re-render
       let cupBracketView     = 'bracket'  // 'bracket' | 'list'
       let selectedMatchupKey = null       // key of bracket matchup currently previewed
+      let cupScenarioPicks   = {}         // sorted pair key "uid1:uid2" → picked winner uid (scenario mode)
+      let cupScenarioRounds  = {}         // sorted pair key "uid1:uid2" → cup round number of that pick
 
       function largestPowerOfTwo(n) {
         let p = 1
@@ -2477,7 +2500,7 @@
         </div>`
       }
 
-      function buildCupOddsPanel(cup, participants, userMap, predictions) {
+      function buildCupOddsPanel(cup, participants, userMap, predictions, byRound) {
         if (!predictions?.cup_odds || Object.keys(predictions.cup_odds).length === 0) return ''
         const remaining = participants.filter(p => !p.eliminated)
         if (!remaining.length) return ''
@@ -2503,8 +2526,72 @@
         // For >4 rounds, extend: more rounds means add teal before blue
         const allSegColors = ['#0ea5e9','#3b82f6','#8b5cf6','#f97316','#f59e0b']
 
+        // Scenario: which players are eliminated by current scenario picks
+        const scenarioEliminated = new Set()
+        for (const [pk, winnerId] of Object.entries(cupScenarioPicks)) {
+          const [ua, ub] = pk.split(':')
+          scenarioEliminated.add(winnerId === ua ? ub : ua)
+        }
+        const hasScenario = Object.keys(cupScenarioPicks).length > 0
+
+        // Build lookup: sorted player-pair key → { pWinA, pWinB, uidA, uidB }
+        // Uses byRound matchups to connect round:slot prob data to player IDs.
+        const matchupProbByPair = {}
+        for (const [r, matchups] of Object.entries(byRound || {})) {
+          for (const m of matchups) {
+            if (!m.player_a_id || !m.player_b_id) continue
+            const mp = predictions?.matchup_probs?.[`${m.cup_round}:${m.slot}`]
+            if (!mp || mp.prob_a == null) continue
+            const pk = [m.player_a_id, m.player_b_id].sort().join(':')
+            matchupProbByPair[pk] = { uidA: m.player_a_id, pWinA: mp.prob_a, uidB: m.player_b_id, pWinB: mp.prob_b }
+          }
+        }
+
+        // Compute scenario-adjusted odds using Bayesian conditioning:
+        // P(win cup | win this match) = P(win cup) / P(win this match)
+        // This means an upset winner gets a proportionally small boost, not the favourite's full odds.
+        const displayOdds = { ...predictions.cup_odds }
+        if (hasScenario) {
+          for (const [pk, winnerId] of Object.entries(cupScenarioPicks)) {
+            const [ua, ub] = pk.split(':')
+            const loser = winnerId === ua ? ub : ua
+
+            const mp = matchupProbByPair[pk]
+            let pWin
+            if (mp) {
+              pWin = mp.uidA === winnerId ? mp.pWinA : mp.pWinB
+            } else {
+              // No matchup prob for this round — use round_progression win rates as proxy.
+              // progMap[uid][r] = P(player wins their round-r match, averaged over all opponents).
+              // Ratio of these gives a much better head-to-head estimate than cup-odds ratio,
+              // which would algebraically reduce to "winner inherits loser's odds".
+              const round = cupScenarioRounds[pk]
+              const wProg = round ? (progMap[winnerId]?.[String(round)] || 0) : 0
+              const lProg = round ? (progMap[loser]?.[String(round)] || 0) : 0
+              const progTot = wProg + lProg
+              if (progTot > 0) {
+                pWin = wProg / progTot
+              } else {
+                // Last resort: fall back to 50/50 rather than cup-odds ratio
+                pWin = 0.5
+              }
+            }
+
+            // Condition winner's cup odds on having won this match
+            displayOdds[winnerId] = pWin > 0 ? (displayOdds[winnerId] || 0) / pWin : 0
+            displayOdds[loser] = 0
+          }
+          // Renormalize remaining players to sum to 1
+          const total = Object.values(displayOdds).reduce((a, b) => a + b, 0)
+          if (total > 0) {
+            for (const uid of Object.keys(displayOdds)) {
+              displayOdds[uid] = displayOdds[uid] / total
+            }
+          }
+        }
+
         const sorted = remaining
-          .map(p => ({ ...p, odds: predictions.cup_odds[p.user_id] || 0 }))
+          .map(p => ({ ...p, odds: displayOdds[p.user_id] || 0 }))
           .sort((a, b) => b.odds - a.odds)
 
         const rows = sorted.map((p, i) => {
@@ -2512,11 +2599,12 @@
           const pct  = (p.odds * 100).toFixed(1)
           const isMe = p.user_id === myUserId
           const st   = statsMap[p.user_id]
+          const isScenarioElim = hasScenario && scenarioEliminated.has(p.user_id)
           const caveat = st && st.games_scored < 10
             ? `<span style="font-size:0.58rem;color:#4a5568;margin-left:0.25rem;" title="${st.games_scored} games scored">(low data)</span>`
             : ''
           const logo = u.favourite_team
-            ? `<img src="../logos/${teamSlug(u.favourite_team)}.svg" style="width:0.9rem;height:0.9rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            ? `<img src="../logos/${teamSlug(u.favourite_team)}.svg" style="width:0.9rem;height:0.9rem;object-fit:contain;flex-shrink:0;${isScenarioElim?'opacity:0.3':''}" onerror="this.style.display='none'">`
             : ''
 
           // Build layered progress bar from round_progression
@@ -2539,18 +2627,20 @@
             return `<span style="font-size:0.58rem;color:${color};font-weight:600;">${roundLabel(r)}: ${(pRound*100).toFixed(1)}%</span>`
           }).filter(Boolean).join('<span style="color:#374151;margin:0 3px;">·</span>')
 
-          return `<div style="padding:0.35rem 0.75rem;${isMe?'background:rgba(245,158,11,0.05);':''}">
+          const elimBadge = isScenarioElim ? `<span style="font-size:0.58rem;color:#8b5cf6;margin-left:0.25rem;font-weight:600;">Eliminated in scenario</span>` : ''
+
+          return `<div style="padding:0.35rem 0.75rem;${isMe?'background:rgba(245,158,11,0.05);':''}${isScenarioElim?'opacity:0.45;':''}">
             <div style="display:flex;align-items:center;gap:0.35rem;margin-bottom:4px;">
-              <span style="font-size:0.72rem;font-weight:700;color:${i===0?'#f59e0b':'#4a5568'};min-width:1.2rem;text-align:right;">${i+1}</span>
+              <span style="font-size:0.72rem;font-weight:700;color:${i===0&&!isScenarioElim?'#f59e0b':'#4a5568'};min-width:1.2rem;text-align:right;">${i+1}</span>
               ${logo}
-              <span style="font-size:0.8rem;font-weight:600;${isMe?'color:#fbbf24':''}">${escapeHtml(u.username||'?')}</span>
-              ${caveat}
-              <span style="margin-left:auto;font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:700;color:${i===0?'#fbbf24':'#94a3b8'};">${pct}%</span>
+              <span style="font-size:0.8rem;font-weight:600;${isMe?'color:#fbbf24':''}${isScenarioElim?'text-decoration:line-through;':''}">${escapeHtml(u.username||'?')}</span>
+              ${caveat}${elimBadge}
+              <span style="margin-left:auto;font-family:'Barlow Condensed',sans-serif;font-size:0.95rem;font-weight:700;color:${i===0&&!isScenarioElim?'#fbbf24':'#94a3b8'};">${pct}%</span>
             </div>
-            <div style="position:relative;height:6px;background:#1e2a3a;border-radius:2px;overflow:hidden;margin:0 0 3px 1.6rem;">
+            ${isScenarioElim ? '' : `<div style="position:relative;height:6px;background:#1e2a3a;border-radius:2px;overflow:hidden;margin:0 0 3px 1.6rem;">
               ${layers}
             </div>
-            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:1.6rem;">${milestones}</div>
+            <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:1.6rem;">${milestones}</div>`}
           </div>`
         }).join('')
 
@@ -2563,10 +2653,15 @@
           </span>`
         }).join('')
 
+        const scenarioNote = hasScenario
+          ? `<div style="padding:0.3rem 0.75rem;border-top:1px solid #1e2a3a;font-size:0.62rem;color:#8b5cf6;">Odds adjusted for your predicted outcomes · renormalised among survivors</div>`
+          : ''
+
         return `<div style="margin-bottom:1.5rem;">
-          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.6rem;">Cup Winning Odds</div>
-          <div style="background:#161b24;border:1px solid #2e3a4e;border-radius:10px;overflow:hidden;padding:0.25rem 0;">
+          <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.6rem;">Cup Winning Odds${hasScenario?' <span style="font-size:0.6rem;color:#8b5cf6;font-weight:600;text-transform:none;letter-spacing:0;">(scenario active)</span>':''}</div>
+          <div style="background:#161b24;border:1px solid ${hasScenario?'rgba(139,92,246,0.35)':'#2e3a4e'};border-radius:10px;overflow:hidden;padding:0.25rem 0;">
             ${rows}
+            ${scenarioNote}
             <div style="padding:0.4rem 0.75rem;border-top:1px solid #1e2a3a;display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;">
               ${legendItems}
               <span style="font-size:0.62rem;color:#374151;margin-left:auto;">Exact · bracket DP</span>
@@ -2660,6 +2755,31 @@
                 Last ${total} shared games — <span style="color:#60a5fa;">${escapeHtml(pA.username||'?')} ${aW}</span> · <span style="color:#f87171;">${escapeHtml(pB?.username||'?')} ${bW}</span>${t ? ` · ${t} tied` : ''}
               </div>`
             })()
+          : (uidB && pB.username ? `<div style="font-size:0.68rem;color:#4a5568;text-align:center;padding:0.2rem 0 0;">H2H Record — <span style="color:#60a5fa;">${escapeHtml(pA.username||'?')} 0</span> · <span style="color:#f87171;">${escapeHtml(pB.username||'?')} 0</span></div>` : '')
+
+        // Scenario pick buttons for unresolved matchups
+        const scenarioPairKey = uidA && uidB ? [uidA, uidB].sort().join(':') : null
+        const currentScenarioPick = scenarioPairKey ? (cupScenarioPicks[scenarioPairKey] || null) : null
+        function previewPickRow(uid, p) {
+          const isWinner = currentScenarioPick === uid
+          const isLoser  = !!currentScenarioPick && !isWinner
+          const logo = p.favourite_team
+            ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:0.8rem;height:0.8rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+            : ''
+          const rowClass = ['cup-scenario-row', isWinner?'cup-sc-picked':'', isLoser?'cup-sc-loser':''].filter(Boolean).join(' ')
+          return `<div class="${rowClass}" data-cup-pick="${scenarioPairKey}" data-cup-pick-uid="${uid}" data-cup-pick-round="${matchup.cup_round}">
+            ${logo}
+            <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.username||'?')}</span>
+            <span class="cup-sc-indicator${isWinner?' cup-sc-filled':''}"></span>
+          </div>`
+        }
+        const scenarioPickRow = !hasResult && !matchup.is_bye && uidA && uidB
+          ? `<div style="border-top:1px solid #1e2a3a;">
+              <div class="cup-scenario-header">Predict winner</div>
+              ${previewPickRow(uidA, pA)}${previewPickRow(uidB, pB)}
+              ${currentScenarioPick ? `<button data-cup-pick="${scenarioPairKey}" data-cup-pick-uid="" data-cup-pick-round="${matchup.cup_round}" class="cup-scenario-clear">✕ Clear pick</button>` : ''}
+            </div>`
           : ''
 
         const probCenter = probs && !hasResult
@@ -2699,6 +2819,8 @@
             </div>
             ${probBarRow}
             ${statusRow}
+            ${h2hSummary ? `<div style="padding:0.15rem 1rem 0.4rem;">${h2hSummary}</div>` : ''}
+            ${scenarioPickRow}
           </div>
         </div>`
       }
@@ -2722,15 +2844,61 @@
           return (byRound[r] || []).find(m => m.slot === s) || null
         }
 
-        // Helper: resolved winner uid for a round-1 matchup (DB winner or sealed)
+        // Helper: resolved winner uid for a matchup (DB winner, sealed, or scenario pick)
         function resolvedUid(m) {
           if (!m) return null
           if (m.winner_id) return m.winner_id
           const pd = predictions?.matchup_probs?.[`${m.cup_round}:${m.slot}`]
-          return pd?.sealed ? pd.sealed_winner_id : null
+          if (pd?.sealed) return pd.sealed_winner_id
+          if (m.player_a_id && m.player_b_id) {
+            const pairKey = [m.player_a_id, m.player_b_id].sort().join(':')
+            if (cupScenarioPicks[pairKey]) return cupScenarioPicks[pairKey]
+          }
+          return null
         }
 
-        function bRow(uid, score, isWinner, hasResult, liveScore, projected) {
+        // Resolves who would advance from visual bracket position vidx in round r on a given side.
+        // r1Pairs = the seed pairs for that side in visual top-to-bottom order.
+        // This tracks visual bracket structure, not DB slot order.
+        function scenarioAdvancerVisual(r, vidx, r1Pairs) {
+          if (r === 1) {
+            const [seedA, seedB] = r1Pairs[vidx]
+            const m = (byRound[1] || []).find(mu =>
+              (userMap[mu.player_a_id]?.seed === seedA && userMap[mu.player_b_id]?.seed === seedB) ||
+              (userMap[mu.player_a_id]?.seed === seedB && userMap[mu.player_b_id]?.seed === seedA)
+            )
+            return m ? resolvedUid(m) : null
+          }
+          const uidA = scenarioAdvancerVisual(r - 1, 2 * vidx,     r1Pairs)
+          const uidB = scenarioAdvancerVisual(r - 1, 2 * vidx + 1, r1Pairs)
+          if (!uidA || !uidB) return null
+          // Check for a real DB matchup with these players in round r
+          const m = (byRound[r] || []).find(mu =>
+            (mu.player_a_id === uidA && mu.player_b_id === uidB) ||
+            (mu.player_a_id === uidB && mu.player_b_id === uidA)
+          )
+          if (m) return resolvedUid(m)
+          const pairKey = [uidA, uidB].sort().join(':')
+          return cupScenarioPicks[pairKey] || null
+        }
+
+        // Returns the two players who would face each other at visual position vidx in round r on a given side.
+        function scenarioPlayersVisual(r, vidx, r1Pairs) {
+          if (r === 1) {
+            const [seedA, seedB] = r1Pairs[vidx]
+            const m = (byRound[1] || []).find(mu =>
+              (userMap[mu.player_a_id]?.seed === seedA && userMap[mu.player_b_id]?.seed === seedB) ||
+              (userMap[mu.player_a_id]?.seed === seedB && userMap[mu.player_b_id]?.seed === seedA)
+            )
+            if (m) return { uidA: m.player_a_id, uidB: m.player_b_id }
+            return { uidA: seedMap[seedA] || null, uidB: seedMap[seedB] || null }
+          }
+          const uidA = scenarioAdvancerVisual(r - 1, 2 * vidx,     r1Pairs)
+          const uidB = scenarioAdvancerVisual(r - 1, 2 * vidx + 1, r1Pairs)
+          return { uidA: uidA || null, uidB: uidB || null }
+        }
+
+        function bRow(uid, score, isWinner, hasResult, liveScore, projected, pickInfo) {
           if (!uid) return `<div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>`
           const p = userMap[uid] || {}
           const isMe = uid === myUserId
@@ -2749,11 +2917,16 @@
               ${projected != null ? `<span style="font-size:0.55rem;color:#4a5568;display:block;line-height:1;">~${parseFloat(projected).toFixed(1)}</span>` : ''}
             </span>`
           }
-          return `<div class="cup-player-row${isMe?' cup-me':''}${isWinner?' cup-winner':''}${isLoser?' cup-eliminated':''}" style="padding:0.28rem 0.5rem;">
+          const isPickWinner = !!pickInfo && pickInfo.picked === uid
+          const isPickLoser  = !!pickInfo && !!pickInfo.picked && pickInfo.picked !== uid
+          const pickAttrs    = pickInfo ? ` data-cup-pick="${pickInfo.pairKey}" data-cup-pick-uid="${uid}" data-cup-pick-round="${pickInfo.round||''}"` : ''
+          const pickClass    = isPickWinner ? ' cup-sc-picked' : isPickLoser ? ' cup-sc-loser' : ''
+          const indicator    = pickInfo ? `<span class="cup-sc-indicator${isPickWinner?' cup-sc-filled':''}"></span>` : ''
+          return `<div class="cup-player-row${isMe?' cup-me':''}${isWinner?' cup-winner':''}${isLoser?' cup-eliminated':''}${pickClass}"${pickAttrs} style="padding:0.28rem 0.5rem;">
             ${logo}
             <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
             <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;${isLoser?'opacity:0.5':''}${isMe&&isWinner?'color:#fbbf24;font-weight:700;':''}">${escapeHtml(p.username||'?')}</span>
-            ${ptsHtml}
+            ${ptsHtml}${indicator}
           </div>`
         }
 
@@ -2774,12 +2947,19 @@
           const projectedA = isLive && !isSealed ? probData.projected_a : null
           const projectedB = isLive && !isSealed ? probData.projected_b : null
 
+          // Pick info for unresolved matchups — passed into bRow to render inline indicators
+          const pickInfo = !m.winner_id && !effectiveWinner && !m.is_bye && m.player_a_id && m.player_b_id
+            ? { pairKey: [m.player_a_id, m.player_b_id].sort().join(':'),
+                picked:  cupScenarioPicks[[m.player_a_id, m.player_b_id].sort().join(':')],
+                round:   m.cup_round }
+            : null
+
           const cardA = bRow(m.player_a_id, m.score_a,
             effectiveWinner === m.player_a_id, !!effectiveWinner,
-            liveScoreA, projectedA)
+            liveScoreA, projectedA, pickInfo)
           const cardB = m.is_bye ? '' : bRow(m.player_b_id, m.score_b,
             effectiveWinner === m.player_b_id, !!effectiveWinner,
-            liveScoreB, projectedB)
+            liveScoreB, projectedB, pickInfo)
 
           const probBar = probData && !effectiveWinner && !m.is_bye
             ? buildProbBar(probData.prob_a, probData.prob_b) : ''
@@ -2795,19 +2975,54 @@
             }
           }
 
+          // Clear button — only shown when a scenario pick is active for this matchup
+          const clearBtn = pickInfo?.picked
+            ? `<button class="cup-scenario-clear" data-cup-pick="${pickInfo.pairKey}" data-cup-pick-uid="" data-cup-pick-round="${m.cup_round}">✕ Clear pick</button>`
+            : ''
+
           const cls = m.winner_id ? 'cup-matchup-card'
             : isSealed ? 'cup-matchup-card cup-sealed'
             : isLive   ? 'cup-matchup-card cup-live'
             : 'cup-matchup-card cup-active'
           const isSelected = selectedMatchupKey === probKey
-          return `<div class="${cls}" data-cup-matchup-key="${probKey}" style="cursor:pointer;${isSelected?'outline:2px solid rgba(96,165,250,0.5);outline-offset:-2px;':''}">${cardA}${m.is_bye?'':cardB}${probBar}${badge}</div>`
+          return `<div class="${cls}" data-cup-matchup-key="${probKey}" style="cursor:pointer;${isSelected?'outline:2px solid rgba(96,165,250,0.5);outline-offset:-2px;':''}">${cardA}${m.is_bye?'':cardB}${probBar}${badge}${clearBtn}</div>`
         }
 
         function tbdCard() {
-          return `<div class="cup-matchup-card" style="opacity:0.22;">
+          return `<div class="cup-matchup-card" style="border-color:#3d4f66;border-style:dashed;">
             <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>
             <div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>
           </div>`
+        }
+
+        // Scenario-selectable card for future rounds where both players are known via scenario propagation
+        function scenarioSelectableCard(uidA, uidB, round) {
+          const pairKey = [uidA, uidB].sort().join(':')
+          const pickedWinner = cupScenarioPicks[pairKey] || null
+          const isPicked = !!pickedWinner
+          function scRow(uid) {
+            if (!uid) return `<div class="cup-scenario-row" style="color:#374151;opacity:0.55;pointer-events:none;">TBD</div>`
+            const p = userMap[uid] || {}
+            const isMe = uid === myUserId
+            const isWinner = pickedWinner === uid
+            const isLoser  = isPicked && !isWinner
+            const logo = p.favourite_team
+              ? `<img src="../logos/${teamSlug(p.favourite_team)}.svg" style="width:0.8rem;height:0.8rem;object-fit:contain;flex-shrink:0;" onerror="this.style.display='none'">`
+              : ''
+            const rowClass = ['cup-scenario-row', isMe?'cup-me':'', isWinner?'cup-sc-picked':'', isLoser?'cup-sc-loser':''].filter(Boolean).join(' ')
+            const indicator = `<span class="cup-sc-indicator${isWinner?' cup-sc-filled':''}"></span>`
+            return `<div class="${rowClass}" data-cup-sc-row="${pairKey}" data-cup-sc-uid="${uid}" data-cup-sc-round="${round||''}">
+              ${logo}
+              <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
+              <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(p.username||'?')}</span>
+              ${indicator}
+            </div>`
+          }
+          const header = `<div class="cup-scenario-header">Who wins?</div>`
+          const footer = isPicked
+            ? `<button class="cup-scenario-clear" data-cup-sc-clear="${pairKey}" data-cup-sc-round="${round||''}">✕ Clear pick</button>`
+            : ''
+          return `<div class="cup-matchup-card cup-scenario${isPicked?' cup-scenario-active':''}" data-cup-uid-a="${uidA}" data-cup-uid-b="${uidB}" data-cup-round="${round||''}">${header}${scRow(uidA)}${scRow(uidB)}${footer}</div>`
         }
 
         // Project an advancing player into a TBD slot when their feeder is resolved
@@ -2826,7 +3041,7 @@
             </div>`
           }
           const badge = `<div style="padding:1px 6px;font-size:0.55rem;font-weight:700;letter-spacing:0.07em;color:#60a5fa;text-transform:uppercase;text-align:center;background:rgba(96,165,250,0.05);opacity:0.8;">Advancing</div>`
-          return `<div class="cup-matchup-card" style="border-color:rgba(96,165,250,0.2);">${advRow(uidA)}${advRow(uidB)}${badge}</div>`
+          return `<div class="cup-matchup-card" style="border-color:rgba(96,165,250,0.4);">${advRow(uidA)}${advRow(uidB)}${badge}</div>`
         }
 
         function rLabel(r) {
@@ -2853,20 +3068,21 @@
                 return m ? realCard(m) : tbdCard()
               })
             } else {
-              const roundMatchups = (byRound[r] || [])
               const nMatchupsInRound = Math.round(nCards)
               cards = Array.from({length: nMatchupsInRound}, (_, i) => {
-                const m = roundMatchups[i] || null
-                if (m) return realCard(m)
-                // No DB matchup yet — check if both feeders from previous round are resolved
-                // Previous round DB slot numbers that feed this slot (1-indexed, sequential pairing)
-                const prevSlotA = 2 * i + 1   // 1-indexed slot in round r-1
-                const prevSlotB = 2 * i + 2
-                const feederA = (byRound[r - 1] || []).find(mu => mu.slot === prevSlotA)
-                const feederB = (byRound[r - 1] || []).find(mu => mu.slot === prevSlotB)
-                const advA = resolvedUid(feederA)
-                const advB = resolvedUid(feederB)
-                return (advA || advB) ? projectedAdvancerCard(advA, advB) : tbdCard()
+                // Use visual-position-based resolution so bracket structure is respected
+                const { uidA, uidB } = scenarioPlayersVisual(r, i, r1PairSeedsList)
+                if (uidA && uidB) {
+                  // Prefer a real DB matchup if one exists for these players
+                  const m = (byRound[r] || []).find(mu =>
+                    (mu.player_a_id === uidA && mu.player_b_id === uidB) ||
+                    (mu.player_a_id === uidB && mu.player_b_id === uidA)
+                  )
+                  if (m) return realCard(m)
+                  return scenarioSelectableCard(uidA, uidB, r)
+                }
+                if (uidA || uidB) return projectedAdvancerCard(uidA, uidB)
+                return tbdCard()
               })
             }
             if (isRight) cards.reverse()
@@ -2879,10 +3095,20 @@
         }
 
         const finalRound = totalRounds
-        const finalMatchup = (byRound[finalRound] || [])[0] || null
+        const finalMatchup = (byRound[finalRound] || []).find(mu => mu.slot === 1) || null
+        function finalCardContent() {
+          if (finalMatchup) return realCard(finalMatchup)
+          // Left finalist = winner advancing through left bracket's last side-round
+          // Right finalist = winner advancing through right bracket's last side-round
+          const fA = scenarioAdvancerVisual(sideRounds, 0, leftPairs)
+          const fB = scenarioAdvancerVisual(sideRounds, 0, rightPairs)
+          if (fA && fB) return scenarioSelectableCard(fA, fB, finalRound)
+          if (fA || fB) return projectedAdvancerCard(fA, fB)
+          return tbdCard()
+        }
         const finalCard = `<div style="width:120px;min-width:120px;max-width:120px;padding:0 0.4rem;display:flex;flex-direction:column;flex-shrink:0;">
           <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;flex-shrink:0;">Grand Final</div>
-          <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${finalMatchup ? realCard(finalMatchup) : tbdCard()}</div>
+          <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${finalCardContent()}</div>
         </div>`
 
         return `<div style="display:flex;align-items:stretch;overflow-x:auto;padding-bottom:0.5rem;">
@@ -3295,7 +3521,7 @@
             </div>`
         }).join('')
 
-        const cupOddsPanel = buildCupOddsPanel(cup, participants, userMap, predictions)
+        const cupOddsPanel = buildCupOddsPanel(cup, participants, userMap, predictions, byRound)
 
         const toggleViewBtn = `<button id="cup-view-toggle" style="${cupBracketView==='bracket'?'background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;color:#94a3b8;':'background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:#60a5fa;'}border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;font-weight:600;cursor:pointer;">${cupBracketView==='bracket'?'List View':'Bracket View'}</button>`
 
@@ -3330,7 +3556,7 @@
         }
 
         // Cache render data for click handlers to use without re-fetching
-        window._cupRenderData = { cup, byRound, roundNums, userMap, predictions, matchups }
+        window._cupRenderData = { cup, byRound, roundNums, userMap, predictions, matchups, participants }
 
         contentEl.innerHTML = `
           <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
@@ -3342,9 +3568,16 @@
           ${champBanner}
           ${myH2H}
           <div id="cup-matchup-preview">${matchupPreviewHtml}</div>
+          <div id="cup-scenario-hint" style="${sessionStorage.getItem('cupScenarioHintDismissed') ? 'display:none;' : ''}" class="cup-scenario-hint">
+            <span>Tap a player to predict match outcomes — odds update live below</span>
+            <button data-cup-hint-dismiss>✕</button>
+          </div>
+          <div id="cup-scenario-banner" style="${Object.keys(cupScenarioPicks).length>0?'':'display:none;'}">
+            ${Object.keys(cupScenarioPicks).length>0 ? `<div style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.35);border-radius:8px;padding:0.4rem 0.75rem;display:flex;align-items:center;gap:0.5rem;font-size:0.72rem;margin-bottom:0.75rem;"><span style="color:#8b5cf6;font-weight:700;flex:1;">Scenario mode · Odds reflect your predicted outcomes (${Object.keys(cupScenarioPicks).length} picked)</span><button data-cup-clear-scenario style="background:none;border:1px solid rgba(139,92,246,0.4);border-radius:5px;padding:0.15rem 0.5rem;font-size:0.65rem;color:#8b5cf6;cursor:pointer;">Clear all</button></div>` : ''}
+          </div>
           <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.75rem;">Full Bracket</div>
           <div id="cup-bracket-area">${bracketAreaHtml}</div>
-          ${cupOddsPanel}`
+          <div id="cup-odds-panel">${cupOddsPanel}</div>`
       }
 
       function matchupCard(m, userMap, currentCupRound, predictions) {
@@ -3528,7 +3761,7 @@
                 <span style="color:#f87171;">${escapeHtml(opp?.username||'Opp')} ${meIsA ? bW : aW}</span>${t ? ` · ${t} tied` : ''}
               </div>`
             })()
-          : ''
+          : (!isBye && opp ? `<div style="font-size:0.68rem;color:#4a5568;text-align:center;padding:0.15rem 0 0;">H2H Record — <span style="color:#60a5fa;">${escapeHtml(me.username||'You')} 0</span> · <span style="color:#f87171;">${escapeHtml(opp.username||'Opp')} 0</span></div>` : '')
 
         return `
           <div id="cup-h2h-section" style="margin-bottom:1.5rem;">
@@ -3599,6 +3832,8 @@
         // Open / toggle preview
         const card = e.target.closest('[data-cup-matchup-key]')
         if (!card) return
+        // Don't toggle preview when clicking pick rows or clear button on the card
+        if (e.target.closest('[data-cup-pick]') || e.target.closest('[data-cup-sc-clear]')) return
         const key = card.dataset.cupMatchupKey
         const preview = document.getElementById('cup-matchup-preview')
         if (!preview || !window._cupRenderData) return
@@ -3624,6 +3859,118 @@
           preview.innerHTML = buildMatchupPreview(matchup, userMap, predictions, cup)
         }
       })
+
+      // ─── Scenario bracket picks ────────────────────────────────────────────
+      matchesEl.addEventListener('click', e => {
+        if (activeTab !== 'cup') return
+
+        // Clear all scenario picks
+        if (e.target.closest('[data-cup-clear-scenario]')) {
+          cupScenarioPicks  = {}
+          cupScenarioRounds = {}
+          rerenderScenario()
+          return
+        }
+
+        // Dismiss scenario hint
+        if (e.target.closest('[data-cup-hint-dismiss]')) {
+          sessionStorage.setItem('cupScenarioHintDismissed', '1')
+          const hintEl = document.getElementById('cup-scenario-hint')
+          if (hintEl) hintEl.style.display = 'none'
+          return
+        }
+
+        // Scenario row click — pick a specific player as winner (toggle to clear)
+        const scRow = e.target.closest('[data-cup-sc-row]')
+        if (scRow) {
+          const pairKey = scRow.dataset.cupScRow
+          const uid     = scRow.dataset.cupScUid
+          const round   = parseInt(scRow.dataset.cupScRound) || null
+          if (cupScenarioPicks[pairKey] === uid) {
+            delete cupScenarioPicks[pairKey]
+            delete cupScenarioRounds[pairKey]
+          } else {
+            cupScenarioPicks[pairKey] = uid
+            if (round) cupScenarioRounds[pairKey] = round
+          }
+          rerenderScenario()
+          return
+        }
+
+        // Scenario clear-pick button (card footer)
+        const scClear = e.target.closest('[data-cup-sc-clear]')
+        if (scClear) {
+          const pairKey = scClear.dataset.cupScClear
+          delete cupScenarioPicks[pairKey]
+          delete cupScenarioRounds[pairKey]
+          rerenderScenario()
+          return
+        }
+
+        // Pick-winner button inside the matchup preview panel
+        const pickBtn = e.target.closest('[data-cup-pick]')
+        if (pickBtn) {
+          const pairKey = pickBtn.dataset.cupPick
+          const uid     = pickBtn.dataset.cupPickUid
+          const round   = parseInt(pickBtn.dataset.cupPickRound) || null
+          if (!uid) {
+            delete cupScenarioPicks[pairKey]
+            delete cupScenarioRounds[pairKey]
+          } else if (cupScenarioPicks[pairKey] === uid) {
+            delete cupScenarioPicks[pairKey]
+            delete cupScenarioRounds[pairKey]
+          } else {
+            cupScenarioPicks[pairKey] = uid
+            if (round) cupScenarioRounds[pairKey] = round
+          }
+          rerenderScenario()
+          // Refresh the open preview panel so pick buttons update
+          const { cup, byRound, userMap, predictions } = window._cupRenderData || {}
+          if (selectedMatchupKey && cup) {
+            const [r, s] = selectedMatchupKey.split(':').map(Number)
+            const matchup = (byRound[r] || []).find(m => m.slot === s)
+            if (matchup && !matchup.is_bye) {
+              const preview = document.getElementById('cup-matchup-preview')
+              if (preview) preview.innerHTML = buildMatchupPreview(matchup, userMap, predictions, cup)
+            }
+          }
+          return
+        }
+      })
+
+      function rerenderScenario() {
+        const data = window._cupRenderData
+        if (!data) return
+        const { cup, byRound, userMap, predictions, participants } = data
+
+        // Re-render bracket area (bracket view only)
+        const bracketArea = document.getElementById('cup-bracket-area')
+        if (bracketArea && cupBracketView === 'bracket') {
+          bracketArea.innerHTML = `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions)}</div>`
+        }
+
+        // Update scenario banner
+        const bannerEl = document.getElementById('cup-scenario-banner')
+        if (bannerEl) {
+          const pickCount = Object.keys(cupScenarioPicks).length
+          if (pickCount > 0) {
+            bannerEl.style.display = ''
+            bannerEl.innerHTML = `<div style="background:rgba(139,92,246,0.1);border:1px solid rgba(139,92,246,0.35);border-radius:8px;padding:0.4rem 0.75rem;display:flex;align-items:center;gap:0.5rem;font-size:0.72rem;margin-bottom:0.75rem;">
+              <span style="color:#8b5cf6;font-weight:700;flex:1;">Scenario mode · Odds reflect your predicted outcomes (${pickCount} picked)</span>
+              <button data-cup-clear-scenario style="background:none;border:1px solid rgba(139,92,246,0.4);border-radius:5px;padding:0.15rem 0.5rem;font-size:0.65rem;color:#8b5cf6;cursor:pointer;">Clear all</button>
+            </div>`
+          } else {
+            bannerEl.style.display = 'none'
+            bannerEl.innerHTML = ''
+          }
+        }
+
+        // Re-render odds panel
+        const oddsEl = document.getElementById('cup-odds-panel')
+        if (oddsEl && participants) {
+          oddsEl.innerHTML = buildCupOddsPanel(cup, participants, userMap, predictions, byRound)
+        }
+      }
 
       // ───────────────────────────────────────────────────────────────────────
     </script>

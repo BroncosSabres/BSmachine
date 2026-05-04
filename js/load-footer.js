@@ -27,11 +27,20 @@ import('/js/my-stats.js').catch(function () {});
 
 // ---- Prize Banner ----
 
-// Set to the active prize round number to show the banner, or null to hide it entirely.
-// Changing this number also resets the dismiss state for all users (round-specific key).
-var PRIZE_ROUND = 9;
+var BACKEND_ROOT = 'https://bsmachine-backend.onrender.com';
 
-// Global dismiss function — called from onclick in the injected header HTML
+// Returns the display label for a given cup round number within a bracket.
+function _cupRoundLabel(currentRound, bracketSize) {
+  var totalRounds = Math.log2(bracketSize);
+  var fromEnd = totalRounds - currentRound;
+  if (fromEnd === 0) return 'Grand Final';
+  if (fromEnd === 1) return 'Semi Finals';
+  if (fromEnd === 2) return 'Quarter Finals';
+  return 'Round ' + currentRound;
+}
+
+// Global dismiss function — called from onclick in the injected header HTML.
+// The dismiss key is stored on the banner element so it survives without a global var.
 function dismissPrizeBanner() {
   var banner = document.getElementById('prize-banner');
   if (banner) {
@@ -40,28 +49,37 @@ function dismissPrizeBanner() {
     banner.style.maxHeight = '0';
     banner.style.overflow = 'hidden';
     setTimeout(function () { banner.style.display = 'none'; }, 320);
+    var key = banner.dataset.dismissKey;
+    if (key) localStorage.setItem(key, '1');
   }
-  if (PRIZE_ROUND) localStorage.setItem('bsm_prize_banner_dismissed_r' + PRIZE_ROUND, '1');
 }
 
-// Show banner only if PRIZE_ROUND matches the actual upcoming round from the API.
-// Result is cached in sessionStorage so we only fetch once per browser session.
+// Show the banner for the given active cup, populating the text dynamically.
+// Dismissed state is tracked per cup round so new rounds re-surface the banner.
 (function () {
-  if (!PRIZE_ROUND) return;
-  if (localStorage.getItem('bsm_prize_banner_dismissed_r' + PRIZE_ROUND)) return;
+  var CACHE_KEY = 'bsm_cup_banner';
 
-  function tryShow() {
-    var banner = document.getElementById('prize-banner');
-    if (banner) {
-      var roundSpan = document.getElementById('prize-banner-round');
-      if (roundSpan) roundSpan.textContent = PRIZE_ROUND;
+  function applyBanner(cup) {
+    var label      = _cupRoundLabel(cup.current_cup_round, cup.bracket_size);
+    var nrlRound   = cup.seeding_round + cup.current_cup_round;
+    var dismissKey = 'bsm_prize_banner_dismissed_cup_r' + cup.current_cup_round;
+
+    if (localStorage.getItem(dismissKey)) return;
+
+    function tryShow() {
+      var banner = document.getElementById('prize-banner');
+      if (!banner) return false;
+      var textEl = document.getElementById('prize-banner-text');
+      if (textEl) {
+        textEl.innerHTML =
+          'BS Cup <strong>' + label + '</strong> plays in Round ' + nrlRound +
+          ' &mdash; The cup winner gets a <strong>$50 gift card!</strong>';
+      }
+      banner.dataset.dismissKey = dismissKey;
       banner.style.display = '';
       return true;
     }
-    return false;
-  }
 
-  function showWhenReady() {
     if (!tryShow()) {
       var headerEl = document.getElementById('site-header');
       if (!headerEl) return;
@@ -72,22 +90,24 @@ function dismissPrizeBanner() {
     }
   }
 
-  // Check upcoming round — use sessionStorage cache to avoid an API call on every page
-  var CACHE_KEY = 'bsm_upcoming_round';
+  // Use sessionStorage to avoid fetching on every page navigation.
   var cached = sessionStorage.getItem(CACHE_KEY);
   if (cached !== null) {
-    if (Number(cached) === PRIZE_ROUND) showWhenReady();
+    try {
+      var cup = JSON.parse(cached);
+      if (cup && cup.status === 'active') applyBanner(cup);
+    } catch (e) {}
     return;
   }
 
-  fetch('https://bsmachine-backend.onrender.com/api/upcoming_matches/nrl')
+  fetch(BACKEND_ROOT + '/api/cups?season=' + new Date().getFullYear())
     .then(function (r) { return r.json(); })
-    .then(function (data) {
-      var upcomingRound = (data && data.length > 0) ? data[0].round_number : null;
-      if (upcomingRound !== null) sessionStorage.setItem(CACHE_KEY, String(upcomingRound));
-      if (upcomingRound === PRIZE_ROUND) showWhenReady();
+    .then(function (cups) {
+      var activeCup = Array.isArray(cups) && cups.find(function (c) { return c.status === 'active'; });
+      sessionStorage.setItem(CACHE_KEY, activeCup ? JSON.stringify(activeCup) : 'null');
+      if (activeCup) applyBanner(activeCup);
     })
     .catch(function () {
-      // If the API is unreachable, fail silently — banner stays hidden
+      // Fail silently — banner stays hidden if API is unreachable
     });
 })();
