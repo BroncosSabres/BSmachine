@@ -165,6 +165,12 @@
       /* BS Cup bracket */
       .cup-bracket { display:flex; gap:0; overflow-x:auto; padding-bottom:0.5rem; }
       .cup-round-col { display:flex; flex-direction:column; justify-content:space-around; min-width:168px; padding:0 0.5rem; }
+      /* Active bracket: flex on desktop, fixed+scroll on mobile */
+      @media (max-width: 768px) {
+        .cup-ab-outer { overflow-x:auto !important; width:auto !important; }
+        .cup-ab-col-active   { flex:none !important; width:150px !important; min-width:150px !important; }
+        .cup-ab-col-inactive { flex:none !important; width:88px  !important; min-width:88px  !important; }
+      }
       .cup-matchup-card { background:#161b24; border:1px solid #2e3a4e; border-radius:8px; overflow:hidden; margin:0.3rem 0; }
       .cup-matchup-card.cup-active { border-color:rgba(245,158,11,0.45); }
       .cup-matchup-card.cup-live   { border-color:rgba(74,222,128,0.45); }
@@ -2399,10 +2405,11 @@
 
       // Shared bracket column builder — used by both buildTwoSidedBracket and buildActiveBracket
       function buildColumn(label, cards, flexPerSlot, labelColor, colFlex) {
+        const isActive = colFlex > 1
         const slots = cards.map(card =>
           `<div style="flex:${flexPerSlot};display:flex;flex-direction:column;justify-content:center;padding:2px 0;">${card}</div>`
         ).join('')
-        return `<div style="flex:${colFlex || 1};min-width:0;padding:0 0.4rem;display:flex;flex-direction:column;">
+        return `<div class="${isActive ? 'cup-ab-col-active' : 'cup-ab-col-inactive'}" style="flex:${colFlex || 1};min-width:0;padding:0 0.4rem;display:flex;flex-direction:column;">
           <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:${labelColor || '#4a5568'};flex-shrink:0;">${label}</div>
           <div style="display:flex;flex-direction:column;flex:1;">${slots}</div>
         </div>`
@@ -3112,13 +3119,14 @@
           if (fA || fB) return projectedAdvancerCard(fA, fB)
           return tbdCard()
         }
-        const gfFlex = finalRound === cup.current_cup_round ? 1.5 : 1
-        const finalCard = `<div style="flex:${gfFlex};min-width:0;padding:0 0.4rem;display:flex;flex-direction:column;">
+        const gfIsActive = finalRound === cup.current_cup_round
+        const gfFlex = gfIsActive ? 1.5 : 1
+        const finalCard = `<div class="${gfIsActive ? 'cup-ab-col-active' : 'cup-ab-col-inactive'}" style="flex:${gfFlex};min-width:0;padding:0 0.4rem;display:flex;flex-direction:column;">
           <div style="height:2rem;display:flex;align-items:center;justify-content:center;text-align:center;font-size:0.63rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:#f59e0b;flex-shrink:0;">Grand Final</div>
           <div style="display:flex;flex-direction:column;flex:1;justify-content:center;">${finalCardContent()}</div>
         </div>`
 
-        return `<div style="display:flex;align-items:stretch;width:100%;padding-bottom:0.5rem;">
+        return `<div class="cup-ab-outer" style="display:flex;align-items:stretch;width:100%;padding-bottom:0.5rem;">
           ${buildSide(leftPairs, false)}
           ${finalCard}
           ${buildSide(rightPairs, true)}
@@ -3484,34 +3492,16 @@
         const userMap = {}
         participants.forEach(p => { userMap[p.user_id] = p })
 
-        // Fetch tipping status per NRL round for cup participants
+        // Fetch tipping status per NRL round via backend (uses service key, bypasses RLS)
         // tippedMap: { [nrl_round]: Set<user_id> }
         const tippedMap = {}
         try {
-          const cupNrlRounds = [...new Set(matchups.map(m => m.nrl_round).filter(Boolean))]
-          if (cupNrlRounds.length && participants.length) {
-            const participantIds = participants.map(p => p.user_id)
-            const { data: roundGames } = await supabase
-              .from('games')
-              .select('game_id, round_number')
-              .in('round_number', cupNrlRounds)
-            if (roundGames?.length) {
-              const gameIds = roundGames.map(g => g.game_id)
-              const gameRoundMap = {}
-              roundGames.forEach(g => { gameRoundMap[g.game_id] = g.round_number })
-              const { data: picksData } = await supabase
-                .from('picks')
-                .select('user_id, game_id')
-                .in('game_id', gameIds)
-                .in('user_id', participantIds)
-              picksData?.forEach(pk => {
-                const rnd = gameRoundMap[pk.game_id]
-                if (rnd) {
-                  if (!tippedMap[rnd]) tippedMap[rnd] = new Set()
-                  tippedMap[rnd].add(pk.user_id)
-                }
-              })
-            }
+          const tsResp = await fetch(`${BACKEND_ROOT}/api/cups/${cupId}/tipping-status`)
+          if (tsResp.ok) {
+            const tsData = await tsResp.json()
+            Object.entries(tsData.tipped || {}).forEach(([rnd, uids]) => {
+              tippedMap[Number(rnd)] = new Set(uids)
+            })
           }
         } catch (e) {
           console.warn('[cup] tipping status fetch failed:', e)
