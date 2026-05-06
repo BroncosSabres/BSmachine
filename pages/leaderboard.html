@@ -2825,7 +2825,7 @@
         </div>`
       }
 
-      function buildActiveBracket(cup, byRound, userMap, predictions) {
+      function buildActiveBracket(cup, byRound, userMap, predictions, tippedMap) {
         const bracketSize  = cup.bracket_size
         const totalRounds  = Math.log2(bracketSize)
         const sideRounds   = totalRounds - 1
@@ -2898,7 +2898,7 @@
           return { uidA: uidA || null, uidB: uidB || null }
         }
 
-        function bRow(uid, score, isWinner, hasResult, liveScore, projected, pickInfo) {
+        function bRow(uid, score, isWinner, hasResult, liveScore, projected, pickInfo, nrlRound) {
           if (!uid) return `<div class="cup-player-row" style="padding:0.28rem 0.5rem;color:#374151;font-size:0.72rem;">TBD</div>`
           const p = userMap[uid] || {}
           const isMe = uid === myUserId
@@ -2922,11 +2922,17 @@
           const pickAttrs    = pickInfo ? ` data-cup-pick="${pickInfo.pairKey}" data-cup-pick-uid="${uid}" data-cup-pick-round="${pickInfo.round||''}"` : ''
           const pickClass    = isPickWinner ? ' cup-sc-picked' : isPickLoser ? ' cup-sc-loser' : ''
           const indicator    = pickInfo ? `<span class="cup-sc-indicator${isPickWinner?' cup-sc-filled':''}"></span>` : ''
+          const tipDot       = (!hasResult && nrlRound)
+            ? (() => {
+                const hasTipped = tippedMap?.[nrlRound]?.has(uid)
+                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:4px;height:4px;border-radius:50%;flex-shrink:0;margin-right:2px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;"></span>`
+              })()
+            : ''
           return `<div class="cup-player-row${isMe?' cup-me':''}${isWinner?' cup-winner':''}${isLoser?' cup-eliminated':''}${pickClass}"${pickAttrs} style="padding:0.28rem 0.5rem;">
             ${logo}
             <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
             <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;${isLoser?'opacity:0.5':''}${isMe&&isWinner?'color:#fbbf24;font-weight:700;':''}">${escapeHtml(p.username||'?')}</span>
-            ${ptsHtml}${indicator}
+            ${tipDot}${ptsHtml}${indicator}
           </div>`
         }
 
@@ -2956,10 +2962,10 @@
 
           const cardA = bRow(m.player_a_id, m.score_a,
             effectiveWinner === m.player_a_id, !!effectiveWinner,
-            liveScoreA, projectedA, pickInfo)
+            liveScoreA, projectedA, pickInfo, m.nrl_round)
           const cardB = m.is_bye ? '' : bRow(m.player_b_id, m.score_b,
             effectiveWinner === m.player_b_id, !!effectiveWinner,
-            liveScoreB, projectedB, pickInfo)
+            liveScoreB, projectedB, pickInfo, m.nrl_round)
 
           const probBar = probData && !effectiveWinner && !m.is_bye
             ? buildProbBar(probData.prob_a, probData.prob_b) : ''
@@ -3477,6 +3483,39 @@
         const userMap = {}
         participants.forEach(p => { userMap[p.user_id] = p })
 
+        // Fetch tipping status per NRL round for cup participants
+        // tippedMap: { [nrl_round]: Set<user_id> }
+        const tippedMap = {}
+        try {
+          const cupNrlRounds = [...new Set(matchups.map(m => m.nrl_round).filter(Boolean))]
+          if (cupNrlRounds.length && participants.length) {
+            const participantIds = participants.map(p => p.user_id)
+            const { data: roundGames } = await supabase
+              .from('games')
+              .select('game_id, round_number')
+              .in('round_number', cupNrlRounds)
+            if (roundGames?.length) {
+              const gameIds = roundGames.map(g => g.game_id)
+              const gameRoundMap = {}
+              roundGames.forEach(g => { gameRoundMap[g.game_id] = g.round_number })
+              const { data: picksData } = await supabase
+                .from('picks')
+                .select('user_id, game_id')
+                .in('game_id', gameIds)
+                .in('user_id', participantIds)
+              picksData?.forEach(pk => {
+                const rnd = gameRoundMap[pk.game_id]
+                if (rnd) {
+                  if (!tippedMap[rnd]) tippedMap[rnd] = new Set()
+                  tippedMap[rnd].add(pk.user_id)
+                }
+              })
+            }
+          }
+        } catch (e) {
+          console.warn('[cup] tipping status fetch failed:', e)
+        }
+
         // Group matchups by cup_round
         const byRound = {}
         matchups.forEach(m => {
@@ -3513,7 +3552,7 @@
         // List view (existing style)
         const bracketColsHtml = roundNums.map(r => {
           const rMatchups = byRound[r]
-          const cards = rMatchups.map(m => matchupCard(m, userMap, cup.current_cup_round, predictions)).join('')
+          const cards = rMatchups.map(m => matchupCard(m, userMap, cup.current_cup_round, predictions, tippedMap)).join('')
           return `
             <div class="cup-round-col">
               <div style="text-align:center;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#4a5568;margin-bottom:0.4rem;">${roundLabel(r)}</div>
@@ -3526,7 +3565,7 @@
         const toggleViewBtn = `<button id="cup-view-toggle" style="${cupBracketView==='bracket'?'background:rgba(255,255,255,0.05);border:1px solid #2e3a4e;color:#94a3b8;':'background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);color:#60a5fa;'}border-radius:6px;padding:0.3rem 0.75rem;font-size:0.75rem;font-weight:600;cursor:pointer;">${cupBracketView==='bracket'?'List View':'Bracket View'}</button>`
 
         const bracketAreaHtml = cupBracketView === 'bracket'
-          ? `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions)}</div>`
+          ? `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions, tippedMap)}</div>`
           : `<div class="cup-bracket">${bracketColsHtml}</div>`
 
         // Champion banner
@@ -3556,7 +3595,7 @@
         }
 
         // Cache render data for click handlers to use without re-fetching
-        window._cupRenderData = { cup, byRound, roundNums, userMap, predictions, matchups, participants }
+        window._cupRenderData = { cup, byRound, roundNums, userMap, predictions, matchups, participants, tippedMap }
 
         contentEl.innerHTML = `
           <div style="margin-bottom:1.25rem;display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap;">
@@ -3580,7 +3619,8 @@
           <div id="cup-odds-panel">${cupOddsPanel}</div>`
       }
 
-      function matchupCard(m, userMap, currentCupRound, predictions) {
+      function matchupCard(m, userMap, currentCupRound, predictions, tippedMap) {
+        const isPendingMatchup = !m.is_bye && !m.winner_id && m.cup_round === currentCupRound
         function playerRow(uid, score, isWinner, otherUid) {
           if (!uid) return `<div class="cup-player-row cup-bye">— BYE —</div>`
           const p        = userMap[uid] || {}
@@ -3595,7 +3635,13 @@
           const pts      = score != null
             ? `<span style="font-family:'Barlow Condensed',sans-serif;font-size:0.9rem;font-weight:700;margin-left:auto;flex-shrink:0;">${parseFloat(score).toFixed(1)}</span>`
             : ''
-          return `<div class="${classes}">${logo}${seedBadge}${name}${pts}</div>`
+          const tipDot   = (isPendingMatchup && m.nrl_round)
+            ? (() => {
+                const hasTipped = tippedMap?.[m.nrl_round]?.has(uid)
+                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-left:3px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;vertical-align:middle;"></span>`
+              })()
+            : ''
+          return `<div class="${classes}">${logo}${seedBadge}${name}${tipDot}${pts}</div>`
         }
 
         const isPending = !m.is_bye && !m.winner_id && m.cup_round === currentCupRound
@@ -3941,12 +3987,12 @@
       function rerenderScenario() {
         const data = window._cupRenderData
         if (!data) return
-        const { cup, byRound, userMap, predictions, participants } = data
+        const { cup, byRound, userMap, predictions, participants, tippedMap } = data
 
         // Re-render bracket area (bracket view only)
         const bracketArea = document.getElementById('cup-bracket-area')
         if (bracketArea && cupBracketView === 'bracket') {
-          bracketArea.innerHTML = `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions)}</div>`
+          bracketArea.innerHTML = `<div style="overflow-x:auto;">${buildActiveBracket(cup, byRound, userMap, predictions, tippedMap)}</div>`
         }
 
         // Update scenario banner
