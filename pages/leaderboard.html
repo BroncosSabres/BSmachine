@@ -2722,7 +2722,7 @@
           } else if (liveScore != null) {
             ptsBlock = `<div>
               <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;">${parseFloat(liveScore).toFixed(1)}</span>
-              ${!isSealedMatchup && projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ~${parseFloat(projected).toFixed(1)}</span>` : ''}
+              ${!isSealedMatchup && projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ${parseFloat(projected).toFixed(1)}</span>` : ''}
             </div>`
           } else {
             ptsBlock = `<div style="color:#4a5568;font-size:0.875rem;">TBD</div>`
@@ -2921,7 +2921,7 @@
             // Live: actual so far + projected final
             ptsHtml = `<span style="margin-left:auto;flex-shrink:0;text-align:right;">
               <span style="font-family:'Barlow Condensed',sans-serif;font-size:0.78rem;font-weight:700;${isWinner?'color:#fbbf24':''}">${parseFloat(liveScore).toFixed(1)}</span>
-              ${projected != null ? `<span style="font-size:0.55rem;color:#4a5568;display:block;line-height:1;">~${parseFloat(projected).toFixed(1)}</span>` : ''}
+              ${projected != null ? `<span style="font-size:0.55rem;color:#4a5568;display:block;line-height:1;">${parseFloat(projected).toFixed(1)}</span>` : ''}
             </span>`
           }
           const isPickWinner = !!pickInfo && pickInfo.picked === uid
@@ -2932,14 +2932,14 @@
           const tipDot       = (!hasResult && nrlRound)
             ? (() => {
                 const hasTipped = tippedMap?.[nrlRound]?.has(uid)
-                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:4px;height:4px;border-radius:50%;flex-shrink:0;margin-right:2px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;"></span>`
+                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:4px;height:4px;border-radius:50%;flex-shrink:0;margin-right:3px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;"></span>`
               })()
             : ''
           return `<div class="cup-player-row${isMe?' cup-me':''}${isWinner?' cup-winner':''}${isLoser?' cup-eliminated':''}${pickClass}"${pickAttrs} style="padding:0.28rem 0.5rem;">
             ${logo}
             <span style="font-size:0.58rem;color:#4a5568;flex-shrink:0;">#${p.seed||'?'}</span>
-            <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;${isLoser?'opacity:0.5':''}${isMe&&isWinner?'color:#fbbf24;font-weight:700;':''}">${escapeHtml(p.username||'?')}</span>
-            ${tipDot}${ptsHtml}${indicator}
+            ${tipDot}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.72rem;${isLoser?'opacity:0.5':''}${isMe&&isWinner?'color:#fbbf24;font-weight:700;':''}">${escapeHtml(p.username||'?')}</span>
+            ${ptsHtml}${indicator}
           </div>`
         }
 
@@ -3629,10 +3629,10 @@
           const tipDot   = (isPendingMatchup && m.nrl_round)
             ? (() => {
                 const hasTipped = tippedMap?.[m.nrl_round]?.has(uid)
-                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-left:3px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;vertical-align:middle;"></span>`
+                return `<span title="${hasTipped ? 'Tipped' : 'Not tipped yet'}" style="width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-right:3px;background:${hasTipped ? '#4ade80' : '#2e3a4e'};border:1px solid ${hasTipped ? '#4ade80' : '#3d4f66'};display:inline-block;vertical-align:middle;"></span>`
               })()
             : ''
-          return `<div class="${classes}">${logo}${seedBadge}${name}${tipDot}${pts}</div>`
+          return `<div class="${classes}">${logo}${seedBadge}${tipDot}${name}${pts}</div>`
         }
 
         const isPending = !m.is_bye && !m.winner_id && m.cup_round === currentCupRound
@@ -3742,7 +3742,7 @@
           } else if (liveScore != null) {
             ptsBlock = `<div>
               <span style="font-family:'Barlow Condensed',sans-serif;font-size:1.5rem;font-weight:700;">${parseFloat(liveScore).toFixed(1)}</span>
-              ${projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ~${parseFloat(projected).toFixed(1)}</span>` : ''}
+              ${projected != null ? `<span style="font-size:0.7rem;color:#4a5568;margin-left:4px;">→ ${parseFloat(projected).toFixed(1)}</span>` : ''}
             </div>`
           } else {
             ptsBlock = `<div style="color:#4a5568;font-size:0.875rem;">TBD</div>`
