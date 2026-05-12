@@ -2629,7 +2629,7 @@
           // Milestone labels (only show rounds where they have meaningful probability)
           const milestones = rounds.map((r, idx) => {
             const pRound = prog[String(r)] || 0
-            if (pRound < 0.001) return ''
+            if (pRound < 0.001 || pRound > 0.999) return ''
             const color = colorPalette[idx] || '#f59e0b'
             return `<span style="font-size:0.58rem;color:${color};font-weight:600;">${roundLabel(r)}: ${(pRound*100).toFixed(1)}%</span>`
           }).filter(Boolean).join('<span style="color:#374151;margin:0 3px;">·</span>')
@@ -3784,7 +3784,7 @@
         const byeCol = `<div style="flex:1;text-align:center;color:#4a5568;font-style:italic;align-self:center;">— BYE —</div>`
 
         const probBarRow = probs && !myMatchup.winner_id && !isBye
-          ? `<div style="padding:0.3rem 1rem 0.4rem;">${buildProbBar(probs.prob_a, probs.prob_b)}</div>`
+          ? `<div style="padding:0.3rem 1rem 0.4rem;">${buildProbBar(myProb, oppProb)}</div>`
           : ''
 
         const h2hSummary = h2h?.results?.length
