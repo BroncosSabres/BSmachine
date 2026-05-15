@@ -1208,31 +1208,34 @@ document.addEventListener("DOMContentLoaded", function () {
           .then(r => r.json())
           .then(batchData => {
             ['home', 'away'].forEach(side => {
-              if (allTryscorerData[matchId][side]) return; // already cached — don't overwrite
               const sd = batchData[side];
               const players = data[`${side}_players`];
-              allTryscorerData[matchId][side] = {
-                teamName: data[`${side}_team`],
-                teamId:   sd.team_id,
-                players,
-                tryProbs:      sd.try_probs,
-                tryDist:       sd.try_dist,
-                tryStats:      sd.try_stats,
-                oppConcession: sd.opp_concession,
-              };
-              // Populate the display for this side now that data has arrived
+              // Only write to cache if prefetch hasn't already populated it
+              if (!allTryscorerData[matchId][side]) {
+                allTryscorerData[matchId][side] = {
+                  teamName: data[`${side}_team`],
+                  teamId:   sd.team_id,
+                  players,
+                  tryProbs:      sd.try_probs,
+                  tryDist:       sd.try_dist,
+                  tryStats:      sd.try_stats,
+                  oppConcession: sd.opp_concession,
+                };
+              }
+              // Always update the DOM — prefetch may have populated cache before this resolved
+              const { tryProbs, tryDist, tryStats, oppConcession } = allTryscorerData[matchId][side];
               players.forEach(p => {
                 const el = document.getElementById(`anytime-${side}-${p.id}`);
                 if (!el) return;
-                const playerProb = sd.try_probs[p.id] ?? sd.try_probs[String(p.id)];
-                if (playerProb !== undefined && sd.try_dist) {
-                  const prob = anytimeTryscorerProbability(playerProb, sd.try_dist, 20);
+                const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
+                if (playerProb !== undefined && tryDist) {
+                  const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
                   el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
                 } else {
                   el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
                 }
               });
-              applyPlayerBadges(matchId, side, sd.try_stats, sd.opp_concession);
+              applyPlayerBadges(matchId, side, tryStats, oppConcession);
             });
             allTryscorerData[matchId]._loadingCount = 0;
             if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
