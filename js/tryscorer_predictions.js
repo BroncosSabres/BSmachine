@@ -248,6 +248,7 @@ document.addEventListener("DOMContentLoaded", function () {
   let machineScoreDistCache = {};      // { matchId: { margins: [{x,prob}], totals: [{x,prob}] } }
   let roundSigmaScale      = { margin: null, total: null }; // round-level σ ratio (machine/crowd)
   let currentBlendedDists  = null;     // most recent blended try distributions { home_try_dist, away_try_dist }
+  let _sgmDistCache        = new Map(); // key: `${matchId}|${paramString}` → Promise<result>
 
   // --- BLEND SLIDER ELEMENTS ---
   const blendSlider   = document.getElementById('model-blend-slider');
@@ -555,6 +556,7 @@ document.addEventListener("DOMContentLoaded", function () {
     matchAwayTotalDir = {}; matchAwayTotalN = {};
     userPicksCache = {};
     machineScoreDistCache = {};
+    _sgmDistCache.clear();
     roundSigmaScale = { margin: null, total: null };
     betslipExpanded = false;
     setControlsEnabled(false);
@@ -601,20 +603,21 @@ document.addEventListener("DOMContentLoaded", function () {
     computeRoundSigmaScale();
 
     // Background-warm team lists for all matches so loadMatch() renders instantly from cache.
-    // For the first (soonest) match, also prefetch tryscorer data — most likely selection.
-    sorted.forEach((m, idx) => {
+    // Then sequentially prefetch tryscorer data for all matches (throttled to protect DB pool).
+    const teamListPromises = sorted.map(m => {
       if (!teamListCache[m.match_id]) {
-        fetch(`${API_BASE}/match_team_lists/${m.match_id}/${competition}`)
+        return fetch(`${API_BASE}/match_team_lists/${m.match_id}/${competition}`)
           .then(r => r.json())
-          .then(data => {
-            teamListCache[m.match_id] = data;
-            if (idx === 0) prefetchTryscorerDataForMatch(m.match_id, data);
-          })
+          .then(data => { teamListCache[m.match_id] = data; })
           .catch(() => {});
-      } else if (idx === 0) {
-        // Team list already cached — still prefetch tryscorer if needed
-        prefetchTryscorerDataForMatch(m.match_id, teamListCache[m.match_id]);
       }
+      return Promise.resolve();
+    });
+    // Once team lists are loaded, kick off sequential tryscorer prefetch for all matches.
+    // Team lists are fetched in parallel (they're cheap); tryscorer data is sequential
+    // to avoid hammering the DB connection pool.
+    Promise.allSettled(teamListPromises).then(() => {
+      prefetchAllMatchesTryscorer(sorted);
     });
   }
 
@@ -657,33 +660,46 @@ document.addEventListener("DOMContentLoaded", function () {
     loadMatch(matchId);
   });
 
-  // Background-warm tryscorer data for a match (pure cache fill, no DOM changes).
-  // Called after team list is already loaded so player/teamId info is available.
+  // Background-warm tryscorer data for a match via single batch request (pure cache fill, no DOM changes).
+  // Returns a Promise so callers can await sequential prefetch chains.
   function prefetchTryscorerDataForMatch(matchId, teamListData) {
     if (!allTryscorerData[matchId]) {
       allTryscorerData[matchId] = { home: null, away: null, _loadingCount: 0 };
     }
-    ['home', 'away'].forEach(side => {
-      if (allTryscorerData[matchId][side]) return; // already cached
-      const players = teamListData[`${side}_players`];
-      const teamId  = players?.[0]?.team_id;
-      if (!teamId) return;
+    if (allTryscorerData[matchId].home && allTryscorerData[matchId].away) {
+      return Promise.resolve(); // already fully cached
+    }
+    return fetch(`${API_BASE}/match_tryscorer_data/${matchId}/${competition}`)
+      .then(r => r.json())
+      .then(batchData => {
+        ['home', 'away'].forEach(side => {
+          if (allTryscorerData[matchId][side]) return; // don't overwrite existing cache
+          const sd = batchData[side];
+          const players = teamListData[`${side}_players`];
+          allTryscorerData[matchId][side] = {
+            teamName: teamListData[`${side}_team`],
+            teamId:   sd.team_id,
+            players,
+            tryProbs:      sd.try_probs,
+            tryDist:       sd.try_dist,
+            tryStats:      sd.try_stats,
+            oppConcession: sd.opp_concession,
+          };
+        });
+      })
+      .catch(() => {});
+  }
 
-      allTryscorerData[matchId]._loadingCount++;
-      Promise.all([
-        fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
-        fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json()),
-        fetch(`${API_BASE}/player_try_stats/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({})),
-        fetch(`${API_BASE}/opponent_try_concession/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({}))
-      ]).then(([tryProbs, tryDist, tryStats, oppConcession]) => {
-        allTryscorerData[matchId][side] = {
-          teamName: teamListData[`${side}_team`], teamId, players, tryProbs, tryDist, tryStats, oppConcession
-        };
-        allTryscorerData[matchId]._loadingCount--;
-      }).catch(() => {
-        allTryscorerData[matchId]._loadingCount--;
-      });
-    });
+  // Sequentially prefetch tryscorer data for all matches in the round, throttled
+  // to avoid exhausting the DB connection pool on Render's free tier.
+  async function prefetchAllMatchesTryscorer(sortedMatches, delayMs = 400) {
+    for (const m of sortedMatches) {
+      if (allTryscorerData[m.match_id]?.home && allTryscorerData[m.match_id]?.away) continue;
+      const teamListData = teamListCache[m.match_id];
+      if (!teamListData) continue; // team list not ready yet — skip, will load on select
+      await prefetchTryscorerDataForMatch(m.match_id, teamListData);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
   }
 
   function loadMatch(matchId) {
@@ -1155,69 +1171,91 @@ document.addEventListener("DOMContentLoaded", function () {
         });
       });
 
-      // Fetch try probabilities (use cache if already loaded)
-      const teamId = players[0]?.team_id;
-      if (matchId && teamId) {
-        if (!allTryscorerData[matchId]) allTryscorerData[matchId] = { home: null, away: null, _loadingCount: 0 };
-
-        const populateAnytime = (tryProbs, tryDist) => {
-          players.forEach(p => {
-            const el = document.getElementById(`anytime-${side}-${p.id}`);
-            if (!el) return;
-            const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
-            if (playerProb !== undefined && tryDist) {
-              const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-              el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
-            } else {
-              el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
-            }
-          });
-        };
-
-        const removeOverlay = () => {
-          if (currentMatchId === matchId) {
-            const overlay = document.getElementById('prob-loading-overlay');
-            if (overlay) overlay.remove();
+      // Populate anytime column + badges from already-cached data (if available).
+      if (matchId && allTryscorerData[matchId]?.[side]) {
+        const { tryProbs, tryDist, tryStats, oppConcession } = allTryscorerData[matchId][side];
+        players.forEach(p => {
+          const el = document.getElementById(`anytime-${side}-${p.id}`);
+          if (!el) return;
+          const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
+          if (playerProb !== undefined && tryDist) {
+            const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
+            el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+          } else {
+            el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
           }
-        };
+        });
+        if (tryStats) applyPlayerBadges(matchId, side, tryStats, oppConcession);
+      }
+    });
 
-        if (allTryscorerData[matchId][side]) {
-          // Already cached — repopulate display
-          const { tryProbs, tryDist, tryStats, oppConcession } = allTryscorerData[matchId][side];
-          populateAnytime(tryProbs, tryDist);
-          if (tryStats) applyPlayerBadges(matchId, side, tryStats, oppConcession);
-          if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
-            downloadCsvBtn.disabled = false;
-          }
-          removeOverlay();
-        } else {
-          allTryscorerData[matchId]._loadingCount = (allTryscorerData[matchId]._loadingCount || 0) + 1;
-          Promise.all([
-            fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json()),
-            fetch(`${API_BASE}/match_try_distribution/${matchId}/${teamId}`).then(r => r.json()),
-            fetch(`${API_BASE}/player_try_stats/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({})),
-            fetch(`${API_BASE}/opponent_try_concession/${matchId}/${teamId}/${competition}`).then(r => r.json()).catch(() => ({}))
-          ]).then(([tryProbs, tryDist, tryStats, oppConcession]) => {
-            allTryscorerData[matchId][side] = { teamName, teamId, players, tryProbs, tryDist, tryStats, oppConcession };
-            allTryscorerData[matchId]._loadingCount--;
+    // After building DOM for both sides: fetch missing data via single batch request.
+    if (matchId) {
+      if (!allTryscorerData[matchId]) allTryscorerData[matchId] = { home: null, away: null, _loadingCount: 0 };
+      const removeOverlay = () => {
+        if (currentMatchId === matchId) {
+          const overlay = document.getElementById('prob-loading-overlay');
+          if (overlay) overlay.remove();
+        }
+      };
+      if (allTryscorerData[matchId].home && allTryscorerData[matchId].away) {
+        // Both sides already cached — enable CSV and clear overlay
+        if (downloadCsvBtn && currentMatchId === matchId) downloadCsvBtn.disabled = false;
+        removeOverlay();
+      } else {
+        allTryscorerData[matchId]._loadingCount = 1;
+        fetch(`${API_BASE}/match_tryscorer_data/${matchId}/${competition}`)
+          .then(r => r.json())
+          .then(batchData => {
+            ['home', 'away'].forEach(side => {
+              if (allTryscorerData[matchId][side]) return; // already cached — don't overwrite
+              const sd = batchData[side];
+              const players = data[`${side}_players`];
+              allTryscorerData[matchId][side] = {
+                teamName: data[`${side}_team`],
+                teamId:   sd.team_id,
+                players,
+                tryProbs:      sd.try_probs,
+                tryDist:       sd.try_dist,
+                tryStats:      sd.try_stats,
+                oppConcession: sd.opp_concession,
+              };
+              // Populate the display for this side now that data has arrived
+              players.forEach(p => {
+                const el = document.getElementById(`anytime-${side}-${p.id}`);
+                if (!el) return;
+                const playerProb = sd.try_probs[p.id] ?? sd.try_probs[String(p.id)];
+                if (playerProb !== undefined && sd.try_dist) {
+                  const prob = anytimeTryscorerProbability(playerProb, sd.try_dist, 20);
+                  el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+                } else {
+                  el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+                }
+              });
+              applyPlayerBadges(matchId, side, sd.try_stats, sd.opp_concession);
+            });
+            allTryscorerData[matchId]._loadingCount = 0;
             if (downloadCsvBtn && allTryscorerData[matchId].home && allTryscorerData[matchId].away && currentMatchId === matchId) {
               downloadCsvBtn.disabled = false;
             }
-            populateAnytime(tryProbs, tryDist);
-            applyPlayerBadges(matchId, side, tryStats, oppConcession);
-            if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
-          }).catch(() => {
-            allTryscorerData[matchId][side] = null;
-            allTryscorerData[matchId]._loadingCount--;
-            players.forEach(p => {
-              const el = document.getElementById(`anytime-${side}-${p.id}`);
-              if (el) el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+            removeOverlay();
+          })
+          .catch(() => {
+            allTryscorerData[matchId]._loadingCount = 0;
+            ['home', 'away'].forEach(side => {
+              if (!allTryscorerData[matchId][side]) {
+                (data[`${side}_players`] || []).forEach(p => {
+                  const el = document.getElementById(`anytime-${side}-${p.id}`);
+                  if (el) el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+                });
+              }
             });
-            if (allTryscorerData[matchId]._loadingCount === 0) removeOverlay();
+            removeOverlay();
           });
-        }
       }
-    });
+    }
+    // Pre-warm SGM bins so the first player pick resolves instantly from cache
+    if (matchId) getSgmDist(matchId, {}).catch(() => {});
   }
 
   // --- PLAYER STAT BADGES ---
@@ -1584,6 +1622,65 @@ document.addEventListener("DOMContentLoaded", function () {
     return { margin1, margin2, total1, total2, homeTotal, awayTotal };
   }
 
+  // Filter and aggregate a set of bins with the given constraints.
+  // Returns the filtered result object, or null if filtering doesn't apply.
+  function _applyBinFilters(baseResult, binsToFilter, c) {
+    // Margin / total filter (mirrors the backend SQL WHERE clause)
+    let bins = binsToFilter;
+    if (c?.margin1 || c?.margin2 || c?.total1 || c?.total2) {
+      bins = binsToFilter.filter(b => {
+        if (c?.margin1?.type === 'over'  && b.m < c.margin1.val)  return false;
+        if (c?.margin1?.type === 'under' && b.m >= c.margin1.val) return false;
+        if (c?.margin2?.type === 'over'  && b.m < c.margin2.val)  return false;
+        if (c?.margin2?.type === 'under' && b.m >= c.margin2.val) return false;
+        if (c?.total1?.type === 'over'  && b.t < c.total1.val)   return false;
+        if (c?.total1?.type === 'under' && b.t >= c.total1.val)  return false;
+        if (c?.total2?.type === 'over'  && b.t < c.total2.val)   return false;
+        if (c?.total2?.type === 'under' && b.t >= c.total2.val)  return false;
+        return true;
+      });
+    }
+    const preFiltBins = bins; // before homeTotal/awayTotal filter
+    const totalC = binsToFilter.reduce((s, b) => s + (b.c || 0), 0) || 1;
+
+    // Team total filter (client-side, same as existing logic)
+    if (c?.homeTotal || c?.awayTotal) {
+      const afterTeam = bins.filter(b => {
+        const hs = (b.m + b.t) / 2;
+        const as_ = (b.t - b.m) / 2;
+        if (c.homeTotal?.type === 'over'  && hs <  c.homeTotal.val) return false;
+        if (c.homeTotal?.type === 'under' && hs >= c.homeTotal.val) return false;
+        if (c.awayTotal?.type === 'over'  && as_ <  c.awayTotal.val) return false;
+        if (c.awayTotal?.type === 'under' && as_ >= c.awayTotal.val) return false;
+        return true;
+      });
+      const filtC = afterTeam.reduce((s, b) => s + (b.c || 0), 0);
+      if (filtC === 0) {
+        return { ...baseResult, preFiltBins, bins: [], prob: 0, home_try_dist: {}, away_try_dist: {} };
+      }
+      const aggHome = {}, aggAway = {};
+      afterTeam.forEach(b => {
+        const w = (b.c || 0) / filtC;
+        for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
+        for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
+      });
+      return { ...baseResult, preFiltBins, bins: afterTeam, prob: filtC / totalC, home_try_dist: aggHome, away_try_dist: aggAway };
+    }
+
+    // Margin/total only (no team total)
+    const filtC = bins.reduce((s, b) => s + (b.c || 0), 0);
+    if (filtC === 0) {
+      return { ...baseResult, preFiltBins, bins: [], prob: 0, home_try_dist: {}, away_try_dist: {} };
+    }
+    const aggHome = {}, aggAway = {};
+    bins.forEach(b => {
+      const w = (b.c || 0) / filtC;
+      for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
+      for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
+    });
+    return { ...baseResult, preFiltBins, bins, prob: filtC / totalC, home_try_dist: aggHome, away_try_dist: aggAway };
+  }
+
   async function getSgmDist(matchId, c) {
     const params = [];
     if (c?.margin1?.type === 'over')  params.push(`margin_gte=${c.margin1.val}`);
@@ -1594,41 +1691,38 @@ document.addEventListener("DOMContentLoaded", function () {
     if (c?.total1?.type === 'under')  params.push(`total_lte=${c.total1.val - 1}`);
     if (c?.total2?.type === 'over')   params.push(`total_gte=${c.total2.val}`);
     if (c?.total2?.type === 'under')  params.push(`total_lte=${c.total2.val - 1}`);
-    const paramString = params.length ? `?${params.join('&')}` : '';
-    const result = await fetch(`${API_BASE}/match_sgm_bins_range/${matchId}${paramString}`).then(r => r.json());
-    // Apply team total filtering client-side using the raw bins.
-    // preFiltBins = bins matching margin/total only (before team total filter) — used by blendedLineProb
-    // for crowd team score probability via crowd-weighted joint distribution.
-    if ((c?.homeTotal || c?.awayTotal) && Array.isArray(result.bins) && result.bins.length) {
-      const preFiltBins = result.bins;
-      const bins = result.bins.filter(b => {
-        const hs = (b.m + b.t) / 2;
-        const as_ = (b.t - b.m) / 2;
-        if (c.homeTotal?.type === 'over'  && hs <  c.homeTotal.val) return false;
-        if (c.homeTotal?.type === 'under' && hs >= c.homeTotal.val) return false;
-        if (c.awayTotal?.type === 'over'  && as_ <  c.awayTotal.val) return false;
-        if (c.awayTotal?.type === 'under' && as_ >= c.awayTotal.val) return false;
-        return true;
-      });
-      const totalC = result.bins.reduce((s, b) => s + (b.c || 0), 0);
-      const filtC  = bins.reduce((s, b) => s + (b.c || 0), 0);
-      // Always return a result with team-total filter applied.
-      // filtC == 0 means the combination is impossible — return prob 0, not the unfiltered result.
-      if (totalC > 0) {
-        if (filtC === 0) {
-          return { ...result, preFiltBins, bins: [], prob: 0, home_try_dist: {}, away_try_dist: {} };
-        }
-        const scale = filtC / totalC;
-        const aggHome = {}, aggAway = {};
-        bins.forEach(b => {
-          const w = (b.c || 0) / filtC;
-          for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
-          for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
-        });
-        return { ...result, preFiltBins, bins, prob: (result.prob || 0) * scale, home_try_dist: aggHome, away_try_dist: aggAway };
-      }
+    const paramString = params.length ? params.join('&') : '_none';
+    const cacheKey = `${matchId}|${paramString}`;
+
+    // Exact cache hit — return existing Promise (also deduplicates concurrent calls)
+    if (_sgmDistCache.has(cacheKey)) {
+      return _sgmDistCache.get(cacheKey);
     }
-    return { ...result, preFiltBins: result.bins };
+
+    // If full no-constraint bins are already cached, derive constrained result client-side.
+    // This eliminates per-constraint API calls — all line/total changes are instant after load.
+    const fullKey = `${matchId}|_none`;
+    if (params.length > 0 && _sgmDistCache.has(fullKey)) {
+      const promise = _sgmDistCache.get(fullKey).then(fullResult => {
+        if (!Array.isArray(fullResult.bins) || !fullResult.bins.length) {
+          return { ...fullResult, preFiltBins: fullResult.bins };
+        }
+        return _applyBinFilters(fullResult, fullResult.bins, c);
+      });
+      _sgmDistCache.set(cacheKey, promise);
+      return promise;
+    }
+
+    // No full bins cached yet — fetch from backend (also covers homeTotal-only constraints)
+    const fetchUrl = `${API_BASE}/match_sgm_bins_range/${matchId}` + (params.length ? `?${paramString}` : '');
+    const promise = fetch(fetchUrl).then(r => r.json()).then(result => {
+      if ((c?.homeTotal || c?.awayTotal) && Array.isArray(result.bins) && result.bins.length) {
+        return _applyBinFilters(result, result.bins, c);
+      }
+      return { ...result, preFiltBins: result.bins };
+    });
+    _sgmDistCache.set(cacheKey, promise);
+    return promise;
   }
 
   // Calculate SGM for one match — returns Promise<result|null>
@@ -1923,13 +2017,13 @@ document.addEventListener("DOMContentLoaded", function () {
       return;
     }
 
-    // Combined odds across all tryscorer picks (excludes line-only)
+    // Combined odds across all picks (tryscorer + line/total)
     const pickResults = results.filter(r => !r.lineOnly && r.picks && r.picks.length > 0);
-    const combinedProb = pickResults.reduce((acc, r) => acc * r.prob, 1);
+    const combinedProb = results.reduce((acc, r) => acc * r.prob, 1);
     const combinedOdds = combinedProb > 0 ? (1 / combinedProb).toFixed(2) : '∞';
     const combinedPct  = (combinedProb * 100).toFixed(2);
     const totalLegs    = results.reduce((acc, r) => acc + (r.picks?.length || 0) + (r.lineLegs || 0), 0);
-    const isMulti      = pickResults.length > 1 || totalLegs > (pickResults[0]?.picks?.length ?? 0);
+    const isMulti      = results.length > 1 || totalLegs > 1;
 
     // Per-game leg rows
     const legsHtml = results.map(r => {
@@ -2001,9 +2095,9 @@ document.addEventListener("DOMContentLoaded", function () {
         </div>`;
     }).join('');
 
-    // Prominent combined odds block (always shown when there are picks)
-    const hasPicks = pickResults.length > 0;
-    const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : pickResults.length === 1 ? 'SGM' : '';
+    // Prominent combined odds block (always shown when there are any selections)
+    const hasPicks = results.length > 0;
+    const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : (pickResults.length > 0 ? 'SGM' : 'Selection');
     const finalOddsHtml = hasPicks ? `
       <div class="mt-3 pt-3 border-t border-gray-600">
         <div class="flex items-center justify-between">
@@ -2414,9 +2508,9 @@ document.addEventListener("DOMContentLoaded", function () {
       ctx.fillStyle = BG3;
       ctx.fillRect(0, y, W, COMBINED_H);
 
-      const isMulti    = pickResults.length > 1;
       const totalLegs  = results.reduce((acc, r) => acc + (r.picks?.length || 0) + (r.lineLegs || 0), 0);
-      const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : 'SGM';
+      const isMulti    = results.length > 1 || totalLegs > 1;
+      const finalLabel = isMulti ? `Multi (${totalLegs} legs)` : (pickResults.length > 0 ? 'SGM' : 'Selection');
 
       if (bookieOdds != null) {
         // Two-panel layout: BS Machine | Bookie
