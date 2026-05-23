@@ -454,6 +454,18 @@
         })
       })
 
+      function dbErrHtml(err) {
+        const msg = err?.message || JSON.stringify(err)
+        const hint = err?.code === '42501' || err?.hint?.includes('GRANT')
+          ? '<p style="margin-top:0.5rem;font-size:0.75rem;color:#fbbf24;">This looks like an RLS/permission issue — check the Supabase dashboard for missing SELECT policies on this table.</p>'
+          : ''
+        return `<div style="padding:1.5rem;text-align:center;color:#f87171;font-size:0.8125rem;">
+          <p style="font-weight:600;">Failed to load data from the database.</p>
+          <p style="color:#64748b;margin-top:0.25rem;font-size:0.75rem;">${msg}</p>
+          ${hint}
+        </div>`
+      }
+
       async function loadLeaderboard() {
         const loading = `<div class="p-6 text-center animate-pulse" style="color:#4a5568;">Loading…</div>`
         const sidebarEl = document.querySelector('.w-full.lg\\:w-72')
@@ -619,11 +631,25 @@
 
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        const [{ data: allSeasonScores }, { data: profiles }, { data: completedGames }] = await Promise.all([
-          supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number'),
-          supabase.from('profiles').select('id, username, favourite_team'),
-          supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null),
+        const [scoresRes, profilesRes, gamesRes] = await Promise.all([
+          supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number').limit(10000),
+          supabase.from('profiles').select('id, username, favourite_team').limit(500),
+          supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null).limit(2000),
         ])
+
+        const firstErr = scoresRes.error || profilesRes.error || gamesRes.error
+        if (firstErr) {
+          console.error('[leaderboard] Supabase fetch error:', firstErr)
+          const errHtml = dbErrHtml(firstErr)
+          seasonPanel.innerHTML = errHtml
+          weekPanel.innerHTML   = errHtml
+          matchesEl.innerHTML   = errHtml
+          return
+        }
+
+        const allSeasonScores = scoresRes.data
+        const profiles        = profilesRes.data
+        const completedGames  = gamesRes.data
 
         // Compute live scores for current-round games not yet in the scores table
         let liveComputedScores = []
@@ -667,13 +693,19 @@
         const [, allCompletedPicksRes] = await Promise.all([
           fetchMachinePicksForRounds(relevantRounds).then(mp => { machinePicks = mp }),
           allActualGameIds.length
-            ? supabase.from('picks').select('game_id, home_score_pick, away_score_pick').in('game_id', allActualGameIds)
+            ? supabase.from('picks').select('user_id, game_id, home_score_pick, away_score_pick').in('game_id', allActualGameIds).limit(10000)
             : Promise.resolve({ data: [] }),
         ])
+
+        if (allCompletedPicksRes.error) {
+          console.warn('[leaderboard] picks fetch error (crowd scores will be empty):', allCompletedPicksRes.error)
+        }
+        console.log('[leaderboard] picks fetched for crowd:', allCompletedPicksRes.data?.length ?? 0, 'allActualGameIds:', allActualGameIds.length)
 
         // Build crowd picks: average home/away pick per game across all users
         const crowdAccum = {}
         ;(allCompletedPicksRes.data || []).forEach(p => {
+          if (p.home_score_pick == null || p.away_score_pick == null) return
           if (!crowdAccum[p.game_id]) crowdAccum[p.game_id] = { homeSum: 0, awaySum: 0, count: 0 }
           crowdAccum[p.game_id].homeSum += p.home_score_pick
           crowdAccum[p.game_id].awaySum += p.away_score_pick
@@ -703,6 +735,26 @@
         }
         allMergedScores.push(...machineIndividualScores, ...crowdIndividualScores)
 
+        // Fill gaps: completed games where score_round ran before all picks were submitted.
+        // Find any pick whose game_id|user_id pair has no score in allMergedScores yet.
+        const scoredPairs = new Set(
+          allMergedScores
+            .filter(s => s.user_id !== 'bs_machine' && s.user_id !== 'the_crowd')
+            .map(s => `${s.game_id}|${s.user_id}`)
+        )
+        const actualGameMap = {}
+        allActualGames.forEach(g => { if (g.home_score != null) actualGameMap[g.game_id] = g })
+        const gapPicks = (allCompletedPicksRes.data || []).filter(p =>
+          p.user_id && p.home_score_pick != null && p.away_score_pick != null &&
+          !scoredPairs.has(`${p.game_id}|${p.user_id}`) &&
+          actualGameMap[p.game_id]
+        )
+        if (gapPicks.length) {
+          const gapGameIds = [...new Set(gapPicks.map(p => p.game_id))]
+          const gapScores  = computeLiveIndividualScores(gapGameIds.map(id => actualGameMap[id]), gapPicks)
+          allMergedScores.push(...gapScores)
+        }
+
         // Season sidebar panel — full season aggregate (includes live partial scores)
         seasonPanel.innerHTML = buildIndividualCompact(allMergedScores, profiles || [])
 
@@ -718,6 +770,31 @@
           const roundScores = allMergedScores.filter(s => s.round_number === activeRound)
           weekPanel.innerHTML = buildIndividualCompact(roundScores, profiles || [])
           matchesEl.innerHTML = await buildMatchCardsHtml(activeRound, profiles || [])
+
+          // buildMatchCardsHtml freshly populates crowdPicks for this round.
+          // If the picks fetch in loadIndividual missed some games, recompute crowd
+          // scores for the active round using those fresh picks and re-render the week panel.
+          const roundGames = allActualGames.filter(g => g.round_number === activeRound)
+          if (roundGames.length) {
+            const freshCrowdRoundScores = roundGames
+              .filter(g => crowdPicks[g.game_id] && g.home_score != null && g.away_score != null)
+              .map(g => {
+                const cp = crowdPicks[g.game_id]
+                const ms = bellScore((g.home_score - g.away_score) - (cp.home - cp.away))
+                const ts = bellScore((g.home_score + g.away_score) - (cp.home + cp.away))
+                return { user_id: 'the_crowd', game_id: g.game_id, round_number: g.round_number, margin_score: ms, total_score: ts, points: ms + ts }
+              })
+            if (freshCrowdRoundScores.length) {
+              // Merge fresh crowd scores into allMergedScores (replace any stale entries for this round)
+              const freshCrowdGameIds = new Set(freshCrowdRoundScores.map(s => s.game_id))
+              const base = allMergedScores.filter(s => !(s.user_id === 'the_crowd' && freshCrowdGameIds.has(s.game_id)))
+              base.push(...freshCrowdRoundScores)
+              const updatedRoundScores = base.filter(s => s.round_number === activeRound)
+              weekPanel.innerHTML = buildIndividualCompact(updatedRoundScores, profiles || [])
+              // Also refresh season panel with corrected crowd data
+              seasonPanel.innerHTML = buildIndividualCompact(base, profiles || [])
+            }
+          }
         } else {
           weekPanel.innerHTML = emptyState('No rounds completed yet.')
           matchesEl.innerHTML = emptyState('No matches to display.')
@@ -844,16 +921,29 @@
           scoresByGame[s.game_id].push(s)
         })
 
-        // For live games in this round that have scores but aren't in the scores table yet,
-        // compute bell-curve scores on-the-fly from picks
-        if (liveRoundNumber === roundNumber) {
-          for (const game of (games || [])) {
-            if (scoresByGame[game.game_id]?.length) continue  // already scored
-            const lg = liveGameMap[game.game_id]
-            if (!lg || lg.home_score == null) continue
-            const gamePicks = (allPicks || []).filter(p => p.game_id === game.game_id)
-            const computed  = computeLiveIndividualScores([lg], gamePicks)
-            if (computed.length) scoresByGame[game.game_id] = computed
+        // For any game where picks exist but not all are scored yet, compute live scores.
+        // This handles: in-progress games, and completed games where score_round ran
+        // before all users had submitted their picks for the round.
+        for (const game of (games || [])) {
+          const gamePicks = (allPicks || []).filter(p => p.game_id === game.game_id)
+          if (!gamePicks.length) continue
+          const humanScored = (scoresByGame[game.game_id] || [])
+            .filter(s => s.user_id !== 'bs_machine' && s.user_id !== 'the_crowd').length
+          if (humanScored >= gamePicks.length) continue  // all picks already have scores
+          const lg        = liveRoundNumber === roundNumber ? liveGameMap[game.game_id] : null
+          const homeScore = lg?.home_score ?? game.home_score
+          const awayScore = lg?.away_score ?? game.away_score
+          if (homeScore == null || awayScore == null) continue
+          const computed = computeLiveIndividualScores(
+            [{ ...game, home_score: homeScore, away_score: awayScore }],
+            gamePicks
+          )
+          if (computed.length) {
+            // Replace any partial human scores from the scores table with the full live set
+            scoresByGame[game.game_id] = [
+              ...(scoresByGame[game.game_id] || []).filter(s => s.user_id === 'bs_machine' || s.user_id === 'the_crowd'),
+              ...computed,
+            ]
           }
         }
 
@@ -1071,16 +1161,29 @@
 
         const allGameIds = allCompletedGames.map(g => g.game_id)
 
-        const [{ data: allPicks }, { data: profiles }, ...distResults] = await Promise.all([
+        const [picksRes, profilesRes, ...distResults] = await Promise.all([
           supabase.from('picks')
             .select('user_id, game_id, home_score_pick, away_score_pick')
-            .in('game_id', allGameIds),
-          supabase.from('profiles').select('id, username, favourite_team'),
+            .in('game_id', allGameIds).limit(10000),
+          supabase.from('profiles').select('id, username, favourite_team').limit(500),
           ...allCompletedGames.map(g =>
             fetch(`${BACKEND}/match_score_distributions/${g.game_id}`)
               .then(r => r.ok ? r.json() : null).catch(() => null)
           ),
         ])
+
+        const teamErr = picksRes.error || profilesRes.error
+        if (teamErr) {
+          console.error('[leaderboard:team] Supabase fetch error:', teamErr)
+          const errHtml = dbErrHtml(teamErr)
+          seasonPanel.innerHTML = errHtml
+          weekPanel.innerHTML   = errHtml
+          matchesEl.innerHTML   = errHtml
+          return
+        }
+
+        const allPicks = picksRes.data
+        const profiles = profilesRes.data
 
         const machineDistByGame = {}
         allCompletedGames.forEach((g, i) => {
