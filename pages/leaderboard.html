@@ -1198,10 +1198,26 @@
 
         const allGameIds = allCompletedGames.map(g => g.game_id)
 
+        async function fetchAllTeamPicks(gameIds) {
+          const rows = []
+          const pageSize = 1000
+          let from = 0
+          while (true) {
+            const { data, error } = await supabase
+              .from('picks')
+              .select('user_id, game_id, home_score_pick, away_score_pick')
+              .in('game_id', gameIds)
+              .range(from, from + pageSize - 1)
+            if (error || !data?.length) break
+            rows.push(...data)
+            if (data.length < pageSize) break
+            from += pageSize
+          }
+          return { data: rows, error: null }
+        }
+
         const [picksRes, profilesRes, ...distResults] = await Promise.all([
-          supabase.from('picks')
-            .select('user_id, game_id, home_score_pick, away_score_pick')
-            .in('game_id', allGameIds).limit(10000),
+          fetchAllTeamPicks(allGameIds),
           supabase.from('profiles').select('id, username, favourite_team').limit(500),
           ...allCompletedGames.map(g =>
             fetch(`${BACKEND}/match_score_distributions/${g.game_id}`)
