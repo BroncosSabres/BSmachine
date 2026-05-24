@@ -631,13 +631,31 @@
 
       // --- Individual leaderboard ---
       async function loadIndividual() {
-        const [scoresRes, profilesRes, gamesRes] = await Promise.all([
-          supabase.from('scores').select('user_id, game_id, points, margin_score, total_score, round_number').limit(10000),
+        // Paginate scores to bypass Supabase's 1000-row per-request cap
+        async function fetchAllScores() {
+          const rows = []
+          const pageSize = 1000
+          let from = 0
+          while (true) {
+            const { data, error } = await supabase
+              .from('scores')
+              .select('user_id, game_id, points, margin_score, total_score, round_number')
+              .range(from, from + pageSize - 1)
+            if (error || !data?.length) break
+            rows.push(...data)
+            if (data.length < pageSize) break
+            from += pageSize
+          }
+          return rows
+        }
+
+        const [allSeasonScores, profilesRes, gamesRes] = await Promise.all([
+          fetchAllScores(),
           supabase.from('profiles').select('id, username, favourite_team').limit(500),
           supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null).limit(2000),
         ])
 
-        const firstErr = scoresRes.error || profilesRes.error || gamesRes.error
+        const firstErr = profilesRes.error || gamesRes.error
         if (firstErr) {
           console.error('[leaderboard] Supabase fetch error:', firstErr)
           const errHtml = dbErrHtml(firstErr)
@@ -647,7 +665,6 @@
           return
         }
 
-        const allSeasonScores = scoresRes.data
         const profiles        = profilesRes.data
         const completedGames  = gamesRes.data
 
@@ -690,10 +707,29 @@
         const relevantRounds = [...new Set(allMergedScores.map(s => s.round_number).filter(Boolean))]
         if (liveRoundNumber) relevantRounds.push(liveRoundNumber)
         const allActualGameIds = allActualGames.map(g => g.game_id)
+
+        async function fetchAllPicks(gameIds) {
+          const rows = []
+          const pageSize = 1000
+          let from = 0
+          while (true) {
+            const { data, error } = await supabase
+              .from('picks')
+              .select('user_id, game_id, home_score_pick, away_score_pick')
+              .in('game_id', gameIds)
+              .range(from, from + pageSize - 1)
+            if (error || !data?.length) break
+            rows.push(...data)
+            if (data.length < pageSize) break
+            from += pageSize
+          }
+          return { data: rows, error: null }
+        }
+
         const [, allCompletedPicksRes] = await Promise.all([
           fetchMachinePicksForRounds(relevantRounds).then(mp => { machinePicks = mp }),
           allActualGameIds.length
-            ? supabase.from('picks').select('user_id, game_id, home_score_pick, away_score_pick').in('game_id', allActualGameIds).limit(10000)
+            ? fetchAllPicks(allActualGameIds)
             : Promise.resolve({ data: [] }),
         ])
 
@@ -806,7 +842,7 @@
         const userMap = {}
         scores.forEach(s => {
           if (!userMap[s.user_id]) userMap[s.user_id] = { pts: 0, games: 0 }
-          userMap[s.user_id].pts   += s.points
+          userMap[s.user_id].pts   += (s.margin_score ?? 0) + (s.total_score ?? 0)
           userMap[s.user_id].games += 1
         })
 
@@ -978,11 +1014,12 @@
         }
 
         const cards = games.map(game => {
+          const scorePts = s => (s.margin_score ?? 0) + (s.total_score ?? 0)
           const gameScores = (scoresByGame[game.game_id] || [])
-            .sort((a, b) => b.points - a.points)
+            .sort((a, b) => scorePts(b) - scorePts(a))
 
           const humanScores = gameScores.filter(s => s.user_id !== 'bs_machine' && s.user_id !== 'the_crowd')
-          const totalPts  = humanScores.reduce((sum, s) => sum + s.points, 0)
+          const totalPts  = humanScores.reduce((sum, s) => sum + scorePts(s), 0)
           const pickers   = humanScores.length
           const top5      = gameScores.slice(0, 5)
 
@@ -990,7 +1027,7 @@
           const gameRanks = []
           gameScores.forEach((s, i) => {
             if (i === 0) { gameRanks.push(1); return }
-            gameRanks.push(gameScores[i - 1].points === s.points ? gameRanks[i - 1] : i + 1)
+            gameRanks.push(scorePts(gameScores[i - 1]) === scorePts(s) ? gameRanks[i - 1] : i + 1)
           })
           const gameRankCounts = {}
           gameRanks.forEach(rk => { gameRankCounts[rk] = (gameRankCounts[rk] || 0) + 1 })
@@ -1060,7 +1097,7 @@
                 <div class="lb-ind-pick" style="text-align:right;">${predictedScore}</div>
                 <div class="lb-ind-margin" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.margin_score?.toFixed(1) ?? '—'} ${marginPick}</div>
                 <div class="lb-ind-total" style="text-align:right;font-size:0.75rem;color:#8892a4;">${s.total_score?.toFixed(1)  ?? '—'} ${totalPick}</div>
-                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:${isVirtual ? virtualClr : '#e2e8f0'};">${s.points?.toFixed(1) ?? '—'}</div>
+                <div class="lb-ind-pts" style="text-align:right;font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1rem;font-weight:700;color:${isVirtual ? virtualClr : '#e2e8f0'};">${((s.margin_score ?? 0) + (s.total_score ?? 0)).toFixed(1)}</div>
                 <div class="lb-ind-details">${mobileDetails}</div>
               </div>`
           }
