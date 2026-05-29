@@ -60,10 +60,32 @@
         </div>
       </div>
 
+      <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
+      <div id="community-betslips-section" class="hidden mb-4">
+        <div class="flex items-center justify-between mb-2 gap-3">
+          <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Community</span>
+          <div class="flex items-center gap-3 min-w-0">
+            <select id="community-sort"
+                    class="bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <option value="recent">Recent</option>
+              <option value="votes">Top</option>
+              <option value="prob_desc">Most Likely</option>
+              <option value="prob_asc">Least Likely</option>
+            </select>
+            <a id="community-betslips-link" href="../pages/betslips.html"
+               class="text-xs text-blue-400 hover:underline font-medium shrink-0">View all →</a>
+          </div>
+        </div>
+        <div id="community-betslips-list"
+             class="flex gap-2 overflow-x-auto pb-1"
+             style="scrollbar-width:thin;scrollbar-color:#374151 transparent;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;">
+        </div>
+      </div>
+
       <!-- FLEX ROW: Team lists left, betslip right -->
       <!-- pb-24 on mobile ensures the reset buttons aren't obscured by the fixed bottom betslip -->
       <div id="teams-flexrow" class="w-full flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-start pb-24 md:pb-0">
-        <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8 flex-1 order-2 md:order-1"></div>
+        <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8 flex-1 order-2 md:order-1" data-pick-counts="{}"></div>
         <div class="w-full md:w-auto shrink-0 order-1 md:order-2">
           <!-- Margin/Total Selectors -->
           <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
@@ -216,7 +238,8 @@
 
     <script src="../js/tryscorer_predictions.js"></script>
     <script type="module">
-      import { updateAuthNav } from '../js/supabase-client.js'
+      import { updateAuthNav, getSession } from '../js/supabase-client.js'
+      window._getSupabaseSession = getSession
       updateAuthNav()
     </script>
     <script>

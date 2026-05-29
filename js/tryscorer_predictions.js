@@ -588,7 +588,7 @@ document.addEventListener("DOMContentLoaded", function () {
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
 
-    matchList = sorted;
+    matchList = sorted.map(m => ({ ...m, kickoff_time: kickoffMap[m.match_id] ?? null }));
     matchSelect.innerHTML = `<option value="">-- Select a Match --</option>`;
     sorted.forEach(match => {
       const opt = document.createElement('option');
@@ -601,6 +601,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Compute round sigma scale in background so KDE bandwidth matches predictions page
     computeRoundSigmaScale();
+
+    // Show recent community betslips for this round before a match is selected
+    renderCommunityBetslips(null);
 
     // Background-warm team lists for all matches so loadMatch() renders instantly from cache.
     // Then sequentially prefetch tryscorer data for all matches (throttled to protect DB pool).
@@ -655,6 +658,7 @@ document.addEventListener("DOMContentLoaded", function () {
       updateTeamLabels();
       setControlsEnabled(false);
       recalculateAllOdds();
+      renderCommunityBetslips(null);
       return;
     }
     loadMatch(matchId);
@@ -717,6 +721,8 @@ document.addEventListener("DOMContentLoaded", function () {
       if (resetAllBtn)   resetAllBtn.disabled   = false;
       updateOptionBadges();
       recalculateAllOdds();
+      loadTryscorerCounts(matchId);
+      renderCommunityBetslips(matchId);
       return;
     }
 
@@ -736,6 +742,8 @@ document.addEventListener("DOMContentLoaded", function () {
         if (resetAllBtn)   resetAllBtn.disabled   = false;
         updateOptionBadges();
         recalculateAllOdds();
+        loadTryscorerCounts(matchId);
+        renderCommunityBetslips(matchId);
       });
   }
 
@@ -1891,7 +1899,7 @@ document.addEventListener("DOMContentLoaded", function () {
     ['home', 'away'].forEach(side => {
       const sr = sideResults.find(r => r.side === side);
       pickedBySide[side].forEach((p, i) => {
-        allPicks.push({ name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
+        allPicks.push({ id: p.id, team_id: p.team_id, side, name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
       });
     });
     const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
@@ -1899,7 +1907,8 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
-  let _recalcTimer = null;
+  let _recalcTimer          = null;
+  let _currentBetslipResults = null; // last computed results, used by saveBetslip()
 
   function recalculateAllOdds() {
     updateResetAllState();
@@ -2013,6 +2022,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // --- RENDER BETSLIP ---
   function renderBetslip(results) {
+    _currentBetslipResults = results.length > 0 ? results : null;
     if (results.length === 0) {
       resultDiv.innerHTML = '';
       resultDiv.classList.remove('betslip-open');
@@ -2148,11 +2158,22 @@ document.addEventListener("DOMContentLoaded", function () {
         <p class="text-xs text-gray-600 mt-1">Optional · shown on your share card</p>
       </div>` : '';
 
+    // Share Card stays inside the collapsible body; Save is always visible below the toggle
     const shareHtml = hasPicks ? `
       <div class="mt-2 flex justify-center">
         <button id="share-card-btn" type="button"
                 class="px-4 py-1.5 rounded-lg border border-amber-500/40 text-amber-400 font-semibold text-sm hover:bg-amber-500/10 transition-colors">
           ↗ Share Card
+        </button>
+      </div>` : '';
+
+    const _anyStarted = hasPicks && results.some(r => _isMatchStarted(r.matchId));
+    const saveBtnHtml = hasPicks ? `
+      <div class="mt-2 flex justify-center">
+        <button id="save-betslip-btn" type="button"
+                ${_anyStarted ? 'disabled title="Match has started — bets are locked"' : ''}
+                class="px-4 py-1.5 rounded-lg border font-semibold text-sm transition-colors ${_anyStarted ? 'border-gray-600 text-gray-500 opacity-50 cursor-not-allowed' : 'border-blue-500/40 text-blue-400 hover:bg-blue-500/10'}">
+          ${_anyStarted ? 'Locked' : '☆ Save Betslip'}
         </button>
       </div>` : '';
 
@@ -2185,6 +2206,7 @@ document.addEventListener("DOMContentLoaded", function () {
         ${bmcHtml}
         ${shareHtml}
       </div>
+      ${saveBtnHtml}
     `;
 
     // Restore expanded state after re-render
@@ -2215,6 +2237,11 @@ document.addEventListener("DOMContentLoaded", function () {
     const shareBtn = resultDiv.querySelector('#share-card-btn');
     if (shareBtn) {
       shareBtn.addEventListener('click', () => generateAndShowShareCard(results, combinedPct, combinedOdds, _bookieOdds, Math.round(blendT * 100)));
+    }
+
+    const saveBtn = resultDiv.querySelector('#save-betslip-btn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => saveBetslip(saveBtn));
     }
   }
 
@@ -2741,7 +2768,326 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
+  function _isMatchStarted(matchId) {
+    const match   = matchList.find(m => String(m.match_id) === String(matchId));
+    const kickoff = match?.kickoff_time;
+    if (!kickoff) return false;
+    return new Date(kickoff).getTime() <= Date.now();
+  }
+
+  // --- BETSLIP SAVE ---
+
+  function _showBetslipToast(msg, linkHref, linkText) {
+    let container = document.getElementById('_bs-toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = '_bs-toast-container';
+      container.style.cssText = 'position:fixed;bottom:5rem;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none';
+      document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.style.cssText = 'background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.5);pointer-events:auto;white-space:nowrap;opacity:1;transition:opacity 0.35s';
+    toast.innerHTML = linkHref
+      ? `${msg} <a href="${linkHref}" style="color:#60a5fa;text-decoration:underline">${linkText || 'here'}</a>`
+      : msg;
+    container.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 360); }, 3000);
+  }
+
+  async function saveBetslip(btn) {
+    const getSession = window._getSupabaseSession;
+    if (!getSession) return;
+
+    const session = await getSession();
+    if (!session) {
+      _showBetslipToast('Sign in to save betslips', '/pages/login.html?next=' + encodeURIComponent(window.location.pathname), 'Sign in');
+      return;
+    }
+
+    if (!_currentBetslipResults || !_currentBetslipResults.length) return;
+
+    // Collect all match IDs in this betslip (may span multiple games)
+    const match_ids = _currentBetslipResults.map(r => r.matchId);
+
+    if (match_ids.some(mid => _isMatchStarted(mid))) {
+      _showBetslipToast('Match has already started — bets are locked');
+      return;
+    }
+
+    // Use first match for round/season metadata (all matches are in the same round)
+    const matchInfo = matchList.find(m => match_ids.map(String).includes(String(m.match_id)));
+    if (!matchInfo) return;
+
+    // Build picks from ALL results, tagging each with its match_id
+    const picks = _currentBetslipResults.flatMap(r =>
+      (r.picks || []).map(p => ({
+        match_id: r.matchId,
+        id:       p.id,
+        name:     p.name,
+        team_id:  p.team_id,
+        side:     p.side,
+        n:        p.n,
+      }))
+    );
+
+    // Build line_legs from ALL results, tagging each with its match_id and match label
+    const line_legs = _currentBetslipResults.flatMap(r => {
+      const mid = r.matchId;
+      const c   = buildConstraints(mid);
+      const legs = [];
+      if (c.margin1)   legs.push({ match_id: mid, leg_type: 'margin1',    ...c.margin1,   label: getLine1Label(mid) });
+      if (c.margin2)   legs.push({ match_id: mid, leg_type: 'margin2',    ...c.margin2,   label: getLine2Label(mid) });
+      if (c.total1)    legs.push({ match_id: mid, leg_type: 'total1',     ...c.total1,    label: getTotal1Label(mid) });
+      if (c.total2)    legs.push({ match_id: mid, leg_type: 'total2',     ...c.total2,    label: getTotalCapLabel(mid) });
+      if (c.homeTotal) legs.push({ match_id: mid, leg_type: 'home_total', ...c.homeTotal, label: getHomeTotalLabel(mid) });
+      if (c.awayTotal) legs.push({ match_id: mid, leg_type: 'away_total', ...c.awayTotal, label: getAwayTotalLabel(mid) });
+      return legs;
+    });
+
+    const match_label = match_ids.length === 1
+      ? (_currentBetslipResults[0]?.matchLabel || matchInfo.home_team + ' vs ' + matchInfo.away_team)
+      : `Multi (${match_ids.length} games)`;
+
+    const combinedProb = _currentBetslipResults.reduce((acc, r) => acc * r.prob, 1);
+    const combinedOdds = combinedProb > 0 ? parseFloat((1 / combinedProb).toFixed(2)) : null;
+
+    const payload = {
+      match_ids,
+      round_number:    matchInfo.round_number,
+      season:          matchInfo.season_year,
+      competition,
+      match_label,
+      picks,
+      line_legs,
+      calculated_prob: combinedProb > 0 ? parseFloat(combinedProb.toFixed(5)) : null,
+      combined_odds:   combinedOdds,
+      bookie_odds:     _bookieOdds || null,
+      is_public:       true,
+    };
+
+    btn.textContent = 'Saving…';
+    btn.disabled    = true;
+
+    try {
+      const res = await fetch(`${API_BASE}/betslips`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        btn.textContent = '★ Saved';
+        btn.style.borderColor = '#22c55e';
+        btn.style.color       = '#4ade80';
+        _showBetslipToast('Betslip saved! View it on the', '/pages/betslips.html', 'betslips page');
+        setTimeout(() => loadTryscorerCounts(currentMatchId), 500);
+        setTimeout(() => renderCommunityBetslips(currentMatchId), 500);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        btn.textContent = '☆ Save';
+        btn.disabled    = false;
+        _showBetslipToast(err.error || 'Failed to save betslip');
+      }
+    } catch {
+      btn.textContent = '☆ Save';
+      btn.disabled    = false;
+      _showBetslipToast('Failed to save betslip');
+    }
+  }
+
+  // --- TRYSCORER PICK COUNTS ---
+
+  let _lastCountsMatchId = null;
+
+  async function loadTryscorerCounts(matchId) {
+    if (!matchId) return;
+    _lastCountsMatchId = matchId;
+    try {
+      const res  = await fetch(`${API_BASE}/betslips/tryscorer_counts/${matchId}/${competition}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (_lastCountsMatchId !== matchId) return; // stale
+      _applyPickCountBadges(data.counts, data.total_betslips);
+    } catch { /* non-fatal */ }
+  }
+
+  function _applyPickCountBadges(counts, total) {
+    document.querySelectorAll('.player-row[data-id]').forEach(row => {
+      const pid     = String(row.dataset.id);
+      const info    = counts[pid];
+      const nameDiv = row.querySelector('.flex-1');
+      const existing = row.querySelector('.pick-count-badge');
+      if (existing) existing.remove();
+      if (!info || info.count === 0 || !nameDiv) return;
+      const badge = document.createElement('span');
+      badge.className = 'pick-count-badge';
+      badge.title     = `${info.count} user${info.count !== 1 ? 's' : ''} ${info.count !== 1 ? 'have' : 'has'} included this player in their betslips`;
+      badge.style.cssText = 'margin-left:4px;font-size:10px;font-weight:700;color:#60a5fa;background:rgba(96,165,250,0.12);border:1px solid rgba(96,165,250,0.25);border-radius:4px;padding:1px 5px;white-space:nowrap;vertical-align:middle';
+      badge.textContent = String(info.count);
+      nameDiv.appendChild(badge);
+    });
+  }
+
+  // --- COMMUNITY BETSLIPS PANEL ---
+
+  let _communityMatchId = null;
+
+  async function renderCommunityBetslips(matchId, sort) {
+    const section = document.getElementById('community-betslips-section');
+    const list    = document.getElementById('community-betslips-list');
+    const link    = document.getElementById('community-betslips-link');
+    if (!section || !list) return;
+
+    _communityMatchId = matchId;
+    const sortVal = sort || document.getElementById('community-sort')?.value || 'recent';
+
+    list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Loading…</div>';
+    section.classList.remove('hidden');
+
+    // No match selected — show recent betslips for the current round instead
+    if (!matchId) {
+      const round = matchList[0]?.round_number;
+      if (link) link.href = `../pages/betslips.html`;
+      if (!round) { section.classList.add('hidden'); return; }
+      try {
+        const res = await fetch(`${API_BASE}/betslips/round/${round}/${competition}?sort=${sortVal}&limit=8`);
+        if (!res.ok) { section.classList.add('hidden'); return; }
+        const betslips = await res.json();
+        if (_communityMatchId !== null) return; // a match was selected while loading
+        if (!betslips.length) { section.classList.add('hidden'); return; }
+        list.innerHTML = betslips.map(b => _renderCommunityTile(b)).join('');
+        list.querySelectorAll('[data-vote-betslip]').forEach(btn => {
+          btn.addEventListener('click', () => _handleVote(btn, null, sortVal));
+        });
+      } catch { section.classList.add('hidden'); }
+      return;
+    }
+
+    if (link) link.href = `../pages/betslips.html?match=${matchId}`;
+
+    try {
+      const res = await fetch(`${API_BASE}/betslips/match/${matchId}?sort=${sortVal}&limit=5`);
+      if (!res.ok) { list.innerHTML = ''; return; }
+      const betslips = await res.json();
+      if (_communityMatchId !== matchId) return; // stale
+
+      if (!betslips.length) {
+        list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
+        return;
+      }
+
+      list.innerHTML = betslips.map(b => _renderCommunityTile(b)).join('');
+
+      // Wire vote buttons
+      list.querySelectorAll('[data-vote-betslip]').forEach(btn => {
+        btn.addEventListener('click', () => _handleVote(btn, matchId, sortVal));
+      });
+    } catch {
+      list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Could not load betslips.</div>';
+    }
+  }
+
+  function _renderCommunityTile(b) {
+    // Compact picks summary: truncate to first 3 items then show count
+    const allItems = [
+      ...(b.picks || []).map(p => ({ dot: 'bg-green-400', text: p.name + (p.n > 1 ? ` ×${p.n}` : '') })),
+      ...(b.line_legs || []).map(l => ({ dot: 'bg-blue-400', text: l.label || '' })),
+    ];
+    const visibleItems = allItems.slice(0, 3);
+    const extraCount   = allItems.length - visibleItems.length;
+    const picksHtml = visibleItems.map(item =>
+      `<span class="flex items-center gap-1 min-w-0">
+         <span class="w-1.5 h-1.5 rounded-full ${item.dot} shrink-0"></span>
+         <span class="truncate">${item.text}</span>
+       </span>`
+    ).join('');
+    const extraHtml = extraCount > 0 ? `<span class="text-gray-600 shrink-0">+${extraCount}</span>` : '';
+
+    const oddsText  = b.combined_odds ? `$${b.combined_odds}` : '–';
+    const probText  = b.calculated_prob ? `${(b.calculated_prob * 100).toFixed(1)}%` : '';
+
+    // Compact score indicator: just an icon, no background pill
+    const scoreIcon = b.is_scored
+      ? (b.won ? '<span class="text-green-400 text-xs font-bold" title="Won">✓</span>'
+               : '<span class="text-red-400 text-xs font-bold" title="Lost">✗</span>')
+      : '<span class="text-gray-600 text-xs" title="Pending">·</span>';
+
+    const netVotes  = b.net_votes || 0;
+    const voteColor = netVotes > 0 ? '#4ade80' : netVotes < 0 ? '#f87171' : '#6b7280';
+
+    return `
+      <div class="shrink-0 bg-gray-800 border border-gray-700 rounded-xl p-3 flex flex-col gap-1.5"
+           style="width:172px;scroll-snap-align:start;">
+        <!-- Row 1: username + result + votes -->
+        <div class="flex items-center justify-between gap-1">
+          <span class="text-xs font-semibold text-gray-200 truncate min-w-0">${b.username || 'Unknown'}</span>
+          <div class="flex items-center gap-1.5 shrink-0">
+            ${scoreIcon}
+            <button data-vote-betslip="${b.id}" data-v="1"
+                    class="text-gray-600 hover:text-green-400 transition-colors font-bold leading-none"
+                    style="font-size:10px;">▲</button>
+            <span style="font-size:10px;font-weight:700;color:${voteColor};min-width:1rem;text-align:center;"
+                  data-community-votes="${b.id}">${netVotes}</span>
+            <button data-vote-betslip="${b.id}" data-v="-1"
+                    class="text-gray-600 hover:text-red-400 transition-colors font-bold leading-none"
+                    style="font-size:10px;">▼</button>
+          </div>
+        </div>
+        <!-- Row 2: picks summary -->
+        <div class="flex flex-col gap-0.5 text-xs text-gray-400 min-w-0">
+          ${picksHtml}
+          ${extraHtml}
+        </div>
+        <!-- Row 3: odds -->
+        <div class="flex items-baseline justify-between mt-auto pt-1 border-t border-gray-700/50">
+          <span class="text-sm font-extrabold text-amber-400">${oddsText}</span>
+          ${probText ? `<span class="text-xs text-gray-500">${probText}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  async function _handleVote(btn, matchId, sort) {
+    const getSession = window._getSupabaseSession;
+    if (!getSession) return;
+    const session = await getSession();
+    if (!session) {
+      _showBetslipToast('Sign in to vote on betslips', '/pages/login.html?next=' + encodeURIComponent(window.location.pathname), 'Sign in');
+      return;
+    }
+    const betslipId = btn.dataset.voteBetslip;
+    const vote      = parseInt(btn.dataset.v, 10);
+    try {
+      const res = await fetch(`${API_BASE}/betslips/${betslipId}/vote`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+        body:    JSON.stringify({ vote }),
+      });
+      if (res.ok) {
+        const data  = await res.json();
+        const net   = data.net_votes ?? 0;
+        const el    = document.querySelector(`[data-community-votes="${betslipId}"]`);
+        if (el) {
+          el.textContent = net;
+          el.style.color = net > 0 ? '#4ade80' : net < 0 ? '#f87171' : '#6b7280';
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        _showBetslipToast(err.error || 'Could not vote');
+      }
+    } catch {
+      _showBetslipToast('Could not vote');
+    }
+  }
+
   // --- INIT ---
   syncLineUI(null);
   updateTeamLabels();
+
+  // Community sort dropdown
+  document.getElementById('community-sort')?.addEventListener('change', function () {
+    renderCommunityBetslips(currentMatchId, this.value);
+  });
 });

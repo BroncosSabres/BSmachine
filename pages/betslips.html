@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+    <title>User Predictions | The BS Machine</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white min-h-screen">
+    <div id="site-header"></div>
+
+    <main class="w-full max-w-3xl mx-auto px-4 py-4 md:py-8 pb-12">
+      <h1 class="text-2xl md:text-4xl font-bold mb-2 text-center">User Predictions</h1>
+      <p class="mb-6 text-gray-400 text-center text-sm">Browse SGM betslips saved by the community. Vote on your favourites!</p>
+
+      <!-- Filter bar -->
+      <div class="card mb-6 flex flex-col gap-3">
+        <!-- Row 1: competition + round -->
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Competition</span>
+            <div id="comp-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+              <button id="btn-nrl" type="button"
+                      class="comp-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">NRL</button>
+              <button id="btn-nrlw" type="button"
+                      class="comp-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">NRLW</button>
+            </div>
+          </div>
+          <div id="round-filter-wrap" class="flex items-center gap-2">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Round</span>
+            <select id="round-select"
+                    class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40"
+                    disabled>
+              <option value="">Loading…</option>
+            </select>
+          </div>
+        </div>
+        <!-- Row 2: sort -->
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Sort</span>
+          <select id="sort-select"
+                  class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="recent">Most Recent</option>
+            <option value="votes">Top Rated</option>
+            <option value="prob_desc">Most Likely</option>
+            <option value="prob_asc">Least Likely</option>
+          </select>
+        </div>
+        <!-- Match filter notice (shown when ?match= is set) -->
+        <div id="match-filter-notice" class="hidden text-xs text-blue-400 flex items-center gap-2">
+          <span>Showing betslips for a specific match.</span>
+          <a id="match-filter-clear" href="betslips.html" class="underline hover:text-blue-300">View all rounds →</a>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex gap-1 mb-5 border-b border-gray-700">
+        <button id="tab-community" type="button"
+                class="betslips-tab px-4 py-2 text-sm font-semibold border-b-2 border-amber-400 text-amber-400 -mb-px transition-colors">
+          Community
+        </button>
+        <button id="tab-mine" type="button"
+                class="betslips-tab px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400 -mb-px hover:text-white transition-colors">
+          My Betslips
+        </button>
+      </div>
+
+      <!-- Cards list -->
+      <div id="betslips-list" class="flex flex-col gap-4"></div>
+
+      <!-- Load more -->
+      <div class="mt-6 flex justify-center">
+        <button id="load-more-btn" type="button"
+                class="hidden px-6 py-2 rounded-lg border border-gray-600 text-gray-300 font-semibold text-sm hover:border-gray-500 hover:text-white transition-colors">
+          Load more
+        </button>
+      </div>
+    </main>
+
+    <script src="../js/betslips.js"></script>
+    <script type="module">
+      import { updateAuthNav, getSession } from '../js/supabase-client.js'
+      window._getSupabaseSession = getSession
+      updateAuthNav()
+      fetch('../components/header.html')
+        .then(r => r.text())
+        .then(html => {
+          document.getElementById('site-header').innerHTML = html
+          updateAuthNav()
+          document.getElementById('bmc-button').innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
+            </a>`
+          const toggle = document.getElementById('menu-toggle')
+          const menu   = document.getElementById('mobile-menu')
+          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
+        })
+    </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
+  </body>
+</html>
