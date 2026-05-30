@@ -2933,6 +2933,50 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // --- COMMUNITY BETSLIPS PANEL ---
 
+  const _SB_SORT_MAP = {
+    recent:    'created_at.desc',
+    prob_desc: 'calculated_prob.desc.nullslast',
+    prob_asc:  'calculated_prob.asc.nullsfirst',
+    votes:     'net_votes.desc',
+  };
+  const _SB_HDR = { apikey: _SB_KEY, Authorization: `Bearer ${_SB_KEY}` };
+
+  // Query Supabase directly — skips the Render backend entirely for public reads.
+  async function _fetchCommunityDirect(matchId, round, sortVal, limit) {
+    const order = _SB_SORT_MAP[sortVal] || 'created_at.desc';
+    const base  = `&is_public=eq.true&select=*&order=${order}&limit=${limit}`;
+
+    let betslipsUrl;
+    if (matchId) {
+      // OR across old-style match_id and new-style match_ids array
+      betslipsUrl = `${_SB_URL}/rest/v1/betslips?or=(match_id.eq.${matchId},match_ids.cs.%7B${matchId}%7D)${base}`;
+    } else {
+      betslipsUrl = `${_SB_URL}/rest/v1/betslips?round_number=eq.${round}&competition=eq.${competition}${base}`;
+    }
+
+    const bRes = await fetch(betslipsUrl, { headers: _SB_HDR });
+    if (!bRes.ok) return [];
+    const betslips = await bRes.json();
+    if (!betslips.length) return betslips;
+
+    // Enrich with usernames — fetch profiles in parallel with nothing else to wait on
+    const userIds = [...new Set(betslips.map(b => b.user_id).filter(Boolean))];
+    const pRes = await fetch(
+      `${_SB_URL}/rest/v1/profiles?id=in.(${userIds.join(',')})&select=id,username,favourite_team`,
+      { headers: _SB_HDR }
+    );
+    if (pRes.ok) {
+      const profiles = {};
+      (await pRes.json()).forEach(p => { profiles[p.id] = p; });
+      betslips.forEach(b => {
+        const p = profiles[b.user_id] || {};
+        b.username       = p.username       || 'Unknown';
+        b.favourite_team = p.favourite_team || null;
+      });
+    }
+    return betslips;
+  }
+
   let _communityMatchId = null;
 
   async function renderCommunityBetslips(matchId, sort) {
@@ -2947,41 +2991,27 @@ document.addEventListener("DOMContentLoaded", function () {
     list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Loading…</div>';
     section.classList.remove('hidden');
 
-    // No match selected — show recent betslips for the current round instead
-    if (!matchId) {
-      const round = matchList[0]?.round_number;
-      if (link) link.href = `../pages/betslips.html`;
-      if (!round) { section.classList.add('hidden'); return; }
-      try {
-        const res = await fetch(`${API_BASE}/betslips/round/${round}/${competition}?sort=${sortVal}&limit=8`);
-        if (!res.ok) { section.classList.add('hidden'); return; }
-        const betslips = await res.json();
-        if (_communityMatchId !== null) return; // a match was selected while loading
-        if (!betslips.length) { section.classList.add('hidden'); return; }
-        list.innerHTML = betslips.map(b => _renderCommunityTile(b)).join('');
-        list.querySelectorAll('[data-vote-betslip]').forEach(btn => {
-          btn.addEventListener('click', () => _handleVote(btn, null, sortVal));
-        });
-      } catch { section.classList.add('hidden'); }
-      return;
-    }
-
-    if (link) link.href = `../pages/betslips.html?match=${matchId}`;
-
     try {
-      const res = await fetch(`${API_BASE}/betslips/match/${matchId}?sort=${sortVal}&limit=5`);
-      if (!res.ok) { list.innerHTML = ''; return; }
-      const betslips = await res.json();
-      if (_communityMatchId !== matchId) return; // stale
+      let betslips;
+      if (!matchId) {
+        const round = matchList[0]?.round_number;
+        if (link) link.href = `../pages/betslips.html`;
+        if (!round) { section.classList.add('hidden'); return; }
+        betslips = await _fetchCommunityDirect(null, round, sortVal, 8);
+        if (_communityMatchId !== null) return; // match selected while loading
+      } else {
+        if (link) link.href = `../pages/betslips.html?match=${matchId}`;
+        betslips = await _fetchCommunityDirect(matchId, null, sortVal, 5);
+        if (_communityMatchId !== matchId) return; // stale
+      }
 
       if (!betslips.length) {
+        if (!matchId) { section.classList.add('hidden'); return; }
         list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
         return;
       }
 
       list.innerHTML = betslips.map(b => _renderCommunityTile(b)).join('');
-
-      // Wire vote buttons
       list.querySelectorAll('[data-vote-betslip]').forEach(btn => {
         btn.addEventListener('click', () => _handleVote(btn, matchId, sortVal));
       });
