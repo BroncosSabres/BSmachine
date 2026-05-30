@@ -1675,7 +1675,7 @@ document.addEventListener("DOMContentLoaded", function () {
         for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
         for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
       });
-      return { ...baseResult, preFiltBins, bins: afterTeam, prob: filtC / totalC, home_try_dist: aggHome, away_try_dist: aggAway };
+      return { ...baseResult, preFiltBins, bins: afterTeam, prob: (baseResult.prob ?? 1) * (filtC / totalC), home_try_dist: aggHome, away_try_dist: aggAway };
     }
 
     // Margin/total only (no team total)
@@ -1689,7 +1689,7 @@ document.addEventListener("DOMContentLoaded", function () {
       for (const [k, v] of Object.entries(b.h || {})) aggHome[k] = (aggHome[k] || 0) + v * w;
       for (const [k, v] of Object.entries(b.a || {})) aggAway[k] = (aggAway[k] || 0) + v * w;
     });
-    return { ...baseResult, preFiltBins, bins, prob: filtC / totalC, home_try_dist: aggHome, away_try_dist: aggAway };
+    return { ...baseResult, preFiltBins, bins, prob: (baseResult.prob ?? 1) * (filtC / totalC), home_try_dist: aggHome, away_try_dist: aggAway };
   }
 
   async function getSgmDist(matchId, c) {
@@ -1703,7 +1703,13 @@ document.addEventListener("DOMContentLoaded", function () {
     if (c?.total2?.type === 'over')   params.push(`total_gte=${c.total2.val}`);
     if (c?.total2?.type === 'under')  params.push(`total_lte=${c.total2.val - 1}`);
     const paramString = params.length ? params.join('&') : '_none';
-    const cacheKey = `${matchId}|${paramString}`;
+
+    // Include client-side team total constraints in cache key (they generate no URL params)
+    const teamKey = [
+      c?.homeTotal ? `h${c.homeTotal.type[0]}${c.homeTotal.val}` : '',
+      c?.awayTotal ? `a${c.awayTotal.type[0]}${c.awayTotal.val}` : '',
+    ].filter(Boolean).join('_');
+    const cacheKey = `${matchId}|${paramString}${teamKey ? '|' + teamKey : ''}`;
 
     // Exact cache hit — return existing Promise (also deduplicates concurrent calls)
     if (_sgmDistCache.has(cacheKey)) {
@@ -1713,7 +1719,8 @@ document.addEventListener("DOMContentLoaded", function () {
     // If full no-constraint bins are already cached, derive constrained result client-side.
     // This eliminates per-constraint API calls — all line/total changes are instant after load.
     const fullKey = `${matchId}|_none`;
-    if (params.length > 0 && _sgmDistCache.has(fullKey)) {
+    const needsClientFilter = params.length > 0 || c?.homeTotal || c?.awayTotal;
+    if (needsClientFilter && _sgmDistCache.has(fullKey)) {
       const promise = _sgmDistCache.get(fullKey).then(fullResult => {
         if (!Array.isArray(fullResult.bins) || !fullResult.bins.length) {
           return { ...fullResult, preFiltBins: fullResult.bins };
