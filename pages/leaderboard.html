@@ -3292,23 +3292,29 @@
       async function renderLiveSeeding(config) {
         matchesEl.innerHTML = `<div class="p-8 animate-pulse" style="color:#4a5568;">Computing live seeding…</div>`
 
-        // Fetch seeding round game IDs
-        const { data: seedGames } = await supabase
+        const seedCount    = config.seeding_round_count || 1
+        const seedEndRound = config.seeding_round + seedCount - 1
+        const seedLabel    = seedCount > 1 ? `Rounds ${config.seeding_round}–${seedEndRound}` : `Round ${config.seeding_round}`
+        const season       = new Date().getFullYear()
+
+        // Fetch games for ALL seeding rounds (completed rounds include home/away scores)
+        const { data: allSeedGames } = await supabase
           .from('games')
-          .select('game_id, home_team, away_team, kickoff_time')
-          .eq('round_number', config.seeding_round)
-          .eq('season', new Date().getFullYear())
-        if (!seedGames?.length) return
+          .select('game_id, home_team, away_team, home_score, away_score, kickoff_time, round_number, is_complete')
+          .gte('round_number', config.seeding_round)
+          .lte('round_number', seedEndRound)
+          .eq('season', season)
+        if (!allSeedGames?.length) return
 
-        const gameIds = seedGames.map(g => g.game_id)
+        const allGameIds = allSeedGames.map(g => g.game_id)
 
-        // Fetch all picks for seeding round
+        // Fetch all picks across all seeding rounds
         const { data: picks } = await supabase
           .from('picks')
           .select('user_id, game_id, home_score_pick, away_score_pick')
-          .in('game_id', gameIds)
+          .in('game_id', allGameIds)
         if (!picks?.length) {
-          matchesEl.innerHTML = `<div style="padding:2rem;text-align:center;color:#4a5568;font-size:0.875rem;">No picks submitted yet for Round ${config.seeding_round}.</div>`
+          matchesEl.innerHTML = `<div style="padding:2rem;text-align:center;color:#4a5568;font-size:0.875rem;">No picks submitted yet for ${seedLabel}.</div>`
           return
         }
 
@@ -3321,28 +3327,43 @@
         const profileMap = {}
         profiles?.forEach(p => { profileMap[p.id] = p })
 
-        // Compute live scores per user using liveGameMap (only scored games)
+        // Build a score map for every game: prefer liveGameMap (for the live round),
+        // fall back to the completed game scores fetched from the games table.
+        const gameScoreMap = {}
+        for (const g of allSeedGames) {
+          const live = liveGameMap[g.game_id]
+          if (live?.home_score != null) {
+            gameScoreMap[g.game_id] = { home: live.home_score, away: live.away_score }
+          } else if (g.home_score != null) {
+            gameScoreMap[g.game_id] = { home: g.home_score, away: g.away_score }
+          }
+        }
+
+        // Compute seeding scores per user: sum bellScore across all seeding rounds
         const userScores = {}
         for (const pick of picks) {
-          const live = liveGameMap[pick.game_id]
-          if (!live || live.home_score == null || live.away_score == null) continue
-          if (pick.home_score_pick == null || pick.away_score_pick == null) continue
-          const ms = bellScore((live.home_score - live.away_score) - (pick.home_score_pick - pick.away_score_pick))
-          const ts = bellScore((live.home_score + live.away_score) - (pick.home_score_pick + pick.away_score_pick))
+          const gs = gameScoreMap[pick.game_id]
+          if (!gs || pick.home_score_pick == null || pick.away_score_pick == null) continue
+          const ms = bellScore((gs.home - gs.away) - (pick.home_score_pick - pick.away_score_pick))
+          const ts = bellScore((gs.home + gs.away) - (pick.home_score_pick + pick.away_score_pick))
           userScores[pick.user_id] = (userScores[pick.user_id] || 0) + ms + ts
         }
 
-        // Sort by live score desc
+        // Sort by seeding score desc
         const ranked = allUids
           .map(uid => ({ uid, score: userScores[uid] || 0, profile: profileMap[uid] || {} }))
           .sort((a, b) => b.score - a.score)
 
-        const n            = ranked.length
-        const bracketSize  = largestPowerOfTwo(n)
-        const nEliminated  = n - bracketSize
-        const completedGames = seedGames.filter(g => liveGameMap[g.game_id]?.home_score != null).length
-        const totalGames     = seedGames.length
-        const isMe           = uid => uid === myUserId
+        const n           = ranked.length
+        const bracketSize = largestPowerOfTwo(n)
+        const nEliminated = n - bracketSize
+
+        // Progress bar tracks the current (most recent active) seeding round
+        const currentSeedRound   = Math.min(liveRoundNumber || seedEndRound, seedEndRound)
+        const currentRoundGames  = allSeedGames.filter(g => g.round_number === currentSeedRound)
+        const completedGames     = currentRoundGames.filter(g => gameScoreMap[g.game_id]).length
+        const totalGames         = currentRoundGames.length
+        const isMe               = uid => uid === myUserId
 
         // Build seeding rows
         const seedRowItems = ranked.map((entry, i) => {
@@ -3442,14 +3463,14 @@
             <h2 style="font-family:'Barlow Condensed',system-ui,sans-serif;font-size:1.5rem;font-weight:700;">${escapeHtml(config.name)}</h2>
             <span style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:0.65rem;font-weight:700;letter-spacing:0.08em;padding:2px 7px;text-transform:uppercase;">● Live Seeding</span>
             ${toggleBtn}
-            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">${completedGames}/${totalGames} games complete · ${n} entrants · ${bracketSize}-player bracket${nEliminated > 0 ? ` · bottom ${nEliminated} eliminated` : ''}</span>
+            <span style="font-size:0.75rem;color:#4a5568;margin-left:auto;">Round ${currentSeedRound}: ${completedGames}/${totalGames} games · ${n} entrants · ${bracketSize}-player bracket${nEliminated > 0 ? ` · bottom ${nEliminated} eliminated` : ''}</span>
           </div>
           <div style="height:3px;background:#1e2a3a;border-radius:2px;margin-bottom:1.25rem;overflow:hidden;">
             <div style="height:100%;width:${progressPct}%;background:linear-gradient(90deg,#ef4444,#f97316);border-radius:2px;transition:width 0.3s;"></div>
           </div>
           ${mainContent}
           <div style="margin-top:0.875rem;font-size:0.72rem;color:#374151;">
-            Seedings update as Round ${config.seeding_round} games complete. Bracket locks in after the round is scored.
+            Seedings update live across ${seedLabel}. Bracket locks in after Round ${seedEndRound} is scored.
           </div>`
 
         document.getElementById('cup-bracket-toggle')?.addEventListener('click', () => {
@@ -3519,14 +3540,16 @@
           // Check if a cup is scheduled but not yet started
           const { data: configs } = await supabase
             .from('cup_configs')
-            .select('name, seeding_round, season')
+            .select('name, seeding_round, seeding_round_count, season')
             .eq('season', new Date().getFullYear())
             .order('seeding_round', { ascending: true })
           const scheduled = configs?.[0]
           if (scheduled) {
-            // If the seeding round is live right now, show live seeding
-            const hasLiveScores = liveRoundNumber === scheduled.seeding_round &&
-              Object.values(liveGameMap).some(g => g.home_score != null)
+            const seedCount       = scheduled.seeding_round_count || 1
+            const seedEndRound    = scheduled.seeding_round + seedCount - 1
+            const seedLabel       = seedCount > 1 ? `Rounds ${scheduled.seeding_round}–${seedEndRound}` : `Round ${scheduled.seeding_round}`
+            const isInSeedPeriod  = liveRoundNumber != null && liveRoundNumber >= scheduled.seeding_round && liveRoundNumber <= seedEndRound
+            const hasLiveScores   = isInSeedPeriod && Object.values(liveGameMap).some(g => g.home_score != null)
             if (hasLiveScores) {
               await renderLiveSeeding(scheduled)
             } else {
@@ -3534,12 +3557,12 @@
                 <div style="padding:3rem;text-align:center;">
                   <div style="font-size:1.5rem;font-weight:700;font-family:'Barlow Condensed',sans-serif;margin-bottom:0.5rem;">${escapeHtml(scheduled.name)}</div>
                   <div style="display:inline-flex;align-items:center;gap:0.5rem;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:0.5rem 1rem;margin-bottom:0.75rem;">
-                    <span style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#60a5fa;">Seeding Round ${scheduled.seeding_round}</span>
+                    <span style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#60a5fa;">Seeding ${seedLabel}</span>
                   </div>
-                  <div style="font-size:0.875rem;color:#8892a4;">Everyone who tips Round ${scheduled.seeding_round} is automatically entered.<br>The bracket will be revealed once the round is scored.</div>
+                  <div style="font-size:0.875rem;color:#8892a4;">Everyone who tips during ${seedLabel} is automatically entered.<br>The bracket will be revealed once the seeding period is scored.</div>
                 </div>`
               // Poll until scores arrive, then switch to live seeding view
-              if (!cupPollInterval && liveRoundNumber === scheduled.seeding_round) {
+              if (!cupPollInterval && isInSeedPeriod) {
                 cupPollInterval = setInterval(async () => {
                   if (activeTab !== 'cup') {
                     clearInterval(cupPollInterval)
