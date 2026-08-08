@@ -28,9 +28,16 @@
     <div id="site-header"></div>
 
     <main class="max-w-7xl mx-auto px-4 py-8">
-      <div class="flex items-baseline gap-4 mb-8">
-        <h1 class="text-4xl font-bold">NRL Power Rankings</h1>
+      <div class="flex items-baseline gap-4 mb-8 flex-wrap">
+        <h1 class="text-4xl font-bold">Power Rankings</h1>
         <span id="round-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
+        <div id="competition-toggle"
+             class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+          <button id="btn-nrl" type="button"
+                  class="competition-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">NRL</button>
+          <button id="btn-nrlw" type="button"
+                  class="competition-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">NRLW</button>
+        </div>
       </div>
 
       <!-- Rankings Table -->
@@ -44,7 +51,7 @@
                 <th>Team</th>
                 <th>Rating</th>
                 <th>Form</th>
-                <th>Top 8</th>
+                <th>Finals</th>
                 <th>Top 4</th>
                 <th>Minor Premiership</th>
                 <th>Premiers</th>

@@ -237,11 +237,15 @@
     <div id="site-header"></div>
 
     <main class="max-w-3xl mx-auto px-4 py-8 pb-16">
-      <div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-3">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div class="flex items-center gap-3 flex-wrap">
           <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Round Tipping</h1>
           <a href="/pages/leaderboard.html" style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#f59e0b; text-decoration:none; border:1px solid rgba(245,158,11,0.3); border-radius:6px; padding:0.2rem 0.6rem; background:rgba(245,158,11,0.08); white-space:nowrap;">Leaderboard →</a>
           <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.2rem 0.6rem; cursor:pointer; white-space:nowrap;">My Stats</button>
+          <div id="competition-toggle" class="flex items-center gap-0.5" style="background:#0a0d14; border:1px solid #2e3a4e; border-radius:8px; padding:2px;">
+            <button id="btn-nrl" type="button" class="competition-btn" style="padding:0.35rem 1rem; border-radius:6px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:#f59e0b; color:#0a0d14; border:none; cursor:pointer;">NRL</button>
+            <button id="btn-nrlw" type="button" class="competition-btn" style="padding:0.35rem 1rem; border-radius:6px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:transparent; color:#8892a4; border:none; cursor:pointer;">NRLW</button>
+          </div>
         </div>
         <select id="round-select" style="background:#161b24;border:1px solid #2e3a4e;border-radius:8px;padding:0.35rem 0.75rem;color:#8892a4;font-family:'Barlow',system-ui,sans-serif;font-size:0.875rem;cursor:pointer;outline:none;"></select>
       </div>
@@ -358,6 +362,7 @@
       let availableRounds = []
       let currentRoundIndex = 0
       let avgTotal = 44  // default, updated from completed games
+      let competition = localStorage.getItem('bsmachine_competition') || 'nrl'
 
       // ── Team colours (for slider track) ──
       const TEAM_COLORS = {
@@ -429,6 +434,7 @@
         const { data } = await supabase
           .from('games')
           .select('home_score, away_score')
+          .eq('competition', competition)
           .not('home_score', 'is', null)
           .not('away_score', 'is', null)
         if (data?.length) {
@@ -446,6 +452,7 @@
         const { data: roundData } = await supabase
           .from('games')
           .select('round_number')
+          .eq('competition', competition)
           .order('round_number', { ascending: true })
 
         if (!roundData?.length) {
@@ -460,7 +467,7 @@
 
         let targetRound = availableRounds[availableRounds.length - 1]
         try {
-          const res     = await fetch(`${BACKEND}/season_matches/nrl`)
+          const res     = await fetch(`${BACKEND}/season_matches/${competition}`)
           const json    = await res.json()
           const matches = json.matches || []
           const unplayedRounds = [...new Set(
@@ -504,6 +511,7 @@
           .from('games')
           .select('*')
           .eq('round_number', roundNumber)
+          .eq('competition', competition)
           .order('kickoff_time', { ascending: true })
 
         if (error || !gamesData?.length) {
@@ -521,6 +529,7 @@
           .from('picks')
           .select('game_id, home_score_pick, away_score_pick')
           .eq('user_id', userId)
+          .eq('competition', competition)
           .in('game_id', gameIds)
 
         // Clear picks for this round
@@ -811,6 +820,7 @@
             return {
               user_id:         userId,
               game_id:         g.game_id,
+              competition:     competition,
               home_score_pick: h,
               away_score_pick: a,
               line_pick:       h >= a ? 'home' : 'away',
@@ -881,6 +891,37 @@
           body.style.display      = open ? 'block' : 'none'
           chevron.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)'
         })
+
+        // ── Competition toggle ──
+        const btnNrl  = document.getElementById('btn-nrl')
+        const btnNrlw = document.getElementById('btn-nrlw')
+        function updateCompetitionButtons() {
+          const active   = { background: '#f59e0b', color: '#0a0d14' }
+          const inactive = { background: 'transparent', color: '#8892a4' }
+          const nrlStyle  = competition === 'nrl'  ? active : inactive
+          const nrlwStyle = competition === 'nrlw' ? active : inactive
+          btnNrl.style.background  = nrlStyle.background
+          btnNrl.style.color       = nrlStyle.color
+          btnNrlw.style.background = nrlwStyle.background
+          btnNrlw.style.color      = nrlwStyle.color
+        }
+        btnNrl.addEventListener('click', () => {
+          if (competition !== 'nrl') {
+            competition = 'nrl'
+            localStorage.setItem('bsmachine_competition', competition)
+            updateCompetitionButtons()
+            init()
+          }
+        })
+        btnNrlw.addEventListener('click', () => {
+          if (competition !== 'nrlw') {
+            competition = 'nrlw'
+            localStorage.setItem('bsmachine_competition', competition)
+            updateCompetitionButtons()
+            init()
+          }
+        })
+        updateCompetitionButtons()
 
         init()
       } // end else (authenticated)

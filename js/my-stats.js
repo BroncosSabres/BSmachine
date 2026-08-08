@@ -88,11 +88,11 @@ function closeMyStats() {
 
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
-async function fetchMachinePreds(roundNums) {
+async function fetchMachinePreds(roundNums, competition) {
   const map = {}
   const resps = await Promise.all(
     [...new Set(roundNums)].map(rn =>
-      fetch(`${BACKEND}/round_predictions/${rn}`).then(r => r.ok ? r.json() : null).catch(() => null)
+      fetch(`${BACKEND}/round_predictions/${rn}/${competition}`).then(r => r.ok ? r.json() : null).catch(() => null)
     )
   )
   resps.forEach(data => {
@@ -105,6 +105,7 @@ async function fetchMachinePreds(roundNums) {
 }
 
 async function fetchAllData(userId) {
+  const competition = localStorage.getItem('bsmachine_competition') || 'nrl'
   const [
     { data: scores },
     { data: picks },
@@ -113,13 +114,16 @@ async function fetchAllData(userId) {
   ] = await Promise.all([
     supabase.from('scores')
       .select('game_id, points, margin_score, total_score, round_number')
-      .eq('user_id', userId),
+      .eq('user_id', userId)
+      .eq('competition', competition),
     supabase.from('picks')
       .select('game_id, home_score_pick, away_score_pick')
-      .eq('user_id', userId),
+      .eq('user_id', userId)
+      .eq('competition', competition),
     supabase.from('games')
       .select('game_id, home_team, away_team, home_score, away_score, round_number, kickoff_time')
       .eq('is_complete', true)
+      .eq('competition', competition)
       .not('home_score', 'is', null),
     supabase.from('profiles')
       .select('username, favourite_team')
@@ -128,7 +132,7 @@ async function fetchAllData(userId) {
   ])
 
   const roundNums = [...new Set((games || []).map(g => g.round_number))]
-  const machinePreds = await fetchMachinePreds(roundNums)
+  const machinePreds = await fetchMachinePreds(roundNums, competition)
   return compute(scores || [], picks || [], games || [], machinePreds, profile)
 }
 

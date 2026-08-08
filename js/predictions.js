@@ -11,6 +11,7 @@ let currentRound = 1;  // currently selected round
 let tryscorerMatchCache = null;
 let blendT = 0;           // 0 = pure machine, 1 = pure crowd
 const cardDataCache = {}; // matchKey → { machine: {...}, user: {...} }
+let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
 
 const teamColors = {
   "Broncos":   "#760135",
@@ -268,10 +269,11 @@ async function fetchMachineDistributions(matchId) {
 const userPicksCache = {};
 
 async function fetchUserPicksForRound(displayRound) {
-  if (userPicksCache[displayRound]) return userPicksCache[displayRound];
+  const cacheKey = `${competition}-${displayRound}`;
+  if (userPicksCache[cacheKey]) return userPicksCache[cacheKey];
 
   try {
-    const res  = await fetch(`${TRYSCORER_API}/round_picks/${displayRound}/nrl`);
+    const res  = await fetch(`${TRYSCORER_API}/round_picks/${displayRound}/${competition}`);
     const data = await res.json();
     // Normalise into the same shape the rest of the code expects
     const byGame = data.byGame || {};
@@ -279,12 +281,12 @@ async function fetchUserPicksForRound(displayRound) {
     const games = Object.entries(byGame).map(([game_id, d]) => ({
       game_id: Number(game_id), home_team: d.home_team, away_team: d.away_team,
     }));
-    userPicksCache[displayRound] = { byGame, games };
+    userPicksCache[cacheKey] = { byGame, games };
   } catch {
-    userPicksCache[displayRound] = { byGame: {}, games: [] };
+    userPicksCache[cacheKey] = { byGame: {}, games: [] };
   }
 
-  return userPicksCache[displayRound];
+  return userPicksCache[cacheKey];
 }
 
 // Returns pick data for a game by direct match_id lookup (game_id == matches.id)
@@ -1021,7 +1023,7 @@ function teamsMatch(shortName, fullName) {
 async function getTryscorerMatches() {
   if (tryscorerMatchCache) return tryscorerMatchCache;
   try {
-    const res = await fetch(`${TRYSCORER_API}/current_round_matches/nrl`);
+    const res = await fetch(`${TRYSCORER_API}/current_round_matches/${competition}`);
     tryscorerMatchCache = await res.json();
   } catch {
     tryscorerMatchCache = [];
@@ -1036,7 +1038,7 @@ async function checkTryscorerAvailable(homeTeam, awayTeam) {
   );
   if (!match) return { available: false, matchId: null };
   try {
-    const res = await fetch(`${TRYSCORER_API}/match_team_lists/${match.match_id}/nrl`);
+    const res = await fetch(`${TRYSCORER_API}/match_team_lists/${match.match_id}/${competition}`);
     const data = await res.json();
     const hasPlayers = data?.home_players?.length > 0 || data?.away_players?.length > 0;
     return { available: hasPlayers, matchId: match.match_id };
@@ -1070,7 +1072,7 @@ let liveResultsCache = null;
 async function getLiveResults() {
   if (liveResultsCache) return liveResultsCache;
   try {
-    const res = await fetch(`${BACKEND_BASE}/latest-results`);
+    const res = await fetch(`${BACKEND_BASE}/latest-results?competition=${competition}`);
     liveResultsCache = await res.json();
   } catch {
     liveResultsCache = [];
@@ -1221,7 +1223,7 @@ async function buildTotalRanking() {
 
 async function getRoundMatches(roundNumber) {
   try {
-    const res = await fetch(`${TRYSCORER_API}/round_results/${roundNumber}/nrl`);
+    const res = await fetch(`${TRYSCORER_API}/round_results/${roundNumber}/${competition}`);
     return await res.json();
   } catch {
     return [];
@@ -1513,13 +1515,14 @@ function createMatchCard(data) {
 const roundPredictionsCache = {};
 
 async function fetchPredictionsForRound(roundNumber) {
-  if (roundPredictionsCache[roundNumber]) return roundPredictionsCache[roundNumber];
+  const cacheKey = `${competition}-${roundNumber}`;
+  if (roundPredictionsCache[cacheKey]) return roundPredictionsCache[cacheKey];
   try {
-    const res = await fetch(`${TRYSCORER_API}/round_predictions/${roundNumber}/nrl`);
+    const res = await fetch(`${TRYSCORER_API}/round_predictions/${roundNumber}/${competition}`);
     if (!res.ok) return [];
     const data = await res.json();
     const preds = (data.predictions || []).filter(p => p.has_prediction);
-    roundPredictionsCache[roundNumber] = preds;
+    roundPredictionsCache[cacheKey] = preds;
     return preds;
   } catch { return []; }
 }
@@ -2004,11 +2007,12 @@ async function loadRound() {
   try {
     // Fetch predictions and kickoff times in parallel — neither depends on the other
     const [predRes, { data: gamesData }] = await Promise.all([
-      fetch(`${TRYSCORER_API}/round_predictions/${currentRound}/nrl`),
+      fetch(`${TRYSCORER_API}/round_predictions/${currentRound}/${competition}`),
       supabase
         .from('games')
         .select('game_id, kickoff_time')
         .eq('round_number', currentRound)
+        .eq('competition', competition)
         .order('kickoff_time', { ascending: true }),
     ]);
     if (!predRes.ok) throw new Error(`HTTP ${predRes.status}`);
@@ -2081,7 +2085,7 @@ async function loadRound() {
 // --- INIT ---
 async function init() {
   try {
-    const res  = await fetch(`${TRYSCORER_API}/season_matches/nrl`);
+    const res  = await fetch(`${TRYSCORER_API}/season_matches/${competition}`);
     const data = await res.json();
     const matches = data.matches || [];
     if (matches.length > 0) {
@@ -2140,6 +2144,52 @@ if (matchupBlendIncBtn) {
     matchupBlendSlider.value = Math.min(100, matchupBlendSlider.valueAsNumber + 5);
     matchupBlendSlider.dispatchEvent(new Event('input'));
   });
+}
+
+// --- COMPETITION TOGGLE ---
+const btnNrl  = document.getElementById('btn-nrl');
+const btnNrlw = document.getElementById('btn-nrlw');
+
+function updateCompetitionButtons() {
+  if (competition === 'nrl') {
+    btnNrl.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.remove('text-gray-400');
+    btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.add('text-gray-400');
+  } else {
+    btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.remove('text-gray-400');
+    btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.add('text-gray-400');
+  }
+}
+
+function clearCompetitionAgnosticCaches() {
+  tryscorerMatchCache = null;
+  liveResultsCache    = null;
+  Object.keys(machineDistCache).forEach(k => delete machineDistCache[k]);
+}
+
+if (btnNrl && btnNrlw) {
+  btnNrl.addEventListener('click', () => {
+    if (competition !== 'nrl') {
+      competition = 'nrl';
+      localStorage.setItem('bsmachine_competition', competition);
+      updateCompetitionButtons();
+      clearCompetitionAgnosticCaches();
+      init();
+    }
+  });
+  btnNrlw.addEventListener('click', () => {
+    if (competition !== 'nrlw') {
+      competition = 'nrlw';
+      localStorage.setItem('bsmachine_competition', competition);
+      updateCompetitionButtons();
+      clearCompetitionAgnosticCaches();
+      init();
+    }
+  });
+  updateCompetitionButtons();
 }
 
 init();

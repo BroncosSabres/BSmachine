@@ -5,10 +5,14 @@ import { teamSlug } from './utils.js';
 const ladderTable   = document.querySelector("#ladder-table tbody");
 const rankingsTable = document.querySelector("#rankings-table tbody");
 const chartDropdown = document.getElementById("chart-select");
+const btnNrl        = document.getElementById("btn-nrl");
+const btnNrlw       = document.getElementById("btn-nrlw");
 
 const BACKEND = 'https://bsmachine-backend.onrender.com/api';
 
 let resultsData = [];
+let prevData     = {};
+let competition  = localStorage.getItem('bsmachine_competition') || 'nrl';
 
 // Colour a probability cell from red → yellow → green
 function probColor(val) {
@@ -48,9 +52,12 @@ function rankChangeBadge(current, prev) {
 }
 
 
-(async () => {
+async function loadRankings() {
+  ladderTable.innerHTML   = '';
+  rankingsTable.innerHTML = '';
+
   // Single request: current + previous round rankings and ladders in one call
-  const res = await fetch(`${BACKEND}/power_rankings_with_prev/nrl`);
+  const res = await fetch(`${BACKEND}/power_rankings_with_prev/${competition}`);
   if (!res.ok) return;
   const json = await res.json();
 
@@ -63,7 +70,8 @@ function rankChangeBadge(current, prev) {
   if (badge && roundNumber != null) badge.textContent = `Round ${roundNumber}`;
 
   // Build prev-round lookup maps from the bundled previous-round data
-  let prevData = {}, prevRankByTeam = {}, prevLadderRankByTeam = {};
+  prevData = {};
+  let prevRankByTeam = {}, prevLadderRankByTeam = {};
   (json.prev_rankings || []).forEach(r => {
     prevRankByTeam[r.team] = r.rank;
     prevData[r.team] = {
@@ -159,8 +167,42 @@ function rankChangeBadge(current, prev) {
 
   updateChart(resultsData, 'Top 8', prevData);
   updateScatter(resultsData);
+}
 
-  chartDropdown.addEventListener('change', (e) => {
-    updateChart(resultsData, e.target.value, prevData);
-  });
-})();
+chartDropdown.addEventListener('change', (e) => {
+  updateChart(resultsData, e.target.value, prevData);
+});
+
+// --- COMPETITION TOGGLE ---
+function updateCompetitionButtons() {
+  if (competition === 'nrl') {
+    btnNrl.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.remove('text-gray-400');
+    btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.add('text-gray-400');
+  } else {
+    btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.remove('text-gray-400');
+    btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.add('text-gray-400');
+  }
+}
+btnNrl.addEventListener('click', () => {
+  if (competition !== 'nrl') {
+    competition = 'nrl';
+    localStorage.setItem('bsmachine_competition', competition);
+    updateCompetitionButtons();
+    loadRankings();
+  }
+});
+btnNrlw.addEventListener('click', () => {
+  if (competition !== 'nrlw') {
+    competition = 'nrlw';
+    localStorage.setItem('bsmachine_competition', competition);
+    updateCompetitionButtons();
+    loadRankings();
+  }
+});
+updateCompetitionButtons();
+
+loadRankings();

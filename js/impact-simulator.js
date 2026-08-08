@@ -6,14 +6,18 @@ const form = document.getElementById("simulation-form");
 
 const OUTCOME_KEYS = ['ext_impacts_top8', 'ext_impacts_top4', 'ext_impacts_mp', 'ext_impacts_spoon'];
 
+let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
+let matches = [];
+
 const snapshotCache = {};
 
 async function getSnapshotData(snapshotType) {
-  if (snapshotCache[snapshotType]) return snapshotCache[snapshotType];
-  const res = await fetch(`${BACKEND}/round_snapshot/${snapshotType}`);
+  const cacheKey = `${competition}-${snapshotType}`;
+  if (snapshotCache[cacheKey]) return snapshotCache[cacheKey];
+  const res = await fetch(`${BACKEND}/round_snapshot/${snapshotType}/${competition}`);
   if (!res.ok) throw new Error(`Failed to fetch snapshot: ${snapshotType}`);
   const json = await res.json();
-  snapshotCache[snapshotType] = json.data;
+  snapshotCache[cacheKey] = json.data;
   return json.data;
 }
 
@@ -204,15 +208,15 @@ async function updateTable(matches) {
   renderTable(rows, hasSelections);
 }
 
-async function init() {
+async function loadSimulator() {
   const data = await getSnapshotData('ext_impacts_top8');
-  const matches = data.matches.map(m => ({ home_team: m.home, away_team: m.away }));
+  matches = data.matches.map(m => ({ home_team: m.home, away_team: m.away }));
 
   renderMatchOptions(matches);
 
   // Auto-select and lock completed game winners
   try {
-    const results = await fetch('https://bsmachine-backend.onrender.com/latest-results').then(r => r.json());
+    const results = await fetch(`https://bsmachine-backend.onrender.com/latest-results?competition=${competition}`).then(r => r.json());
     results.forEach(result => {
       const matchIndex = matches.findIndex(
         m => teamSlug(m.home_team) === teamSlug(result.home) &&
@@ -242,17 +246,57 @@ async function init() {
     console.warn('Could not load latest results:', e);
   }
 
-  form.addEventListener("change", () => updateTable(matches));
-
-  document.getElementById("clear-btn").addEventListener("click", () => {
-    form.querySelectorAll("input[type='radio']").forEach(input => {
-      input.checked = false;
-      input.disabled = false;
-    });
-    updateTable(matches);
-  });
-
   await updateTable(matches);
 }
 
-init();
+// Wired once — form/clear-btn are recreated by renderMatchOptions() on every
+// reload, so use delegation on the stable `form` element rather than
+// re-attaching listeners to elements that get replaced.
+form.addEventListener("change", () => updateTable(matches));
+form.addEventListener("click", (e) => {
+  if (e.target.id !== "clear-btn") return;
+  form.querySelectorAll("input[type='radio']").forEach(input => {
+    input.checked = false;
+    input.disabled = false;
+  });
+  updateTable(matches);
+});
+
+// --- COMPETITION TOGGLE ---
+const btnNrl  = document.getElementById('btn-nrl');
+const btnNrlw = document.getElementById('btn-nrlw');
+
+function updateCompetitionButtons() {
+  if (competition === 'nrl') {
+    btnNrl.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.remove('text-gray-400');
+    btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.add('text-gray-400');
+  } else {
+    btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
+    btnNrlw.classList.remove('text-gray-400');
+    btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
+    btnNrl.classList.add('text-gray-400');
+  }
+}
+if (btnNrl && btnNrlw) {
+  btnNrl.addEventListener('click', () => {
+    if (competition !== 'nrl') {
+      competition = 'nrl';
+      localStorage.setItem('bsmachine_competition', competition);
+      updateCompetitionButtons();
+      loadSimulator();
+    }
+  });
+  btnNrlw.addEventListener('click', () => {
+    if (competition !== 'nrlw') {
+      competition = 'nrlw';
+      localStorage.setItem('bsmachine_competition', competition);
+      updateCompetitionButtons();
+      loadSimulator();
+    }
+  });
+  updateCompetitionButtons();
+}
+
+loadSimulator();

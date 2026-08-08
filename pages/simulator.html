@@ -27,7 +27,16 @@
     <div id="site-header"></div>
 
     <main class="max-w-7xl mx-auto px-4 py-8 min-h-screen overflow-auto">
-      <h1 class="text-4xl font-bold mb-8">Result Simulator</h1>
+      <div class="flex items-center gap-4 mb-8 flex-wrap">
+        <h1 class="text-4xl font-bold">Result Simulator</h1>
+        <div id="competition-toggle"
+             class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+          <button id="btn-nrl" type="button"
+                  class="competition-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">NRL</button>
+          <button id="btn-nrlw" type="button"
+                  class="competition-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">NRLW</button>
+        </div>
+      </div>
 
       <div class="flex flex-col lg:flex-row gap-6 items-start">
 

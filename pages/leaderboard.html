@@ -245,6 +245,10 @@
             <button class="lb-tab" data-tab="badges">🏆 Badges</button>
           </div>
           <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.45rem 0.75rem; cursor:pointer; white-space:nowrap;">My Stats</button>
+          <div id="competition-toggle" class="flex items-center gap-0.5 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
+            <button id="btn-nrl" type="button" class="competition-btn" style="padding:0.45rem 1rem; border-radius:8px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:#f59e0b; color:#0a0d14; border:none; cursor:pointer;">NRL</button>
+            <button id="btn-nrlw" type="button" class="competition-btn" style="padding:0.45rem 1rem; border-radius:8px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:transparent; color:#8892a4; border:none; cursor:pointer;">NRLW</button>
+          </div>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
@@ -334,6 +338,7 @@
       let machinePicks       = {}     // { game_id: { home, away } } — BS Machine predicted scores
       let crowdPicks         = {}     // { game_id: { home, away } } — crowd average picks
       let cupPollInterval    = null   // setInterval handle for live seeding auto-refresh
+      let competition        = localStorage.getItem('bsmachine_competition') || 'nrl'
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -349,86 +354,103 @@
         if (statsBtn) statsBtn.style.display = ''
       }
 
-      const { data: completedRoundRows } = await supabase
-        .from('games')
-        .select('round_number')
-        .eq('is_complete', true)
-        .order('round_number', { ascending: false })
-
-      if (completedRoundRows?.length) {
-        const seen = new Set()
-        rounds = completedRoundRows.filter(r => {
-          if (seen.has(r.round_number)) return false
-          seen.add(r.round_number)
-          return true
-        })
-        const sel = document.getElementById('round-filter')
-        rounds.forEach(r => {
-          const opt = document.createElement('option')
-          opt.value = r.round_number
-          opt.textContent = `Round ${r.round_number}`
-          sel.appendChild(opt)
-        })
-        roundFilter = String(rounds[0].round_number)
-        sel.value = roundFilter
-      }
-
-      // Fetch live round data using the same endpoints as the matchups page
       const BACKEND_ROOT = 'https://bsmachine-backend.onrender.com'
-      try {
-        const [crResp, lrResp] = await Promise.all([
-          fetch(`${BACKEND}/current_round_matches/nrl`),
-          fetch(`${BACKEND_ROOT}/latest-results`),
-        ])
-        const currentRoundMatches = crResp.ok ? await crResp.json() : []
-        const liveResults         = lrResp.ok  ? await lrResp.json()  : []
 
-        function isWithin3Hours(kickoffTime) {
-          if (!kickoffTime) return true
-          const cutoff = new Date(new Date(kickoffTime).getTime() + 3 * 60 * 60 * 1000)
-          return new Date() < cutoff
-        }
-
-        liveRoundNumber = currentRoundMatches?.[0]?.round_number ?? null
-
-        if (liveRoundNumber) {
-          const { data: sbRoundGames } = await supabase
-            .from('games')
-            .select('game_id, home_team, away_team, home_score, away_score, is_complete, kickoff_time, round_number')
-            .eq('round_number', liveRoundNumber)
-
-          sbRoundGames?.forEach(g => {
-            const lr = liveResults.find(l =>
-              teamSlug(g.home_team) === teamSlug(l.home) &&
-              teamSlug(g.away_team) === teamSlug(l.away)
-            )
-            liveGameMap[g.game_id] = {
-              ...g,
-              home_score: lr?.home_score ?? g.home_score,
-              away_score: lr?.away_score ?? g.away_score,
-              is_live: lr != null && !g.is_complete && isWithin3Hours(g.kickoff_time),
-            }
-          })
-
-          liveRoundData = { round_number: liveRoundNumber, games: Object.values(liveGameMap) }
-
-          // Add current round to dropdown if it isn't there yet (new live round)
-          const sel2 = document.getElementById('round-filter')
-          if (!rounds.some(r => r.round_number === liveRoundNumber)) {
-            const opt = document.createElement('option')
-            opt.value       = liveRoundNumber
-            opt.textContent = `Round ${liveRoundNumber}`
-            if (sel2.options.length > 1) sel2.insertBefore(opt, sel2.options[1])
-            else                         sel2.appendChild(opt)
-            rounds.unshift({ round_number: liveRoundNumber })
-          }
-          // Default to live round
-          roundFilter   = String(liveRoundNumber)
-          sel2.value    = roundFilter
-        }
-      } catch (e) {
-        console.warn('[leaderboard] live round fetch failed:', e)
+      function isWithin3Hours(kickoffTime) {
+        if (!kickoffTime) return true
+        const cutoff = new Date(new Date(kickoffTime).getTime() + 3 * 60 * 60 * 1000)
+        return new Date() < cutoff
       }
+
+      // Populates the round-filter dropdown + live-round data for the active competition.
+      // Callable both at init and whenever the competition toggle changes.
+      async function initRoundData() {
+        rounds          = []
+        liveRoundData   = null
+        liveRoundNumber = null
+        liveGameMap     = {}
+
+        const sel = document.getElementById('round-filter')
+        sel.innerHTML = '<option value="season">Full Season</option>'
+
+        const { data: completedRoundRows } = await supabase
+          .from('games')
+          .select('round_number')
+          .eq('is_complete', true)
+          .eq('competition', competition)
+          .order('round_number', { ascending: false })
+
+        if (completedRoundRows?.length) {
+          const seen = new Set()
+          rounds = completedRoundRows.filter(r => {
+            if (seen.has(r.round_number)) return false
+            seen.add(r.round_number)
+            return true
+          })
+          rounds.forEach(r => {
+            const opt = document.createElement('option')
+            opt.value = r.round_number
+            opt.textContent = `Round ${r.round_number}`
+            sel.appendChild(opt)
+          })
+          roundFilter = String(rounds[0].round_number)
+          sel.value = roundFilter
+        } else {
+          roundFilter = 'season'
+        }
+
+        // Fetch live round data using the same endpoints as the matchups page
+        try {
+          const [crResp, lrResp] = await Promise.all([
+            fetch(`${BACKEND}/current_round_matches/${competition}`),
+            fetch(`${BACKEND_ROOT}/latest-results?competition=${competition}`),
+          ])
+          const currentRoundMatches = crResp.ok ? await crResp.json() : []
+          const liveResults         = lrResp.ok  ? await lrResp.json()  : []
+
+          liveRoundNumber = currentRoundMatches?.[0]?.round_number ?? null
+
+          if (liveRoundNumber) {
+            const { data: sbRoundGames } = await supabase
+              .from('games')
+              .select('game_id, home_team, away_team, home_score, away_score, is_complete, kickoff_time, round_number')
+              .eq('round_number', liveRoundNumber)
+              .eq('competition', competition)
+
+            sbRoundGames?.forEach(g => {
+              const lr = liveResults.find(l =>
+                teamSlug(g.home_team) === teamSlug(l.home) &&
+                teamSlug(g.away_team) === teamSlug(l.away)
+              )
+              liveGameMap[g.game_id] = {
+                ...g,
+                home_score: lr?.home_score ?? g.home_score,
+                away_score: lr?.away_score ?? g.away_score,
+                is_live: lr != null && !g.is_complete && isWithin3Hours(g.kickoff_time),
+              }
+            })
+
+            liveRoundData = { round_number: liveRoundNumber, games: Object.values(liveGameMap) }
+
+            // Add current round to dropdown if it isn't there yet (new live round)
+            if (!rounds.some(r => r.round_number === liveRoundNumber)) {
+              const opt = document.createElement('option')
+              opt.value       = liveRoundNumber
+              opt.textContent = `Round ${liveRoundNumber}`
+              if (sel.options.length > 1) sel.insertBefore(opt, sel.options[1])
+              else                        sel.appendChild(opt)
+              rounds.unshift({ round_number: liveRoundNumber })
+            }
+            // Default to live round
+            roundFilter = String(liveRoundNumber)
+            sel.value   = roundFilter
+          }
+        } catch (e) {
+          console.warn('[leaderboard] live round fetch failed:', e)
+        }
+      }
+
+      await initRoundData()
 
       document.getElementById('round-filter').addEventListener('change', function () {
         roundFilter = this.value
@@ -450,9 +472,46 @@
           }
           activeTab = btn.dataset.tab
           window.location.hash = activeTab
+          updateCompetitionToggleAvailability()
           loadLeaderboard()
         })
       })
+
+      // ── Competition toggle ── BS Cup stays NRL-only, so the toggle is disabled while that tab is active.
+      const btnNrl  = document.getElementById('btn-nrl')
+      const btnNrlw = document.getElementById('btn-nrlw')
+
+      function updateCompetitionButtons() {
+        const active   = { background: '#f59e0b', color: '#0a0d14' }
+        const inactive = { background: 'transparent', color: '#8892a4' }
+        const nrlStyle  = competition === 'nrl'  ? active : inactive
+        const nrlwStyle = competition === 'nrlw' ? active : inactive
+        btnNrl.style.background  = nrlStyle.background
+        btnNrl.style.color       = nrlStyle.color
+        btnNrlw.style.background = nrlwStyle.background
+        btnNrlw.style.color      = nrlwStyle.color
+      }
+
+      function updateCompetitionToggleAvailability() {
+        const disabled = activeTab === 'cup'
+        btnNrl.disabled  = disabled
+        btnNrlw.disabled = disabled
+        document.getElementById('competition-toggle').style.opacity = disabled ? '0.4' : '1'
+        document.getElementById('competition-toggle').style.pointerEvents = disabled ? 'none' : 'auto'
+      }
+
+      async function setCompetition(comp) {
+        if (competition === comp) return
+        competition = comp
+        localStorage.setItem('bsmachine_competition', competition)
+        updateCompetitionButtons()
+        await initRoundData()
+        loadLeaderboard()
+      }
+      btnNrl.addEventListener('click', () => setCompetition('nrl'))
+      btnNrlw.addEventListener('click', () => setCompetition('nrlw'))
+      updateCompetitionButtons()
+      updateCompetitionToggleAvailability()
 
       function dbErrHtml(err) {
         const msg = err?.message || JSON.stringify(err)
@@ -582,6 +641,7 @@
         let query = supabase
           .from('scores')
           .select('user_id, game_id, points, margin_score, total_score, round_number')
+          .eq('competition', competition)
         if (roundFilter !== 'season') {
           query = query.eq('round_number', Number(roundFilter))
         }
@@ -614,7 +674,7 @@
         const results = {}
         const responses = await Promise.all(
           [...new Set(roundNumbers)].map(rn =>
-            fetch(`${BACKEND}/round_predictions/${rn}`)
+            fetch(`${BACKEND}/round_predictions/${rn}/${competition}`)
               .then(r => r.ok ? r.json() : null).catch(() => null)
           )
         )
@@ -640,6 +700,7 @@
             const { data, error } = await supabase
               .from('scores')
               .select('user_id, game_id, points, margin_score, total_score, round_number')
+              .eq('competition', competition)
               .range(from, from + pageSize - 1)
             if (error || !data?.length) break
             rows.push(...data)
@@ -652,7 +713,7 @@
         const [allSeasonScores, profilesRes, gamesRes] = await Promise.all([
           fetchAllScores(),
           supabase.from('profiles').select('id, username, favourite_team').limit(500),
-          supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).not('home_score', 'is', null).limit(2000),
+          supabase.from('games').select('game_id, home_score, away_score, round_number').eq('is_complete', true).eq('competition', competition).not('home_score', 'is', null).limit(2000),
         ])
 
         const firstErr = profilesRes.error || gamesRes.error
@@ -681,6 +742,7 @@
             const { data: livePicks } = await supabase
               .from('picks')
               .select('user_id, game_id, home_score_pick, away_score_pick')
+              .eq('competition', competition)
               .in('game_id', unscoredLiveIds)
             liveComputedScores = computeLiveIndividualScores(
               liveGamesWithScores.filter(g => unscoredLiveIds.includes(g.game_id)),
@@ -716,6 +778,7 @@
             const { data, error } = await supabase
               .from('picks')
               .select('user_id, game_id, home_score_pick, away_score_pick')
+              .eq('competition', competition)
               .in('game_id', gameIds)
               .range(from, from + pageSize - 1)
             if (error || !data?.length) break
@@ -930,16 +993,19 @@
           supabase.from('games')
             .select('game_id, home_team, away_team, home_score, away_score, is_complete')
             .eq('round_number', roundNumber)
+            .eq('competition', competition)
             .order('game_id', { ascending: true }),
           supabase.from('scores')
             .select('user_id, game_id, points, margin_score, total_score')
-            .eq('round_number', roundNumber),
+            .eq('round_number', roundNumber)
+            .eq('competition', competition),
         ])
 
         const gameIds = games?.map(g => g.game_id) || []
         const { data: allPicks } = gameIds.length
           ? await supabase.from('picks')
               .select('user_id, game_id, home_score_pick, away_score_pick')
+              .eq('competition', competition)
               .in('game_id', gameIds)
           : { data: [] }
 
@@ -1173,6 +1239,7 @@
           .from('games')
           .select('game_id, round_number, home_team, away_team, home_score, away_score, kickoff_time')
           .eq('is_complete', true)
+          .eq('competition', competition)
           .not('home_score', 'is', null)
           .order('kickoff_time', { ascending: true })
 
@@ -1206,6 +1273,7 @@
             const { data, error } = await supabase
               .from('picks')
               .select('user_id, game_id, home_score_pick, away_score_pick')
+              .eq('competition', competition)
               .in('game_id', gameIds)
               .range(from, from + pageSize - 1)
             if (error || !data?.length) break
@@ -2185,6 +2253,7 @@
           .from('games')
           .select('game_id, home_team, away_team, home_score, away_score, is_complete, kickoff_time')
           .eq('round_number', roundNumber)
+          .eq('competition', competition)
           .order('game_id', { ascending: true })
 
         if (!games?.length) {
@@ -2195,8 +2264,8 @@
         const gameIds = games.map(g => g.game_id)
 
         const [{ data: userPicks }, { data: userScores }, { data: profile }] = await Promise.all([
-          supabase.from('picks').select('game_id, home_score_pick, away_score_pick').eq('user_id', userId).in('game_id', gameIds),
-          supabase.from('scores').select('game_id, points, margin_score, total_score').eq('user_id', userId).eq('round_number', roundNumber),
+          supabase.from('picks').select('game_id, home_score_pick, away_score_pick').eq('user_id', userId).eq('competition', competition).in('game_id', gameIds),
+          supabase.from('scores').select('game_id, points, margin_score, total_score').eq('user_id', userId).eq('round_number', roundNumber).eq('competition', competition),
           supabase.from('profiles').select('favourite_team').eq('id', userId).single(),
         ])
 
@@ -2302,6 +2371,7 @@
         const { data: perfectScores } = await supabase
           .from('scores')
           .select('user_id, game_id, points, round_number')
+          .eq('competition', competition)
           .gte('points', 9.99)
 
         if (!perfectScores?.length) {
@@ -2322,9 +2392,11 @@
         const [{ data: games }, { data: picks }, { data: profiles }, { data: allUserPicks }] = await Promise.all([
           supabase.from('games')
             .select('game_id, home_team, away_team, home_score, away_score, round_number')
+            .eq('competition', competition)
             .in('game_id', gameIds),
           supabase.from('picks')
             .select('user_id, game_id, home_score_pick, away_score_pick')
+            .eq('competition', competition)
             .in('user_id', userIds)
             .in('game_id', gameIds),
           supabase.from('profiles')
@@ -2333,6 +2405,7 @@
           // All picks for these users (to compute percentage)
           supabase.from('picks')
             .select('user_id, game_id')
+            .eq('competition', competition)
             .in('user_id', userIds),
         ])
 
