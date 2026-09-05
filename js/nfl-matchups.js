@@ -18,20 +18,33 @@ function formatDate(iso) {
 }
 
 function probBar(g) {
-  const home = (g.home_perc ?? 0) * 100;
-  const away = (g.away_perc ?? 0) * 100;
-  const tie  = (g.tie_perc  ?? 0) * 100;
+  const homeP = g.home_perc ?? 0;
+  const awayP = g.away_perc ?? 0;
+  const tieP  = g.tie_perc  ?? 0;
+  const home  = homeP * 100;
+  const away  = awayP * 100;
+  const tie   = tieP  * 100;
+  const homeWin   = homeP >= awayP;
+  const homeOdds  = homeP >= 1e-6 ? (1 / homeP).toFixed(2) : null;
+  const awayOdds  = awayP >= 1e-6 ? (1 / awayP).toFixed(2) : null;
+
   return `
     <div class="mt-3">
-      <div class="flex justify-between text-xs text-gray-400 mb-1">
-        <span>${home.toFixed(0)}%</span>
-        ${tie > 0.5 ? `<span>${tie.toFixed(0)}% tie</span>` : '<span></span>'}
-        <span>${away.toFixed(0)}%</span>
+      <div class="flex justify-between items-end text-base font-bold mb-1.5">
+        <div class="flex flex-col items-start">
+          <span class="${homeWin ? 'text-white' : 'text-gray-300'}">${home.toFixed(1)}%</span>
+          ${homeOdds ? `<span class="text-xs font-semibold text-gray-400">$${homeOdds}</span>` : ''}
+        </div>
+        ${tie > 0.5 ? `<span class="text-xs font-normal text-gray-500 self-center">${tie.toFixed(1)}% tie</span>` : '<span></span>'}
+        <div class="flex flex-col items-end">
+          <span class="${!homeWin ? 'text-white' : 'text-gray-300'}">${away.toFixed(1)}%</span>
+          ${awayOdds ? `<span class="text-xs font-semibold text-gray-400">$${awayOdds}</span>` : ''}
+        </div>
       </div>
       <div class="flex h-2 rounded-full overflow-hidden bg-gray-700">
-        <div style="width:${home}%; background:#4ade80"></div>
+        <div style="width:${home}%; background:#4ade80; opacity:${homeWin ? '1' : '0.5'}"></div>
         ${tie > 0.5 ? `<div style="width:${tie}%; background:#6b7280"></div>` : ''}
-        <div style="width:${away}%; background:#f87171"></div>
+        <div style="width:${away}%; background:#f87171; opacity:${!homeWin ? '1' : '0.5'}"></div>
       </div>
     </div>
   `;

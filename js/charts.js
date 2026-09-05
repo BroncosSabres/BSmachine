@@ -127,7 +127,13 @@ export async function updateScatter(data) {
         chart.data.datasets[0].data.forEach((point, index) => {
           const meta = chart.getDatasetMeta(0).data[index];
           const img  = teamLogos[point.label];
-          if (img && meta) ctx.drawImage(img, meta.x - 14, meta.y - 14, 28, 28);
+          if (img && meta && img.naturalWidth && img.naturalHeight) {
+            const ratio = img.naturalWidth / img.naturalHeight;
+            const size  = 28;
+            const w = ratio >= 1 ? size : size * ratio;
+            const h = ratio >= 1 ? size / ratio : size;
+            ctx.drawImage(img, meta.x - w / 2, meta.y - h / 2, w, h);
+          }
         });
       }
     }],

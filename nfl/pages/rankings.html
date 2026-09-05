@@ -12,6 +12,7 @@
     <!-- Performance hints: preconnect + early backend wakeup -->
     <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
     <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
 
@@ -19,6 +20,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NFL Power Rankings</title>
     <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-900 text-white">
@@ -30,28 +32,85 @@
         <span id="week-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
       </div>
 
+      <!-- Projected Playoff Seeding -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Projected Playoff Seeding</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">AFC</h3>
+            <div class="overflow-x-auto">
+              <table class="data-table" id="seeding-table-afc">
+                <thead>
+                  <tr>
+                    <th>Seed</th>
+                    <th>Team</th>
+                    <th>Proj. Record</th>
+                    <th>Div Title %</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">NFC</h3>
+            <div class="overflow-x-auto">
+              <table class="data-table" id="seeding-table-nfc">
+                <thead>
+                  <tr>
+                    <th>Seed</th>
+                    <th>Team</th>
+                    <th>Proj. Record</th>
+                    <th>Div Title %</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Rankings Table -->
       <div class="card">
-        <h2 class="text-xl font-semibold mb-4 text-gray-100">Power Rankings</h2>
-        <div class="overflow-x-auto">
-          <table class="data-table" id="rankings-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Team</th>
-                <th>Rating</th>
-                <th>Form</th>
-                <th>Record</th>
-                <th>Playoffs</th>
-                <th>Div Winner</th>
-                <th>1st-Rd Bye</th>
-                <th>Conf Champ</th>
-                <th>Super Bowl</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 class="text-xl font-semibold text-gray-100">Power Rankings</h2>
+          <div id="view-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+            <button id="btn-view-division" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">Division</button>
+            <button id="btn-view-conference" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">Conference</button>
+            <button id="btn-view-league" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">League</button>
+          </div>
         </div>
+        <div id="rankings-groups"></div>
+      </div>
+
+      <!-- Playoff Wheels -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Conference Playoff Odds</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div>
+            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">AFC</h3>
+            <canvas id="afcWheel"></canvas>
+          </div>
+          <div>
+            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">NFC</h3>
+            <canvas id="nfcWheel"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Super Bowl Odds</h2>
+        <canvas id="superBowlWheel"></canvas>
+      </div>
+
+      <!-- Scatterplot -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Offensive vs Defensive Ratings</h2>
+        <canvas id="ratingsScatter"></canvas>
       </div>
     </main>
 

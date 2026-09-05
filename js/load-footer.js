@@ -41,18 +41,17 @@ import('/js/my-stats.js').catch(function () {});
       if (desktopNav) desktopNav.innerHTML = mod.renderNav(sport, 'site-nav-link');
       if (mobileNav)  mobileNav.innerHTML  = mod.renderNav(sport, 'mobile-nav-link');
       if (switcher) {
-        switcher.innerHTML = Object.keys(mod.SPORTS).map(function (key) {
-          var activeCls = key === sport ? ' sport-switch-btn--active' : '';
-          return '<button type="button" class="sport-switch-btn' + activeCls + '" data-sport="' + key + '">'
-               + mod.SPORTS[key].label + '</button>';
+        var options = Object.keys(mod.SPORTS).map(function (key) {
+          var selectedAttr = key === sport ? ' selected' : '';
+          return '<option value="' + key + '"' + selectedAttr + '>' + mod.SPORTS[key].label + '</option>';
         }).join('');
-        Array.prototype.forEach.call(switcher.querySelectorAll('button'), function (btn) {
-          btn.addEventListener('click', function () {
-            var newSport = btn.dataset.sport;
-            if (newSport === mod.getCurrentSport()) return;
-            mod.setCurrentSport(newSport);
-            window.location.href = mod.SPORTS[newSport].basePath + mod.SPORTS[newSport].landingPage;
-          });
+        switcher.innerHTML = '<select id="sport-select" class="sport-select" aria-label="Sport">' + options + '</select>';
+        var select = switcher.querySelector('select');
+        select.addEventListener('change', function () {
+          var newSport = select.value;
+          if (newSport === mod.getCurrentSport()) return;
+          mod.setCurrentSport(newSport);
+          window.location.href = mod.SPORTS[newSport].basePath + mod.SPORTS[newSport].landingPage;
         });
       }
     });

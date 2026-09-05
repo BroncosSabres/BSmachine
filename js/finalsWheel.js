@@ -157,7 +157,12 @@ async function drawFinalsWheel() {
             const y = arcElem.y + Math.sin(angle) * (outerRadius + offset);
             const img = logos[i];
             const size = 24;
-            if (img.complete) ctx.drawImage(img, x - size / 2, y - size / 2, size, size);
+            if (img.complete && img.naturalWidth && img.naturalHeight) {
+              const ratio = img.naturalWidth / img.naturalHeight;
+              const w = ratio >= 1 ? size : size * ratio;
+              const h = ratio >= 1 ? size / ratio : size;
+              ctx.drawImage(img, x - w / 2, y - h / 2, w, h);
+            }
           });
         }
       },

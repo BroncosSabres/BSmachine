@@ -819,15 +819,15 @@ function renderBlendedDisplay(matchKey) {
   }
 
   const centerContent = `
-    <div class="flex items-center justify-between w-full text-sm font-bold">
+    <div class="flex items-center justify-between w-full text-base font-bold">
       <div class="flex flex-col items-start">
-        <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePct}%</span>
-        ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
+        <span class="${homeWin ? 'text-white' : 'text-gray-300'}">${homePct}%</span>
+        ${homeFairOdds ? `<span class="text-xs font-semibold text-gray-400">$${homeFairOdds}</span>` : ''}
       </div>
       <span class="text-gray-600 text-xs font-normal px-2">vs</span>
       <div class="flex flex-col items-end">
-        <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPct}%</span>
-        ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
+        <span class="${!homeWin ? 'text-white' : 'text-gray-300'}">${awayPct}%</span>
+        ${awayFairOdds ? `<span class="text-xs font-semibold text-gray-400">$${awayFairOdds}</span>` : ''}
       </div>
     </div>
     ${bar}
@@ -871,14 +871,14 @@ function renderBlendedDisplay(matchKey) {
           <img src="${logoUrl(homeTeam)}" alt="${homeTeam} logo" class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
           <div class="min-w-0">
             <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${homeTeam}</div>
-            <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePct}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
+            <div class="text-xs text-gray-400">Home · <span class="font-bold text-sm ${homeWin ? 'text-white' : 'text-gray-300'}">${homePct}%</span>${homeFairOdds ? ` · <span class="font-semibold text-gray-400">$${homeFairOdds}</span>` : ''}</div>
           </div>
         </div>
         <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${bHomeScore}–${bAwayScore}</div>
         <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
           <div class="min-w-0 text-right">
             <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${awayTeam}</div>
-            <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPct}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
+            <div class="text-xs text-gray-400">Away · <span class="font-bold text-sm ${!homeWin ? 'text-white' : 'text-gray-300'}">${awayPct}%</span>${awayFairOdds ? ` · <span class="font-semibold text-gray-400">$${awayFairOdds}</span>` : ''}</div>
           </div>
           <img src="${logoUrl(awayTeam)}" alt="${awayTeam} logo" class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
         </div>
@@ -1426,15 +1426,15 @@ function createMatchCard(data) {
     </div>`;
 
   const initialCenter = `
-    <div class="flex items-center justify-between w-full text-sm font-bold">
+    <div class="flex items-center justify-between w-full text-base font-bold">
       <div class="flex flex-col items-start">
-        <span class="${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>
-        ${homeFairOdds ? `<span class="text-xs font-normal text-gray-500">$${homeFairOdds}</span>` : ''}
+        <span class="${homeWin ? 'text-white' : 'text-gray-300'}">${homePercDisplay}%</span>
+        ${homeFairOdds ? `<span class="text-xs font-semibold text-gray-400">$${homeFairOdds}</span>` : ''}
       </div>
       <span class="text-gray-600 text-xs font-normal px-2">vs</span>
       <div class="flex flex-col items-end">
-        <span class="${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>
-        ${awayFairOdds ? `<span class="text-xs font-normal text-gray-500">$${awayFairOdds}</span>` : ''}
+        <span class="${!homeWin ? 'text-white' : 'text-gray-300'}">${awayPercDisplay}%</span>
+        ${awayFairOdds ? `<span class="text-xs font-semibold text-gray-400">$${awayFairOdds}</span>` : ''}
       </div>
     </div>
     ${initialBar}
@@ -1447,14 +1447,14 @@ function createMatchCard(data) {
              class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
         <div class="min-w-0">
           <div class="text-sm font-semibold leading-tight truncate ${homeWin ? 'text-white' : 'text-gray-400'}">${home_team}</div>
-          <div class="text-xs text-gray-500">Home · <span class="font-bold ${homeWin ? 'text-white' : 'text-gray-500'}">${homePercDisplay}%</span>${homeFairOdds ? ` · <span class="text-gray-500">$${homeFairOdds}</span>` : ''}</div>
+          <div class="text-xs text-gray-400">Home · <span class="font-bold text-sm ${homeWin ? 'text-white' : 'text-gray-300'}">${homePercDisplay}%</span>${homeFairOdds ? ` · <span class="font-semibold text-gray-400">$${homeFairOdds}</span>` : ''}</div>
         </div>
       </div>
       <div class="text-lg font-bold font-mono text-white tracking-wide shrink-0 px-2">${home_score}–${away_score}</div>
       <div class="flex items-center gap-2 flex-1 min-w-0 justify-end">
         <div class="min-w-0 text-right">
           <div class="text-sm font-semibold leading-tight truncate ${!homeWin ? 'text-white' : 'text-gray-400'}">${away_team}</div>
-          <div class="text-xs text-gray-500">Away · <span class="font-bold ${!homeWin ? 'text-white' : 'text-gray-500'}">${awayPercDisplay}%</span>${awayFairOdds ? ` · <span class="text-gray-500">$${awayFairOdds}</span>` : ''}</div>
+          <div class="text-xs text-gray-400">Away · <span class="font-bold text-sm ${!homeWin ? 'text-white' : 'text-gray-300'}">${awayPercDisplay}%</span>${awayFairOdds ? ` · <span class="font-semibold text-gray-400">$${awayFairOdds}</span>` : ''}</div>
         </div>
         <img src="${logoUrl(away_team)}" alt="${away_team} logo"
              class="w-9 h-9 object-contain shrink-0" onerror="this.style.display='none'">
