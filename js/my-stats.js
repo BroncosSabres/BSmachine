@@ -477,7 +477,7 @@ function renderStats(stats, { bodyEl = null, subEl = null } = {}) {
 
     <!-- Full stats link -->
     <div style="padding:0 1.5rem 1.25rem;">
-      <a href="/pages/my-stats.html" style="display:flex;align-items:center;justify-content:center;gap:0.375rem;padding:0.625rem;border:1px solid #2e3a4e;border-radius:8px;font-size:0.8125rem;font-weight:600;color:#94a3b8;text-decoration:none;transition:all 0.12s;"
+      <a href="/nrl/pages/my-stats.html" style="display:flex;align-items:center;justify-content:center;gap:0.375rem;padding:0.625rem;border:1px solid #2e3a4e;border-radius:8px;font-size:0.8125rem;font-weight:600;color:#94a3b8;text-decoration:none;transition:all 0.12s;"
          onmouseover="this.style.borderColor='#4a5568';this.style.color='#e2e8f0';"
          onmouseout="this.style.borderColor='#2e3a4e';this.style.color='#94a3b8';">
         View full stats →

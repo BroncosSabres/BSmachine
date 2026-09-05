@@ -70,7 +70,7 @@
 
         if (profile) {
           // Profile exists — go straight to tipping
-          window.location.href = '/pages/tipping.html'
+          window.location.href = '/nrl/pages/tipping.html'
           return
         }
 
@@ -93,7 +93,7 @@
             // 23505 = unique violation (profile already exists — race condition, safe to ignore)
             console.error('Profile insert error:', error)
           }
-          window.location.href = '/pages/tipping.html'
+          window.location.href = '/nrl/pages/tipping.html'
         } else {
           // Google OAuth or unknown — collect username/team via onboarding
           window.location.href = '/pages/onboarding.html'

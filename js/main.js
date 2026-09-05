@@ -96,7 +96,7 @@ async function loadRankings() {
         </td>
         <td>
           <div class="flex items-center gap-2">
-            <img src="../logos/${teamSlug(row.team)}.svg"
+            <img src="/logos/${teamSlug(row.team)}.svg"
                  alt="${row.team}" class="w-6 h-6 object-contain shrink-0"
                  onerror="this.style.display='none'">
             <span>${row.team}</span>
@@ -148,7 +148,7 @@ async function loadRankings() {
       </td>
       <td>
         <div class="flex items-center gap-2">
-          <img src="../logos/${teamSlug(r.team)}.svg"
+          <img src="/logos/${teamSlug(r.team)}.svg"
                alt="${r.team}" class="w-6 h-6 object-contain shrink-0"
                onerror="this.style.display='none'">
           <span>${r.team}</span>

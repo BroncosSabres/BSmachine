@@ -87,7 +87,7 @@ function teamSlug(name) {
 }
 
 function logoUrl(teamName) {
-  return `../logos/${teamSlug(teamName)}.svg`;
+  return `/logos/${teamSlug(teamName)}.svg`;
 }
 
 function formatKickoff(isoString) {

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <!-- Performance hints: preconnect + early backend wakeup -->
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Season Tracker</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-6xl mx-auto px-6 py-10">
+      <h1 class="text-4xl font-bold mb-3">Season Tracker</h1>
+      <p class="text-gray-400 mb-10">
+        Explore how each NRL team's performance rating and finals probabilities evolve throughout the season.
+        Hover over any point to view match context and results.
+      </p>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Rating Progression</h2>
+        <canvas id="ratingChart" class="w-full h-96"></canvas>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Top 8 Probability</h2>
+        <canvas id="top8Chart" class="w-full h-96"></canvas>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Top 4 Probability</h2>
+        <canvas id="top4Chart" class="w-full h-96"></canvas>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Minor Premiership Probability</h2>
+        <canvas id="minorChart" class="w-full h-96"></canvas>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Wooden Spoon Probability</h2>
+        <canvas id="spoonChart" class="w-full h-96"></canvas>
+      </div>
+    </main>
+
+    <script type="module">
+      import { updateAuthNav } from '/js/supabase-client.js'
+      updateAuthNav()
+    </script>
+    <script>
+      fetch('/components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module">
+      import { loadRoundData } from '/js/load-tracker-data.js';
+      window.loadRoundData = loadRoundData;
+    </script>
+    <script type="module">
+      import { loadMatchResults } from '/js/load-match-results.js';
+      window.loadMatchResults = loadMatchResults;
+    </script>
+    <script src="/js/tracker.js"></script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
+  </body>
+</html>

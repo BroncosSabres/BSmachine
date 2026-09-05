@@ -25,6 +25,51 @@ import('/js/my-stats.js').catch(function () {});
     .then(function (html) { el.innerHTML = html; });
 })();
 
+// ---- Sport-aware nav + switcher ----
+// header.html ships with empty #desktop-nav/#mobile-nav-links/#sport-switcher
+// containers (scripts injected via innerHTML don't execute, so this can't
+// live inside header.html itself) - populate them here once the header lands.
+(function () {
+  function populate() {
+    var desktopNav = document.getElementById('desktop-nav');
+    var mobileNav  = document.getElementById('mobile-nav-links');
+    var switcher   = document.getElementById('sport-switcher');
+    if (!desktopNav && !mobileNav && !switcher) return false;
+
+    import('/js/sport-config.js').then(function (mod) {
+      var sport = mod.getCurrentSport();
+      if (desktopNav) desktopNav.innerHTML = mod.renderNav(sport, 'site-nav-link');
+      if (mobileNav)  mobileNav.innerHTML  = mod.renderNav(sport, 'mobile-nav-link');
+      if (switcher) {
+        switcher.innerHTML = Object.keys(mod.SPORTS).map(function (key) {
+          var activeCls = key === sport ? ' sport-switch-btn--active' : '';
+          return '<button type="button" class="sport-switch-btn' + activeCls + '" data-sport="' + key + '">'
+               + mod.SPORTS[key].label + '</button>';
+        }).join('');
+        Array.prototype.forEach.call(switcher.querySelectorAll('button'), function (btn) {
+          btn.addEventListener('click', function () {
+            var newSport = btn.dataset.sport;
+            if (newSport === mod.getCurrentSport()) return;
+            mod.setCurrentSport(newSport);
+            window.location.href = mod.SPORTS[newSport].basePath + mod.SPORTS[newSport].landingPage;
+          });
+        });
+      }
+    });
+    return true;
+  }
+
+  if (!populate()) {
+    var headerEl = document.getElementById('site-header');
+    if (headerEl) {
+      var obs = new MutationObserver(function () {
+        if (populate()) obs.disconnect();
+      });
+      obs.observe(headerEl, { childList: true, subtree: true });
+    }
+  }
+})();
+
 // ---- Prize Banner ----
 
 var BACKEND_ROOT = 'https://bsmachine-backend.onrender.com';
@@ -58,6 +103,9 @@ function dismissPrizeBanner() {
 // Dismissed state is tracked per cup round so new rounds re-surface the banner.
 (function () {
   var CACHE_KEY = 'bsm_cup_banner';
+
+  // BS Cup is an NRL-only competition - don't surface it while browsing NFL pages.
+  if ((localStorage.getItem('bsmachine_sport') || 'nrl') !== 'nrl') return;
 
   function applyBanner(cup) {
     var label      = _cupRoundLabel(cup.current_cup_round, cup.bracket_size);

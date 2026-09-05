@@ -81,12 +81,12 @@ export async function updateAuthNav() {
     const username = profile?.username || session.user.email?.split('@')[0] || 'User'
     navEl.innerHTML = `
       <div class="flex items-center gap-2">
-        <a href="/pages/tipping.html"
+        <a href="/nrl/pages/tipping.html"
            class="site-nav-link hidden md:inline-block">My Tips</a>
         <button id="my-stats-btn"
                 class="site-nav-link hidden md:inline-block"
                 style="background:none;border:none;cursor:pointer;">My Stats</button>
-        <a href="/pages/profile.html"
+        <a href="/nrl/pages/profile.html"
            class="text-xs hidden md:block"
            style="color:#8892a4; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:none;"
            title="${username}">

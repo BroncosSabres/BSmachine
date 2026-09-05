@@ -124,6 +124,67 @@ h2, h3 {
   border-left-color: var(--accent);
 }
 
+/* ---- Disabled nav links ("coming soon" features) ---- */
+.site-nav-link--disabled,
+.mobile-nav-link--disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.site-nav-link--disabled:hover,
+.mobile-nav-link--disabled:hover {
+  color: var(--text-muted);
+  background-color: transparent;
+}
+
+.nav-soon-badge {
+  margin-left: 0.35em;
+  padding: 0.05em 0.4em;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background-color: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+/* ---- Sport switcher ---- */
+.sport-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  background-color: var(--bg-base);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 0.125rem;
+}
+
+.sport-switch-btn {
+  font-family: 'Barlow', system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 0.3rem 0.65rem;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.sport-switch-btn:hover {
+  color: var(--text-primary);
+}
+
+.sport-switch-btn--active {
+  color: #0a0d14;
+  background-color: var(--accent-bright);
+}
+
 /* ================================================
    Cards
    ================================================ */

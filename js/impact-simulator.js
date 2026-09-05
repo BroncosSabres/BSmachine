@@ -125,7 +125,7 @@ function renderTable(rows, hasSelections) {
         </td>
         <td class="py-2 pl-2 whitespace-nowrap">
           <div class="flex items-center gap-2">
-            <img src="../logos/${slug}.svg" alt="${row.team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
+            <img src="/logos/${slug}.svg" alt="${row.team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
             <span class="font-medium text-gray-100">${row.team}</span>
           </div>
         </td>

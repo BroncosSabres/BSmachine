@@ -287,7 +287,7 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
             ${b.bookie_odds ? `<div class="text-xs text-gray-400">Bookie <span class="font-bold text-white">$${b.bookie_odds}</span> ${evText}</div>` : ''}
           </div>
-          <a href="../pages/tryscorer_predictions.html" class="text-xs text-blue-400 hover:underline">Build your own →</a>
+          <a href="/nrl/pages/tryscorer_predictions.html" class="text-xs text-blue-400 hover:underline">Build your own →</a>
         </div>
         ${ownerControls}
       </div>`;

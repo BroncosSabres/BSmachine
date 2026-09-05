@@ -6,18 +6,11 @@
       THE <span class="site-logo-accent">BS</span> MACHINE
     </a>
 
-    <!-- Desktop nav -->
-    <nav class="hidden md:flex items-center gap-0.5 flex-1 justify-center">
-      <a href="/pages/rankings.html"              class="site-nav-link">Rankings</a>
-      <a href="/pages/matchups.html"              class="site-nav-link">Predictions</a>
-      <a href="/pages/tipping.html"               class="site-nav-link">Tipping</a>
-      <a href="/pages/leaderboard.html"           class="site-nav-link">Leaderboard</a>
-      <a href="/pages/simulator.html"             class="site-nav-link">Simulator</a>
-      <a href="/pages/tracker.html"               class="site-nav-link">Tracker</a>
-      <a href="/pages/magic_numbers.html"         class="site-nav-link">Magic Numbers</a>
-      <a href="/pages/tryscorer_predictions.html" class="site-nav-link">Tryscorers</a>
-      <a href="/pages/betslips.html"             class="site-nav-link">Community</a>
-    </nav>
+    <!-- Sport switcher (populated by js/load-footer.js from js/sport-config.js) -->
+    <div id="sport-switcher" class="sport-switcher shrink-0"></div>
+
+    <!-- Desktop nav (populated by js/load-footer.js from js/sport-config.js) -->
+    <nav id="desktop-nav" class="hidden md:flex items-center gap-0.5 flex-1 justify-center"></nav>
 
     <!-- Right: auth nav + BMC + hamburger -->
     <div class="flex items-center gap-3 shrink-0">
@@ -38,16 +31,8 @@
   <!-- Mobile dropdown -->
   <div id="mobile-menu" class="hidden" style="border-top:1px solid #1e2a3a; background-color:#0a0d14;">
     <nav class="flex flex-col py-2">
-      <a href="/index.html"                       class="mobile-nav-link">Home</a>
-      <a href="/pages/rankings.html"              class="mobile-nav-link">Rankings</a>
-      <a href="/pages/matchups.html"              class="mobile-nav-link">Predictions</a>
-      <a href="/pages/tipping.html"               class="mobile-nav-link">Tipping</a>
-      <a href="/pages/leaderboard.html"           class="mobile-nav-link">Leaderboard</a>
-      <a href="/pages/simulator.html"             class="mobile-nav-link">Simulator</a>
-      <a href="/pages/tracker.html"               class="mobile-nav-link">Season Tracker</a>
-      <a href="/pages/magic_numbers.html"         class="mobile-nav-link">Magic Numbers</a>
-      <a href="/pages/tryscorer_predictions.html" class="mobile-nav-link">Tryscorer Predictions</a>
-      <a href="/pages/betslips.html"             class="mobile-nav-link">Community Predictions</a>
+      <a href="/index.html" class="mobile-nav-link">Home</a>
+      <div id="mobile-nav-links"></div>
     </nav>
     <div style="border-top:1px solid #1e2a3a; padding:0.5rem 1.5rem 0.75rem; display:flex; gap:1rem;">
       <a href="/pages/terms.html"   style="font-size:0.75rem; color:#4a5568; text-decoration:none;" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#4a5568'">Terms &amp; Conditions</a>
@@ -63,8 +48,8 @@
     <span id="prize-banner-text" class="prize-banner-text">
       BS Cup is underway &mdash; The cup winner gets a <strong>$50 gift card!</strong>
     </span>
-    <a href="/pages/leaderboard.html#cup" class="prize-banner-cta prize-banner-cta--secondary">Show Bracket</a>
-    <a href="/pages/tipping.html" class="prize-banner-cta">Tip Now &rarr;</a>
+    <a href="/nrl/pages/leaderboard.html#cup" class="prize-banner-cta prize-banner-cta--secondary">Show Bracket</a>
+    <a href="/nrl/pages/tipping.html" class="prize-banner-cta">Tip Now &rarr;</a>
     <button class="prize-banner-close" onclick="dismissPrizeBanner()" aria-label="Dismiss">&times;</button>
   </div>
 </div>

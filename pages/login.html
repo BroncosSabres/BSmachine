@@ -209,7 +209,7 @@
       import { supabase, getSession, updateAuthNav } from '../js/supabase-client.js'
 
       // Only allow same-origin redirects (prevent open redirect attacks)
-      function safeNext(fallback = '/pages/tipping.html') {
+      function safeNext(fallback = '/nrl/pages/tipping.html') {
         const next = new URLSearchParams(window.location.search).get('next') || ''
         return (next.startsWith('/') && !next.startsWith('//')) ? next : fallback
       }

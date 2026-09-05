@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <!-- Performance hints: preconnect + early backend wakeup -->
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NFL Match Predictions</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-4xl mx-auto px-4 py-8">
+      <div class="flex items-center gap-4 mb-8 flex-wrap">
+        <h1 class="text-4xl font-bold">NFL Predictions</h1>
+        <div class="flex items-center gap-2 ml-auto">
+          <button id="week-prev" type="button"
+                  class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors">&larr;</button>
+          <span id="week-badge" class="text-sm font-medium text-gray-300 bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-full min-w-[6rem] text-center"></span>
+          <button id="week-next" type="button"
+                  class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors">&rarr;</button>
+        </div>
+      </div>
+
+      <div id="games-list" class="flex flex-col gap-4"></div>
+      <p id="no-games-msg" class="text-gray-500 text-center py-8 hidden">No games found for this week.</p>
+    </main>
+
+    <script type="module" src="/js/nfl-matchups.js"></script>
+    <script type="module">
+      import { updateAuthNav } from '/js/supabase-client.js'
+      updateAuthNav()
+    </script>
+    <script>
+      fetch('/components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
+  </body>
+</html>

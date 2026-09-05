@@ -1087,7 +1087,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       const slug = teamLogoSlug(teamName);
       const logoHtml = slug
-        ? `<img src="../logos/${slug}.svg" class="w-8 h-8 object-contain shrink-0" alt="">`
+        ? `<img src="/logos/${slug}.svg" class="w-8 h-8 object-contain shrink-0" alt="">`
         : '';
 
       const teamDiv = document.createElement('div');
@@ -2672,8 +2672,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const homeSlug = teamLogoSlug(homeTeam);
     const awaySlug = teamLogoSlug(awayTeam);
     await Promise.all([
-      homeSlug ? _loadAndDrawImage(ctx, `../logos/${homeSlug}.svg`, homeLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
-      awaySlug ? _loadAndDrawImage(ctx, `../logos/${awaySlug}.svg`, awayLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
+      homeSlug ? _loadAndDrawImage(ctx, `/logos/${homeSlug}.svg`, homeLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
+      awaySlug ? _loadAndDrawImage(ctx, `/logos/${awaySlug}.svg`, awayLogoX, logoY, logoSize, logoSize) : Promise.resolve(),
     ]);
 
     return canvas;
@@ -2889,7 +2889,7 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.textContent = '★ Saved';
         btn.style.borderColor = '#22c55e';
         btn.style.color       = '#4ade80';
-        _showBetslipToast('Betslip saved! View it on the', '/pages/betslips.html', 'betslips page');
+        _showBetslipToast('Betslip saved! View it on the', '/nrl/pages/betslips.html', 'betslips page');
         setTimeout(() => loadTryscorerCounts(currentMatchId), 500);
         setTimeout(() => renderCommunityBetslips(currentMatchId), 500);
       } else {
@@ -3002,12 +3002,12 @@ document.addEventListener("DOMContentLoaded", function () {
       let betslips;
       if (!matchId) {
         const round = matchList[0]?.round_number;
-        if (link) link.href = `../pages/betslips.html`;
+        if (link) link.href = `/nrl/pages/betslips.html`;
         if (!round) { section.classList.add('hidden'); return; }
         betslips = await _fetchCommunityDirect(null, round, sortVal, 8);
         if (_communityMatchId !== null) return; // match selected while loading
       } else {
-        if (link) link.href = `../pages/betslips.html?match=${matchId}`;
+        if (link) link.href = `/nrl/pages/betslips.html?match=${matchId}`;
         betslips = await _fetchCommunityDirect(matchId, null, sortVal, 5);
         if (_communityMatchId !== matchId) return; // stale
       }

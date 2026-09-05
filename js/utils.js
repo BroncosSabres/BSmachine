@@ -28,7 +28,7 @@ export function teamSlug(name) {
  */
 export async function getLatestRoundFolder() {
   try {
-    const res = await fetch('../data/latestRound.json');
+    const res = await fetch('/data/latestRound.json');
     if (!res.ok) throw new Error('latestRound.json not found');
     const data = await res.json();
     if (typeof data.latest === 'number' && data.latest >= 0) {

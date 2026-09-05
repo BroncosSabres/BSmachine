@@ -1,7 +1,7 @@
 // logoLoader.js
 import { teamSlug } from './utils.js';
 
-export async function loadTeamLogos(data, logoPath = '../logos') {
+export async function loadTeamLogos(data, logoPath = '/logos') {
     const logos = {};
     const loadPromises = data.filter(team => team && team["Team"]).map(team => {
       const name = teamSlug(team["Team"]);

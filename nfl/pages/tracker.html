@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NFL Season Tracker &mdash; Coming Soon</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-2xl mx-auto px-4 py-24 text-center">
+      <div class="card">
+        <h1 class="text-3xl font-bold mb-3">NFL Season Tracker</h1>
+        <p class="text-gray-400 mb-6">NFL support for this feature is on the way &mdash; check back soon!</p>
+        <a href="/nfl/pages/rankings.html" class="site-nav-link" style="display:inline-block;border:1px solid var(--border-default);">&larr; Back to NFL Rankings</a>
+      </div>
+    </main>
+
+    <script type="module">
+      import { updateAuthNav } from '/js/supabase-client.js'
+      updateAuthNav()
+    </script>
+    <script>
+      fetch('/components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
+  </body>
+</html>

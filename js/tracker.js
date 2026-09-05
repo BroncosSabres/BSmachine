@@ -60,7 +60,7 @@ function createChart(containerId, chartData, yMax = null) {
   const datasets = chartData.datasets.map((dataset) => {
     const teamName = dataset.label;
     const image = new Image();
-    image.src = `../logos/${teamName.toLowerCase()}.svg`;
+    image.src = `/logos/${teamName.toLowerCase()}.svg`;
     image.width = 20;
     image.height = 20;
 
