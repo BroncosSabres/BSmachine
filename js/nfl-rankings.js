@@ -160,16 +160,31 @@ async function loadSeedingTable(conf, tableId) {
     .slice(0, 3);
 
   const seededTeams = [...divisionLeaders, ...wildcards];
+  const seededTeamNames = new Set(seededTeams.map(x => x.team));
 
-  tbody.innerHTML = seededTeams.map((x, i) => {
+  // Next up to 3 teams still mathematically alive (playoff odds > 0), shown
+  // below a divider as context for who's just outside the playoff picture.
+  // Late in the season this can shrink to fewer than 3, or none at all, once
+  // teams are mathematically eliminated.
+  const inTheHunt = confTeams
+    .filter(x => !seededTeamNames.has(x.team))
+    .filter(x => (x.extra.percent_playoffs ?? 0) > 0)
+    .sort(compareByProjectedRecord)
+    .slice(0, 3);
+
+  function seedRow(x, rank) {
     const e = x.extra;
     const record  = e.projected_wins != null && e.projected_losses != null
       ? `${Math.round(e.projected_wins)}-${Math.round(e.projected_losses)}${Math.round(e.projected_ties) > 0 ? `-${Math.round(e.projected_ties)}` : ''}`
       : '—';
-    const divPct  = e.percent_division_winner != null ? formatPercent(e.percent_division_winner) : '—';
+    // The #1 seed is the only team that gets a first-round bye, so that
+    // column doubles as "chance of being the conference's #1 seed".
+    const firstSeedPct = e.percent_first_round_bye != null ? formatPercent(e.percent_first_round_bye) : '—';
+    const divPct        = e.percent_division_winner != null ? formatPercent(e.percent_division_winner) : '—';
+    const playoffPct    = e.percent_playoffs        != null ? formatPercent(e.percent_playoffs)        : '—';
     return `
       <tr>
-        <td class="text-center font-mono">${i + 1}</td>
+        <td class="text-center font-mono">${rank}</td>
         <td>
           <div class="flex items-center gap-2">
             <img src="${nflLogoUrl(x.team)}" alt="${x.team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
@@ -177,10 +192,23 @@ async function loadSeedingTable(conf, tableId) {
           </div>
         </td>
         <td class="text-center font-mono">${record}</td>
+        <td class="text-center font-medium" style="${probColor(e.percent_first_round_bye)}">${firstSeedPct}</td>
         <td class="text-center font-medium" style="${probColor(e.percent_division_winner)}">${divPct}</td>
+        <td class="text-center font-medium" style="${probColor(e.percent_playoffs)}">${playoffPct}</td>
       </tr>
     `;
-  }).join('');
+  }
+
+  const seededRows = seededTeams.map((x, i) => seedRow(x, i + 1)).join('');
+
+  const huntDivider = inTheHunt.length ? `
+    <tr>
+      <td colspan="6" class="text-center text-xs font-semibold text-gray-500 uppercase tracking-widest" style="border-top:2px solid var(--border-default); padding-top:0.75rem;">In the Hunt</td>
+    </tr>
+  ` : '';
+  const huntRows = inTheHunt.map((x, i) => seedRow(x, seededTeams.length + i + 1)).join('');
+
+  tbody.innerHTML = seededRows + huntDivider + huntRows;
 }
 
 async function loadProjectedStandings() {
