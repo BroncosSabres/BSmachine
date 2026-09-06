@@ -254,6 +254,23 @@ h2, h3 {
   background-color: rgba(245, 158, 11, 0.04);
 }
 
+/* Compact variant: the NFL Impact Simulator's Standings/Seeding tables carry
+   more columns than other .data-table users (rankings pages), each cell also
+   stacking a value + a small movement/delta badge underneath -- tighter
+   padding and smaller type let more columns fit without overflowing on
+   typical viewports. Scoped to this modifier so other .data-table users
+   (NRL/NFL rankings pages) are unaffected. */
+.data-table--compact thead th {
+  padding: 0.5rem 0.5rem;
+  font-size: 0.625rem;
+  white-space: normal;
+}
+
+.data-table--compact tbody td {
+  padding: 0.5rem 0.5rem;
+  font-size: 0.8125rem;
+}
+
 /* ================================================
    Site Footer
    ================================================ */

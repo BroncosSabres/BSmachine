@@ -1,23 +1,110 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <!-- Performance hints: preconnect + early backend wakeup -->
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NFL Simulator &mdash; Coming Soon</title>
+    <title>NFL Impact Simulator</title>
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
 
-    <main class="max-w-2xl mx-auto px-4 py-24 text-center">
-      <div class="card">
-        <h1 class="text-3xl font-bold mb-3">NFL Simulator</h1>
-        <p class="text-gray-400 mb-6">NFL support for this feature is on the way &mdash; check back soon!</p>
-        <a href="/nfl/pages/rankings.html" class="site-nav-link" style="display:inline-block;border:1px solid var(--border-default);">&larr; Back to NFL Rankings</a>
+    <main class="max-w-7xl mx-auto px-4 py-8">
+      <div class="flex items-baseline gap-4 mb-8 flex-wrap">
+        <h1 class="text-4xl font-bold">Impact Simulator</h1>
+        <span id="week-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
+      </div>
+
+      <div class="flex flex-col lg:flex-row gap-6 items-start">
+
+        <!-- Match Selection -->
+        <div class="card w-full lg:w-72 shrink-0">
+          <h2 class="text-lg font-semibold mb-3 text-gray-100">Select Match Outcomes</h2>
+          <div id="selection-chance" class="mb-4 text-sm text-gray-400 font-medium"></div>
+          <form id="simulation-form" class="space-y-2 text-sm"></form>
+        </div>
+
+        <div class="flex-1 min-w-0 flex flex-col gap-6">
+
+          <!-- Projected Playoff Seeding (always division/conference-scoped) -->
+          <div class="card">
+            <h2 class="text-xl font-semibold mb-4 text-gray-100">Projected Playoff Seeding</h2>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">AFC</h3>
+                <div class="overflow-x-auto">
+                  <table class="data-table data-table--compact" id="seeding-table-afc">
+                    <thead>
+                      <tr>
+                        <th>Seed</th>
+                        <th>Team</th>
+                        <th>Proj. Record</th>
+                        <th>1st Seed %</th>
+                        <th>Div Title %</th>
+                        <th>Playoff %</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">NFC</h3>
+                <div class="overflow-x-auto">
+                  <table class="data-table data-table--compact" id="seeding-table-nfc">
+                    <thead>
+                      <tr>
+                        <th>Seed</th>
+                        <th>Team</th>
+                        <th>Proj. Record</th>
+                        <th>1st Seed %</th>
+                        <th>Div Title %</th>
+                        <th>Playoff %</th>
+                      </tr>
+                    </thead>
+                    <tbody></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Standings, with Division/Conference/League view-toggle -->
+          <div class="card">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+              <h2 class="text-xl font-semibold text-gray-100">Standings</h2>
+              <div id="view-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+                <button id="btn-view-division" type="button"
+                        class="view-btn px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">Division</button>
+                <button id="btn-view-conference" type="button"
+                        class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">Conference</button>
+                <button id="btn-view-league" type="button"
+                        class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">League</button>
+              </div>
+            </div>
+            <div id="rankings-groups"></div>
+          </div>
+
+        </div>
       </div>
     </main>
 
+    <script type="module" src="/js/nfl-impact-simulator.js"></script>
     <script type="module">
       import { updateAuthNav } from '/js/supabase-client.js'
       updateAuthNav()

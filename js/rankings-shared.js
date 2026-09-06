@@ -37,3 +37,14 @@ export function rankChangeBadge(current, prev) {
   if (delta < 0) return `<span style="color:#f87171;font-size:0.7rem;font-weight:600;margin-left:3px">▼${Math.abs(delta)}</span>`;
   return `<span style="color:#6b7280;font-size:0.7rem;margin-left:3px">—</span>`;
 }
+
+// Colored inline delta badge, e.g. "+3.2%" (green) or "-1.1%" (red).
+// invert=true flips which sign counts as "good" - use for metrics where a
+// lower number is better (avg_division_rank, avg_conf_seed, avg_league_rank).
+export function deltaBadge(delta, { invert = false, suffix = '%', digits = 1, threshold = 0.05 } = {}) {
+  if (delta == null || Math.abs(delta) < threshold) return '';
+  const sign = delta > 0 ? '+' : '';
+  const good = invert ? delta < 0 : delta > 0;
+  const color = good ? '#4ade80' : '#f87171';
+  return `<span style="color:${color};font-size:0.75rem;margin-left:4px;font-weight:600">${sign}${delta.toFixed(digits)}${suffix}</span>`;
+}

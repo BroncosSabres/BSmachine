@@ -1,6 +1,7 @@
 // nfl-matchups.js — drives nfl/pages/matchups.html
 import { apiUrl } from './api-config.js';
 import { nflLogoUrl } from './nfl-logos.js';
+import { openDistModal } from './nfl-distribution-chart.js';
 
 const gamesList   = document.getElementById('games-list');
 const noGamesMsg  = document.getElementById('no-games-msg');
@@ -9,6 +10,7 @@ const prevBtn     = document.getElementById('week-prev');
 const nextBtn     = document.getElementById('week-next');
 
 let currentWeek = null;
+let gamesById   = {};
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -84,8 +86,18 @@ function gameCard(g) {
       </div>
       ${g.has_prediction && !g.is_finished ? probBar(g) : ''}
       ${!g.has_prediction ? '<p class="text-center text-gray-500 text-xs mt-3">Prediction not yet available</p>' : ''}
+      ${g.has_prediction ? distButton(g) : ''}
     </div>
   `;
+}
+
+function distButton(g) {
+  return `
+    <button class="js-nfl-dist-btn w-full flex items-center justify-center gap-1.5 mt-3 px-2.5 py-1 rounded-lg border border-gray-600 hover:border-amber-500 hover:text-amber-400 transition-colors text-xs text-gray-400 font-medium"
+            style="background:rgba(255,255,255,0.04);cursor:pointer;" data-game-id="${g.game_id}">
+      <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style="flex-shrink:0;opacity:0.85"><rect x="1" y="10" width="3" height="9" rx="1"/><rect x="6" y="6" width="3" height="13" rx="1"/><rect x="11" y="3" width="3" height="16" rx="1"/><rect x="16" y="7" width="3" height="12" rx="1"/></svg>
+      Show Probability Distributions
+    </button>`;
 }
 
 async function loadWeek(week) {
@@ -100,12 +112,27 @@ async function loadWeek(week) {
   weekBadge.textContent = `Week ${currentWeek}`;
 
   const games = json.predictions || [];
+  gamesById = Object.fromEntries(games.map(g => [g.game_id, g]));
   if (!games.length) {
     noGamesMsg.classList.remove('hidden');
     return;
   }
   gamesList.innerHTML = games.map(gameCard).join('');
 }
+
+gamesList.addEventListener('click', e => {
+  const btn = e.target.closest('.js-nfl-dist-btn');
+  if (!btn) return;
+  const g = gamesById[Number(btn.dataset.gameId)];
+  if (!g) return;
+  const hasResult = g.is_finished && g.home_score != null && g.away_score != null;
+  openDistModal(
+    `${g.home_team} vs ${g.away_team}`,
+    g.game_id,
+    hasResult ? g.home_score - g.away_score : null,
+    hasResult ? g.home_score + g.away_score : null,
+  );
+});
 
 prevBtn.addEventListener('click', () => {
   if (currentWeek == null || currentWeek <= 1) return;

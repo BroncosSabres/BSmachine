@@ -1,5 +1,6 @@
 // predictions.js
 import { supabase } from './supabase-client.js';
+import { renderDistribution3D, purgeDistribution3D } from './distribution-3d.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -326,6 +327,7 @@ function ensureModal() {
           <div id="dist-mode-toggle" style="display:flex;gap:2px;background:#0f1117;border:1px solid #2e3a4e;border-radius:6px;padding:2px;">
             <button id="dist-toggle-pdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:#f59e0b;color:#0a0d14;">PDF</button>
             <button id="dist-toggle-cdf" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;">CDF</button>
+            <button id="dist-toggle-3d" style="padding:3px 10px;border-radius:4px;border:none;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;background:transparent;color:#4a5568;">3D</button>
           </div>
           <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:0.7rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#4a5568;user-select:none;">
             <input id="dist-toggle-picks" type="checkbox" style="accent-color:#60a5fa;width:13px;height:13px;cursor:pointer;">
@@ -345,6 +347,7 @@ function ensureModal() {
           <canvas id="dist-modal-total"></canvas>
         </div>
       </div>
+      <div id="dist-modal-3d" style="display:none;height:520px;"></div>
     </div>
   `;
   document.body.appendChild(el);
@@ -361,6 +364,8 @@ function closeModal() {
   if (tt) tt.style.display = 'none';
   chartInstances['modal-margin']?.destroy(); delete chartInstances['modal-margin'];
   chartInstances['modal-total']?.destroy();  delete chartInstances['modal-total'];
+  const el3d = document.getElementById('dist-modal-3d');
+  if (el3d) purgeDistribution3D(el3d);
 }
 
 async function openDistModal(title, pickData, matchId, actualMargin = null, actualTotal = null) {
@@ -368,6 +373,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   const modal    = document.getElementById('dist-modal');
   const loading  = document.getElementById('dist-modal-loading');
   const charts   = document.getElementById('dist-modal-charts');
+  const dist3d   = document.getElementById('dist-modal-3d');
   const titleEl  = document.getElementById('dist-modal-title');
 
   // Reset state
@@ -375,6 +381,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   titleEl.textContent = title;
   loading.style.display = 'block';
   charts.style.display  = 'none';
+  dist3d.style.display  = 'none';
   modal.style.display   = 'flex';
 
   const machineDist = await fetchMachineDistributions(matchId);
@@ -748,6 +755,7 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
   // Toggle buttons
   const pdfBtn    = document.getElementById('dist-toggle-pdf');
   const cdfBtn    = document.getElementById('dist-toggle-cdf');
+  const btn3d     = document.getElementById('dist-toggle-3d');
   const picksCbox = document.getElementById('dist-toggle-picks');
   function setMode(mode) {
     currentMode = mode;
@@ -755,11 +763,22 @@ async function openDistModal(title, pickData, matchId, actualMargin = null, actu
     const inactive = { background: 'transparent', color: '#4a5568' };
     Object.assign(pdfBtn.style, mode === 'pdf' ? active : inactive);
     Object.assign(cdfBtn.style, mode === 'cdf' ? active : inactive);
-    renderCharts(mode);
+    Object.assign(btn3d.style,  mode === '3d'  ? active : inactive);
+    if (mode === '3d') {
+      charts.style.display = 'none';
+      dist3d.style.display = 'block';
+      renderDistribution3D(dist3d, { sport: 'nrl', id: matchId });
+    } else {
+      dist3d.style.display = 'none';
+      purgeDistribution3D(dist3d);
+      charts.style.display = 'block';
+      renderCharts(mode);
+    }
   }
   pdfBtn.onclick       = () => setMode('pdf');
   cdfBtn.onclick       = () => setMode('cdf');
-  picksCbox.onchange   = () => renderCharts(currentMode);
+  btn3d.onclick        = () => setMode('3d');
+  picksCbox.onchange   = () => { if (currentMode !== '3d') renderCharts(currentMode); };
 }
 
 // --- BLENDED DISPLAY ---
