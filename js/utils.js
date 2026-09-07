@@ -24,6 +24,7 @@ export function teamSlug(name) {
 
 const ROUND_TYPE_LABELS = {
   qualifying_final:   'Qualifying Final',
+  elimination_final:  'Elimination Final',
   semi_final:         'Semi Final',
   preliminary_final:  'Preliminary Final',
   grand_final:        'Grand Final',
