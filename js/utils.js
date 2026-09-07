@@ -22,6 +22,22 @@ export function teamSlug(name) {
   return n.replace(/\s+/g, '_');
 }
 
+const ROUND_TYPE_LABELS = {
+  qualifying_final:   'Qualifying Final',
+  semi_final:         'Semi Final',
+  preliminary_final:  'Preliminary Final',
+  grand_final:        'Grand Final',
+};
+
+/**
+ * Friendly round label for a round number + round_type (from /api/round_types),
+ * e.g. roundLabel(28, 'semi_final') -> "Semi Final". Falls back to "Round N"
+ * for regular-season rounds or when round_type is unknown.
+ */
+export function roundLabel(roundNumber, roundType) {
+  return ROUND_TYPE_LABELS[roundType] || `Round ${roundNumber}`;
+}
+
 /**
  * Finds the latest round folder that contains a results.csv file
  * Example: "Round6"

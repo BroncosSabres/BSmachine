@@ -327,6 +327,7 @@
 
     <script type="module">
       import { supabase, getSession, updateAuthNav } from '/js/supabase-client.js'
+      import { roundLabel } from '/js/utils.js'
       import '/js/my-stats.js'
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
@@ -363,6 +364,17 @@
       let currentRoundIndex = 0
       let avgTotal = 44  // default, updated from completed games
       let competition = localStorage.getItem('bsmachine_competition') || 'nrl'
+      let roundTypes = {}  // round_number (string) -> round_type, for finals labelling
+
+      async function fetchRoundTypes() {
+        try {
+          const res  = await fetch(`${BACKEND}/round_types/${competition}`)
+          const json = await res.json()
+          roundTypes = json.round_types || {}
+        } catch {
+          roundTypes = {}
+        }
+      }
 
       // ── Team colours (for slider track) ──
       const TEAM_COLORS = {
@@ -448,6 +460,7 @@
       // ── Init ──
       async function init() {
         await fetchAvgTotal()
+        await fetchRoundTypes()
 
         const { data: roundData } = await supabase
           .from('games')
@@ -488,7 +501,7 @@
       function updateRoundSelect() {
         const sel = document.getElementById('round-select')
         sel.innerHTML = availableRounds.map(r =>
-          `<option value="${r}"${r === availableRounds[currentRoundIndex] ? ' selected' : ''}>Round ${r}</option>`
+          `<option value="${r}"${r === availableRounds[currentRoundIndex] ? ' selected' : ''}>${roundLabel(r, roundTypes[String(r)])}</option>`
         ).join('')
       }
 

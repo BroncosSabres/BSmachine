@@ -79,7 +79,7 @@ async function drawFinalsWheel() {
   // Preload logos
   const logos = teamNames.map(name => {
     const img = new Image();
-    img.src = `./logos/${teamSlug(name)}.svg`;
+    img.src = `/logos/${teamSlug(name)}.svg`;
     return img;
   });
   await Promise.all(logos.map(img => new Promise(resolve => {

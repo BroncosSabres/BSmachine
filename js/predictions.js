@@ -1,6 +1,7 @@
 // predictions.js
 import { supabase } from './supabase-client.js';
 import { renderDistribution3D, purgeDistribution3D } from './distribution-3d.js';
+import { roundLabel } from './utils.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -13,6 +14,7 @@ let tryscorerMatchCache = null;
 let blendT = 0;           // 0 = pure machine, 1 = pure crowd
 const cardDataCache = {}; // matchKey → { machine: {...}, user: {...} }
 let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
+let roundTypes = {}; // round_number (string) -> round_type, for finals labelling
 
 const teamColors = {
   "Broncos":   "#760135",
@@ -1011,7 +1013,8 @@ function renderRoundNav() {
 
   const options = [];
   for (let r = 1; r <= latestRound; r++) {
-    const label = r === currentRound ? `Round ${r} (Current)` : `Round ${r}`;
+    const base  = roundLabel(r, roundTypes[String(r)]);
+    const label = r === currentRound ? `${base} (Current)` : base;
     options.push(`<option value="${r}" ${r === currentRound ? 'selected' : ''}>${label}</option>`);
   }
 
@@ -2103,6 +2106,14 @@ async function loadRound() {
 
 // --- INIT ---
 async function init() {
+  try {
+    const roundTypesRes = await fetch(`${TRYSCORER_API}/round_types/${competition}`);
+    const roundTypesJson = await roundTypesRes.json();
+    roundTypes = roundTypesJson.round_types || {};
+  } catch {
+    roundTypes = {};
+  }
+
   try {
     const res  = await fetch(`${TRYSCORER_API}/season_matches/${competition}`);
     const data = await res.json();

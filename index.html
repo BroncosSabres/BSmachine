@@ -18,7 +18,7 @@
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>The BS Machine — NRL Predictions</title>
+    <title>The BS Machine — Sports Power Rankings &amp; Predictions</title>
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
@@ -31,128 +31,24 @@
 
       <!-- Hero -->
       <div class="mb-8 text-center">
-        <h1 class="text-4xl font-bold mb-3">NRL Power Rankings &amp; Predictions</h1>
+        <h1 class="text-4xl font-bold mb-3">Sports Power Rankings &amp; Predictions</h1>
         <p class="text-gray-400 text-lg max-w-2xl mx-auto">
-          A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact.
+          A data-driven approach to tracking team performance, predicting outcomes, and visualising finals impact — across every sport we cover.
         </p>
       </div>
 
-      <!-- Round snapshot + Finals Wheel -->
-      <div class="flex flex-col lg:flex-row gap-6 items-start">
+      <!-- Sport Hub -->
+      <div id="sport-hub" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-10"></div>
 
-        <!-- Snapshot sidebar -->
-        <div class="w-full lg:w-72 shrink-0 flex flex-col gap-4">
-
-          <!-- Round badge -->
-          <div class="card flex items-center justify-between">
-            <div>
-              <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">Current data</div>
-              <div id="round-badge" class="text-2xl font-bold text-white">—</div>
-            </div>
-            <div class="flex flex-col items-end gap-1.5">
-              <a href="pages/rankings.html"
-                 class="text-xs font-medium transition-colors" style="color:#fbbf24;" onmouseover="this.style.color='#fde68a'" onmouseout="this.style.color='#fbbf24'">
-                View Rankings →
-              </a>
-              <a href="pages/matchups.html"
-                 class="text-xs font-medium transition-colors" style="color:#fbbf24;" onmouseover="this.style.color='#fde68a'" onmouseout="this.style.color='#fbbf24'">
-                View Predictions →
-              </a>
-            </div>
-          </div>
-
-          <!-- Who's Hot -->
-          <div class="card border-l-4 border-green-500">
-            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">🔥 Who's Hot</div>
-            <div id="snap-hot-list"></div>
-          </div>
-
-          <!-- Who's Not -->
-          <div class="card border-l-4 border-red-500">
-            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">❄️ Who's Not</div>
-            <div id="snap-cold-list"></div>
-          </div>
-
-          <!-- Finals buckets -->
-          <div class="card">
-            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Finals Picture</div>
-            <div class="flex flex-col gap-3">
-
-              <div class="snap-bucket">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2 h-2 rounded-full bg-green-400 shrink-0"></span>
-                  <span class="text-xs font-semibold text-green-400">Clinched</span>
-                  <span class="text-xs text-gray-600">— 100%</span>
-                </div>
-                <div id="bucket-clinched" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
-              </div>
-
-              <div class="snap-bucket">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2 h-2 rounded-full bg-blue-400 shrink-0"></span>
-                  <span class="text-xs font-semibold text-blue-400">Likely</span>
-                  <span class="text-xs text-gray-600">— &gt;80%</span>
-                </div>
-                <div id="bucket-cusp" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
-              </div>
-
-              <div class="snap-bucket">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2 h-2 rounded-full bg-yellow-400 shrink-0"></span>
-                  <span class="text-xs font-semibold text-yellow-400">In the Hunt</span>
-                  <span class="text-xs text-gray-600">— 20–80%</span>
-                </div>
-                <div id="bucket-hunt" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
-              </div>
-
-              <div class="snap-bucket">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2 h-2 rounded-full bg-orange-400 shrink-0"></span>
-                  <span class="text-xs font-semibold text-orange-400">Unlikely</span>
-                  <span class="text-xs text-gray-600">— &lt;20%</span>
-                </div>
-                <div id="bucket-unlikely" class="text-xs text-gray-300 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
-              </div>
-
-              <div class="snap-bucket">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="w-2 h-2 rounded-full bg-gray-500 shrink-0"></span>
-                  <span class="text-xs font-semibold text-gray-500">Faded</span>
-                  <span class="text-xs text-gray-600">— 0%</span>
-                </div>
-                <div id="bucket-faded" class="text-xs text-gray-500 flex flex-wrap gap-x-1 gap-y-1 pl-3.5">—</div>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- Quick links -->
-          <div class="card">
-            <div class="text-xs text-gray-500 uppercase tracking-widest mb-3">Explore</div>
-            <div class="flex flex-col gap-1.5">
-              <a href="pages/matchups.html"              class="site-nav-link block !px-0 text-sm">Match Predictions →</a>
-              <a href="pages/simulator.html"             class="site-nav-link block !px-0 text-sm">Round Simulator →</a>
-              <a href="pages/tracker.html"               class="site-nav-link block !px-0 text-sm">Season Tracker →</a>
-              <a href="pages/magic_numbers.html"         class="site-nav-link block !px-0 text-sm">Magic Numbers →</a>
-              <a href="pages/tryscorer_predictions.html" class="site-nav-link block !px-0 text-sm">Tryscorer Predictions →</a>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Finals Wheel -->
-        <div class="w-full min-w-0 flex-1">
-          <div style="position:relative; width:100%; max-width:1000px; margin:auto;">
-            <canvas id="finalsWheel" style="width:100%; height:auto;"></canvas>
-            <img id="trophy" src="./assets/trophy.png" style="display:none">
-          </div>
-        </div>
-
+      <!-- Next 7 Days -->
+      <div class="mb-2">
+        <h2 class="text-2xl font-bold mb-1">Next 7 Days</h2>
+        <p class="text-gray-500 text-sm mb-6">Upcoming matches across all sports, ordered by kickoff.</p>
       </div>
+      <div id="upcoming-feed" class="flex flex-col gap-8"></div>
     </main>
 
-    <script type="module" src="./js/finalsWheel.js"></script>
-    <script type="module" src="./js/homepage.js"></script>
+    <script type="module" src="./js/homepage-predictions.js"></script>
     <script type="module">
       import { updateAuthNav } from './js/supabase-client.js'
       updateAuthNav()

@@ -100,6 +100,15 @@
         <canvas id="finalsChart"></canvas>
       </div>
 
+      <!-- Finals Wheel -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Finals Wheel</h2>
+        <div style="position:relative; width:100%; max-width:1000px; margin:auto;">
+          <canvas id="finalsWheel" style="width:100%; height:auto;"></canvas>
+          <img id="trophy" src="/assets/trophy.png" style="display:none">
+        </div>
+      </div>
+
       <!-- Scatterplot -->
       <div class="card">
         <h2 class="text-xl font-semibold mb-4 text-gray-100">Offensive vs Defensive Ratings</h2>
@@ -107,6 +116,7 @@
       </div>
     </main>
 
+    <script type="module" src="/js/finalsWheel.js"></script>
     <script type="module" src="/js/main.js"></script>
     <script type="module">
       import { updateAuthNav } from '/js/supabase-client.js'
