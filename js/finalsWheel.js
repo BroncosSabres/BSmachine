@@ -44,7 +44,9 @@ function teamSlug(name) {
   return n.replace(/\s+/g, '_');
 }
 
-async function drawFinalsWheel() {
+let chartInstance = null;
+
+async function drawFinalsWheel(competition) {
   const canvas = document.getElementById('finalsWheel');
   const container = canvas.parentElement;
   container.style.maxWidth = '600px';
@@ -53,7 +55,7 @@ async function drawFinalsWheel() {
 
   let rankings;
   try {
-    const res = await fetch(`${BACKEND}/power_rankings/nrl`);
+    const res = await fetch(`${BACKEND}/power_rankings/${competition}`);
     if (!res.ok) throw new Error(`Backend error ${res.status}`);
     const json = await res.json();
     rankings = json.rankings || [];
@@ -87,8 +89,13 @@ async function drawFinalsWheel() {
     else { img.onload = resolve; img.onerror = resolve; }
   })));
 
+  if (chartInstance) {
+    chartInstance.destroy();
+    chartInstance = null;
+  }
+
   const ctx = canvas.getContext('2d');
-  new Chart(ctx, {
+  chartInstance = new Chart(ctx, {
     type: 'doughnut',
     data: {
       labels: teamNames,
@@ -185,4 +192,16 @@ async function drawFinalsWheel() {
   });
 }
 
-window.addEventListener('DOMContentLoaded', drawFinalsWheel);
+function initFinalsWheel() {
+  const btnNrl  = document.getElementById('btn-nrl');
+  const btnNrlw = document.getElementById('btn-nrlw');
+
+  drawFinalsWheel(localStorage.getItem('bsmachine_competition') || 'nrl');
+
+  // main.js owns the toggle buttons/localStorage key; this just redraws the
+  // wheel in response to the same clicks rather than duplicating that state.
+  btnNrl?.addEventListener('click', () => drawFinalsWheel('nrl'));
+  btnNrlw?.addEventListener('click', () => drawFinalsWheel('nrlw'));
+}
+
+window.addEventListener('DOMContentLoaded', initFinalsWheel);
