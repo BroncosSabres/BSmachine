@@ -56,8 +56,9 @@ function renderScore(entry) {
 }
 
 const SPORT_BADGE_STYLE = {
-  nrl: 'background:rgba(251,191,36,0.12); color:#fbbf24;',
-  nfl: 'background:rgba(96,165,250,0.12); color:#60a5fa;',
+  nrl:  'background:rgba(251,191,36,0.12); color:#fbbf24;',
+  nrlw: 'background:rgba(232,121,249,0.12); color:#e879f9;',
+  nfl:  'background:rgba(96,165,250,0.12); color:#60a5fa;',
 };
 
 export function renderPredictionTile(entry) {

@@ -42,6 +42,24 @@ function adaptNrl(p) {
   };
 }
 
+function adaptNrlw(p) {
+  return {
+    sport: 'nrlw',
+    date: p.date,
+    homeTeam: p.home_team,
+    awayTeam: p.away_team,
+    homeScore: p.home_score,
+    awayScore: p.away_score,
+    homePerc: p.home_perc,
+    awayPerc: p.away_perc,
+    expHome: p.exp_home_score,
+    expAway: p.exp_away_score,
+    isFinished: p.is_finished,
+    hasPrediction: p.has_prediction,
+    logoUrl: nrlLogoUrl,
+  };
+}
+
 function adaptNfl(p) {
   return {
     sport: 'nfl',
@@ -81,12 +99,13 @@ async function loadUpcomingFeed() {
   const feed = document.getElementById('upcoming-feed');
   if (!feed) return;
 
-  const [nrlEntries, nflEntries] = await Promise.all([
+  const [nrlEntries, nrlwEntries, nflEntries] = await Promise.all([
     fetchUpcoming('nrl', 'upcoming_predictions?days=7', adaptNrl),
+    fetchUpcoming('nrl', 'upcoming_predictions/nrlw?days=7', adaptNrlw),
     fetchUpcoming('nfl', 'upcoming_predictions?days=7', adaptNfl),
   ]);
 
-  const entries = [...nrlEntries, ...nflEntries]
+  const entries = [...nrlEntries, ...nrlwEntries, ...nflEntries]
     .filter(e => e.date)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
