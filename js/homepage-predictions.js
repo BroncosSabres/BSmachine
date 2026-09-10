@@ -39,6 +39,7 @@ function adaptNrl(p) {
     isFinished: p.is_finished,
     hasPrediction: p.has_prediction,
     logoUrl: nrlLogoUrl,
+    matchId: p.match_id,
   };
 }
 
@@ -57,6 +58,7 @@ function adaptNrlw(p) {
     isFinished: p.is_finished,
     hasPrediction: p.has_prediction,
     logoUrl: nrlLogoUrl,
+    matchId: p.match_id,
   };
 }
 
@@ -76,6 +78,8 @@ function adaptNfl(p) {
     isFinished: p.is_finished,
     hasPrediction: p.has_prediction,
     logoUrl: nflLogoUrl,
+    gameId: p.game_id,
+    weekNumber: p.week_number,
   };
 }
 

@@ -61,10 +61,26 @@ const SPORT_BADGE_STYLE = {
   nfl:  'background:rgba(96,165,250,0.12); color:#60a5fa;',
 };
 
+function builderUrl(entry) {
+  if (entry.sport === 'nrl' && entry.matchId != null) {
+    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}`;
+  }
+  if (entry.sport === 'nrlw' && entry.matchId != null) {
+    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&competition=nrlw`;
+  }
+  if (entry.sport === 'nfl' && entry.gameId != null && entry.weekNumber != null) {
+    return `/nfl/pages/tryscorer_predictions.html?week=${entry.weekNumber}&game_id=${entry.gameId}`;
+  }
+  return null;
+}
+
 export function renderPredictionTile(entry) {
   const badgeStyle = SPORT_BADGE_STYLE[entry.sport] || 'background:rgba(255,255,255,0.08); color:#9ca3af;';
+  const href = builderUrl(entry);
+  const tag = href ? 'a' : 'div';
+  const hrefAttr = href ? `href="${href}"` : '';
   return `
-    <div class="card">
+    <${tag} class="card" ${hrefAttr} style="text-decoration:none;">
       <div class="flex items-center justify-between text-xs text-gray-500 mb-3">
         <span class="font-bold uppercase tracking-wide text-[0.65rem] px-1.5 py-0.5 rounded" style="${badgeStyle}">${entry.sport.toUpperCase()}</span>
         <span>${formatTime(entry.date)}</span>
@@ -84,6 +100,6 @@ export function renderPredictionTile(entry) {
       </div>
       ${entry.hasPrediction && !entry.isFinished ? probBar(entry) : ''}
       ${!entry.hasPrediction ? '<p class="text-center text-gray-500 text-xs mt-3">Prediction not yet available</p>' : ''}
-    </div>
+    </${tag}>
   `;
 }

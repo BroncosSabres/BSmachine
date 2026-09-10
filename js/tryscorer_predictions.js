@@ -192,6 +192,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // --- COMPETITION TOGGLE ---
   let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
+  const _urlCompetition = new URLSearchParams(window.location.search).get('competition');
+  if (_urlCompetition === 'nrl' || _urlCompetition === 'nrlw') {
+    competition = _urlCompetition;
+    localStorage.setItem('bsmachine_competition', competition);
+  }
 
   function updateCompetitionButtons() {
     if (competition === 'nrl') {

@@ -323,6 +323,16 @@ weekNextBtn.addEventListener('click', () => {
 });
 
 async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const weekParam = params.get('week');
+  const gameIdParam = params.get('game_id');
+  if (weekParam) {
+    await loadWeek(Number(weekParam));
+    if (gameIdParam && games.some(g => String(g.game_id) === gameIdParam)) {
+      selectGame(gameIdParam);
+    }
+    return;
+  }
   const res = await fetch(apiUrl('nfl', 'current_week'));
   if (res.ok) {
     const json = await res.json();

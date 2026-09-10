@@ -9,6 +9,7 @@
 import { apiUrl } from './api-config.js';
 import { probColor, rankChangeBadge, deltaBadge } from './rankings-shared.js';
 import { nflLogoUrl } from './nfl-logos.js';
+import { teamSlug } from './utils.js';
 
 const form            = document.getElementById('simulation-form');
 const weekBadge       = document.getElementById('week-badge');
@@ -110,7 +111,7 @@ async function autoLockFinishedGames() {
     const json = await res.json();
     (json.predictions || []).forEach(g => {
       if (!g.is_finished) return;
-      const idx = matches.findIndex(m => m.home_team === g.home_team && m.away_team === g.away_team);
+      const idx = matches.findIndex(m => teamSlug(m.home_team) === teamSlug(g.home_team) && teamSlug(m.away_team) === teamSlug(g.away_team));
       if (idx === -1) return;
       // Real ties are bucketed under "away" for combo-indexing purposes on
       // the backend (see /api/nfl/impact_meta docs) — mirror that here.
@@ -118,7 +119,7 @@ async function autoLockFinishedGames() {
                     : g.away_score > g.home_score ? g.away_team
                     : g.away_team;
       const radios = form.querySelectorAll(`input[name='match-${idx}']`);
-      const radio = [...radios].find(r => r.value === winner);
+      const radio = [...radios].find(r => teamSlug(r.value) === teamSlug(winner));
       if (!radio) return;
       radio.checked = true;
       radios.forEach(r => {
