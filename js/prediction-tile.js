@@ -63,7 +63,7 @@ const SPORT_BADGE_STYLE = {
 
 function builderUrl(entry) {
   if (entry.sport === 'nrl' && entry.matchId != null) {
-    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}`;
+    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&competition=nrl`;
   }
   if (entry.sport === 'nrlw' && entry.matchId != null) {
     return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&competition=nrlw`;
