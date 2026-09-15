@@ -1,6 +1,6 @@
 // nfl-rankings.js — drives nfl/pages/rankings.html
 import { apiUrl } from './api-config.js';
-import { rankChangeBadge, probColor } from './rankings-shared.js';
+import { rankChangeBadge, probColor, deltaBadge } from './rankings-shared.js';
 import { nflLogoUrl } from './nfl-logos.js';
 import { drawConferenceWheel, drawSuperBowlWheel, updateScatter } from './nfl-charts.js';
 
@@ -13,6 +13,7 @@ const btnDivision    = document.getElementById("btn-view-division");
 let view = 'division'; // 'division' | 'conference' | 'league'
 let currentRankings = [];
 let prevRankByTeam = {};
+let prevRowByTeam = {};
 
 const COLUMNS = [
   { label: 'Rank' },
@@ -33,7 +34,28 @@ function formatPercent(val) {
   return `${(parseFloat(val) * 100).toFixed(1)}%`;
 }
 
+// Percent fields are stored as fractions (0-1), so a delta is expressed in
+// percentage points by scaling both sides up first - matches the convention
+// nfl-impact-simulator.js's pctCell already established for deltaBadge().
+function pctDelta(curr, prev) {
+  if (curr == null || prev == null) return null;
+  return parseFloat(curr) * 100 - parseFloat(prev) * 100;
+}
+
+// Value and its week-over-week delta badge stack vertically (value on top,
+// badge in small text underneath) rather than sitting side by side, to keep
+// each column narrow - same pattern as nfl-impact-simulator.js's pctCell.
+function pctCell(val, prevVal) {
+  const badge = deltaBadge(pctDelta(val, prevVal));
+  return `
+    <td class="text-center font-medium leading-tight" style="${probColor(val)}">
+      <div>${formatPercent(val)}</div>
+      ${badge ? `<div class="text-[0.65rem] leading-tight">${badge}</div>` : ''}
+    </td>`;
+}
+
 function rowHtml(r) {
+  const prevRow = prevRowByTeam[r.team];
   const wc = r.weekly_change;
   const formArrow = wc != null
     ? (wc > 0
@@ -45,11 +67,14 @@ function rowHtml(r) {
   const record = r.projected_wins != null && r.projected_losses != null
     ? `${Math.round(r.projected_wins)}-${Math.round(r.projected_losses)}${Math.round(r.projected_ties) > 0 ? `-${Math.round(r.projected_ties)}` : ''}`
     : '—';
+  const rankBadge = rankChangeBadge(r.rank, prevRankByTeam[r.team]);
+  const pctCols = COLUMNS.slice(4).map(c => pctCell(r[c.key], prevRow?.[c.key])).join('');
 
   return `
     <tr>
-      <td class="text-center text-gray-400 font-medium">
-        ${r.rank}${rankChangeBadge(r.rank, prevRankByTeam[r.team])}
+      <td class="text-center text-gray-400 font-medium leading-tight">
+        <div>${r.rank}</div>
+        ${rankBadge ? `<div class="text-[0.65rem] leading-tight">${rankBadge}</div>` : ''}
       </td>
       <td>
         <div class="flex items-center gap-2">
@@ -59,22 +84,19 @@ function rowHtml(r) {
           <span>${r.team}</span>
         </div>
       </td>
-      <td class="text-center font-mono">${Number(r.total_rating).toFixed(2)} ${formArrow}</td>
+      <td class="text-center font-mono leading-tight">
+        <div>${Number(r.total_rating).toFixed(2)}</div>
+        ${formArrow ? `<div class="text-[0.65rem] leading-tight">${formArrow}</div>` : ''}
+      </td>
       <td class="text-center font-mono">${record}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_playoffs)}">${formatPercent(r.percent_playoffs)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_division_winner)}">${formatPercent(r.percent_division_winner)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_first_round_bye)}">${formatPercent(r.percent_first_round_bye)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_divisional_round)}">${formatPercent(r.percent_divisional_round)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_conf_championship)}">${formatPercent(r.percent_conf_championship)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_super_bowl_appearance)}">${formatPercent(r.percent_super_bowl_appearance)}</td>
-      <td class="text-center font-medium" style="${probColor(r.percent_super_bowl_champion)}">${formatPercent(r.percent_super_bowl_champion)}</td>
+      ${pctCols}
     </tr>
   `;
 }
 
 function tableHtml(rows) {
   return `
-    <table class="data-table">
+    <table class="data-table data-table--compact">
       <thead>
         <tr>${COLUMNS.map(c => `<th>${c.label}</th>`).join('')}</tr>
       </thead>
@@ -134,14 +156,14 @@ function compareByProjectedRecord(a, b) {
   return (b.rating ?? -Infinity) - (a.rating ?? -Infinity);
 }
 
-async function loadSeedingTable(conf, tableId) {
-  const tbody = document.querySelector(`#${tableId} tbody`);
-  const teamExtra = {};
-  (window.__nflProjectedStandings?.teams || []).forEach(t => { teamExtra[t.team] = t; });
-
+// Builds the seeded (division leaders + wildcards) and "in the hunt" lists
+// for a conference from a given week's extra-stats map, so the exact same
+// ordering logic can be replayed against last week's snapshot to derive
+// week-over-week position badges below.
+function computeSeedOrder(conf, extraByTeam) {
   const confTeams = currentRankings
     .filter(r => r.conference === conf)
-    .map(r => ({ team: r.team, division: r.division, rating: r.total_rating, extra: teamExtra[r.team] }))
+    .map(r => ({ team: r.team, division: r.division, rating: r.total_rating, extra: extraByTeam[r.team] }))
     .filter(x => x.extra && x.extra.projected_win_pct != null);
 
   // Seeds 1-4: the team with the best projected record in each division.
@@ -172,19 +194,39 @@ async function loadSeedingTable(conf, tableId) {
     .sort(compareByProjectedRecord)
     .slice(0, 3);
 
+  return { seededTeams, inTheHunt };
+}
+
+async function loadSeedingTable(conf, tableId) {
+  const tbody = document.querySelector(`#${tableId} tbody`);
+  const teamExtra = {};
+  (window.__nflProjectedStandings?.teams || []).forEach(t => { teamExtra[t.team] = t; });
+  const prevTeamExtra = {};
+  (window.__nflProjectedStandingsPrev?.teams || []).forEach(t => { prevTeamExtra[t.team] = t; });
+
+  const { seededTeams, inTheHunt } = computeSeedOrder(conf, teamExtra);
+
+  // Replay the same seeding logic against last week's snapshot to get each
+  // team's previous position (seeded or in-the-hunt alike), for the arrow.
+  const prevPositionByTeam = {};
+  if (Object.keys(prevTeamExtra).length) {
+    const prevOrder = computeSeedOrder(conf, prevTeamExtra);
+    [...prevOrder.seededTeams, ...prevOrder.inTheHunt].forEach((x, i) => { prevPositionByTeam[x.team] = i + 1; });
+  }
+
   function seedRow(x, rank) {
     const e = x.extra;
+    const prevE = prevTeamExtra[x.team];
     const record  = e.projected_wins != null && e.projected_losses != null
       ? `${Math.round(e.projected_wins)}-${Math.round(e.projected_losses)}${Math.round(e.projected_ties) > 0 ? `-${Math.round(e.projected_ties)}` : ''}`
       : '—';
-    // The #1 seed is the only team that gets a first-round bye, so that
-    // column doubles as "chance of being the conference's #1 seed".
-    const firstSeedPct = e.percent_first_round_bye != null ? formatPercent(e.percent_first_round_bye) : '—';
-    const divPct        = e.percent_division_winner != null ? formatPercent(e.percent_division_winner) : '—';
-    const playoffPct    = e.percent_playoffs        != null ? formatPercent(e.percent_playoffs)        : '—';
+    const rankBadge = rankChangeBadge(rank, prevPositionByTeam[x.team]);
     return `
       <tr>
-        <td class="text-center font-mono">${rank}</td>
+        <td class="text-center font-mono leading-tight">
+          <div>${rank}</div>
+          ${rankBadge ? `<div class="text-[0.65rem] leading-tight">${rankBadge}</div>` : ''}
+        </td>
         <td>
           <div class="flex items-center gap-2">
             <img src="${nflLogoUrl(x.team)}" alt="${x.team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
@@ -192,9 +234,9 @@ async function loadSeedingTable(conf, tableId) {
           </div>
         </td>
         <td class="text-center font-mono">${record}</td>
-        <td class="text-center font-medium" style="${probColor(e.percent_first_round_bye)}">${firstSeedPct}</td>
-        <td class="text-center font-medium" style="${probColor(e.percent_division_winner)}">${divPct}</td>
-        <td class="text-center font-medium" style="${probColor(e.percent_playoffs)}">${playoffPct}</td>
+        ${pctCell(e.percent_first_round_bye, prevE?.percent_first_round_bye)}
+        ${pctCell(e.percent_division_winner, prevE?.percent_division_winner)}
+        ${pctCell(e.percent_playoffs, prevE?.percent_playoffs)}
       </tr>
     `;
   }
@@ -217,6 +259,19 @@ async function loadProjectedStandings() {
     if (!res.ok) return;
     const json = await res.json();
     window.__nflProjectedStandings = json.data || {};
+    const weekNumber = json.week_number;
+
+    window.__nflProjectedStandingsPrev = null;
+    if (weekNumber > 1) {
+      try {
+        const prevRes = await fetch(apiUrl('nfl', `projected_standings?week=${weekNumber - 1}`));
+        if (prevRes.ok) {
+          const prevJson = await prevRes.json();
+          window.__nflProjectedStandingsPrev = prevJson.data || {};
+        }
+      } catch (e) { /* previous week snapshot may not exist yet, non-fatal */ }
+    }
+
     loadSeedingTable('AFC', 'seeding-table-afc');
     loadSeedingTable('NFC', 'seeding-table-nfc');
   } catch (e) { /* non-fatal — seeding table just stays empty */ }
@@ -233,12 +288,16 @@ async function loadRankings() {
   if (weekBadge && weekNumber != null) weekBadge.textContent = `Week ${weekNumber}`;
 
   prevRankByTeam = {};
+  prevRowByTeam = {};
   if (weekNumber > 1) {
     try {
       const prevRes = await fetch(apiUrl('nfl', `power_rankings?week=${weekNumber - 1}`));
       if (prevRes.ok) {
         const prevJson = await prevRes.json();
-        (prevJson.rankings || []).forEach(r => { prevRankByTeam[r.team] = r.rank; });
+        (prevJson.rankings || []).forEach(r => {
+          prevRankByTeam[r.team] = r.rank;
+          prevRowByTeam[r.team] = r;
+        });
       }
     } catch (e) { /* previous week may not exist yet, non-fatal */ }
   }

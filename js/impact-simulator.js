@@ -182,10 +182,9 @@ async function updateTable(matches) {
   );
   const totalAll = counts.reduce((a, b) => a + b, 0);
   const totalFiltered = counts.reduce((sum, c, i) => validCols[i] ? sum + c : sum, 0);
-  const chanceOfSelections = totalAll > 0 ? (totalFiltered / totalAll * 100).toFixed(2) : '0.00';
   const summaryBox = document.getElementById('selection-chance');
   summaryBox.textContent = hasSelections
-    ? `Chance of all selected outcomes occurring: ${chanceOfSelections}%`
+    ? `Combination of selections occurred in ${totalFiltered} out of ${totalAll} simulations`
     : '';
 
   const top8Probs  = computeProbs(top8Data,  selectedWinners);

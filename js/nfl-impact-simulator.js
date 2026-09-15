@@ -151,8 +151,8 @@ async function updateProjection() {
   const json = await res.json();
   latestTeams = json.teams || [];
 
-  chanceBox.textContent = (hasSelections && json.chance_of_selection != null)
-    ? `Chance of all selected outcomes occurring: ${json.chance_of_selection.toFixed(2)}%`
+  chanceBox.textContent = (hasSelections && json.matched_sims != null && json.total_sims != null)
+    ? `Combination of selections occurred in ${json.matched_sims} out of ${json.total_sims} simulations`
     : '';
 
   renderSeeding();
@@ -207,12 +207,31 @@ function seedConference(conf, useBase = false) {
   return [...leaders, ...wildcards];
 }
 
+// Next up to 3 teams still mathematically alive (playoff odds > 0) but not
+// among the 7 seeded, shown below a divider — mirrors nfl-rankings.js's
+// power-rankings "In the Hunt" section so both pages read the same way.
+function huntForConference(conf, seeded, useBase = false) {
+  const confTeams = latestTeams.filter(t => t.conference === conf);
+  const cmp = (a, b) => compareByProjectedRecord(a, b, useBase);
+  const seededNames = new Set(seeded.map(t => t.team));
+  const metric = useBase ? 'base' : 'adjusted';
+
+  return confTeams
+    .filter(t => !seededNames.has(t.team))
+    .filter(t => (t[metric].pct_made_playoffs ?? 0) > 0)
+    .sort(cmp)
+    .slice(0, 3);
+}
+
 // Seed number a team held before the currently-selected picks were applied
 // (i.e. their position in the base/unconditional ordering) — used to show
 // movement arrows, same idea as the Standings table's rankChangeBadge.
+// Extends across the "in the hunt" teams too, so those rows get arrows too.
 function seedRankByTeam(conf) {
   const rankByTeam = {};
-  seedConference(conf, true).forEach((t, i) => { rankByTeam[t.team] = i + 1; });
+  const seeded = seedConference(conf, true);
+  seeded.forEach((t, i) => { rankByTeam[t.team] = i + 1; });
+  huntForConference(conf, seeded, true).forEach((t, i) => { rankByTeam[t.team] = seeded.length + i + 1; });
   return rankByTeam;
 }
 
@@ -238,13 +257,27 @@ function seedRow(t, rank, baseSeedByTeam) {
   `;
 }
 
+const huntDividerRow = `
+  <tr>
+    <td colspan="6" class="text-center text-xs font-semibold text-gray-500 uppercase tracking-widest" style="border-top:2px solid var(--border-default); padding-top:0.75rem;">In the Hunt</td>
+  </tr>
+`;
+
+function seedingBodyHtml(conf, baseSeedByTeam) {
+  const seeded = seedConference(conf);
+  const hunt = huntForConference(conf, seeded);
+  const seededRows = seeded.map((t, i) => seedRow(t, i + 1, baseSeedByTeam)).join('');
+  const huntRows = hunt.map((t, i) => seedRow(t, seeded.length + i + 1, baseSeedByTeam)).join('');
+  return seededRows + (hunt.length ? huntDividerRow : '') + huntRows;
+}
+
 function renderSeeding() {
   const afcBody = document.querySelector('#seeding-table-afc tbody');
   const nfcBody = document.querySelector('#seeding-table-nfc tbody');
   const afcBaseSeed = seedRankByTeam('AFC');
   const nfcBaseSeed = seedRankByTeam('NFC');
-  if (afcBody) afcBody.innerHTML = seedConference('AFC').map((t, i) => seedRow(t, i + 1, afcBaseSeed)).join('');
-  if (nfcBody) nfcBody.innerHTML = seedConference('NFC').map((t, i) => seedRow(t, i + 1, nfcBaseSeed)).join('');
+  if (afcBody) afcBody.innerHTML = seedingBodyHtml('AFC', afcBaseSeed);
+  if (nfcBody) nfcBody.innerHTML = seedingBodyHtml('NFC', nfcBaseSeed);
 }
 
 // --- Standings, grouped per view-toggle, sorted by projected finish --------
