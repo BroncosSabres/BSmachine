@@ -1,10 +1,18 @@
 // nhl-rankings.js — drives nhl/pages/rankings.html
 // Structurally a port of nfl-rankings.js, adapted for NHL's schema: rankings
 // are snapshotted by as_of_date (not week_number), records are W-L-OTL (not
-// W-L-T), and playoff seeding comes straight from the REAL current
-// division/conference standings written into the projected_standings
-// snapshot (nhl_tiebreakers.py) rather than being sorted client-side from
-// simulated win percentages the way NFL's seeding table is.
+// W-L-T), and playoff seeding is computed client-side from each team's
+// PROJECTED end-of-season points (nhl.team_season_predictions.projected_points,
+// via /api/nhl/power_rankings) - the same "sort by the simulated outcome, not
+// today's real standings" approach nfl-rankings.js's computeSeedOrder uses -
+// rather than from the REAL current standings the projected_standings
+// snapshot's conference_seeds/divisions blobs hold (those reflect
+// nhl_tiebreakers.py's real-record seeding, which is a different question:
+// "who would make the playoffs today," not "who's projected to."). The
+// seeding table itself is split into a section per division plus a Wild Card
+// section (matching the real NHL playoff bracket's qualification structure),
+// each row showing the actual projected points total so the ranking is
+// legible instead of implied by row order alone.
 import { apiUrl } from './api-config.js';
 import { probColor } from './rankings-shared.js';
 import { nhlLogoUrl } from './nhl-logos.js';
@@ -18,11 +26,6 @@ const btnDivision      = document.getElementById("btn-view-division");
 
 let view = 'division'; // 'division' | 'conference' | 'league'
 let currentRankings = [];
-
-// Seed labels in division-rank-then-wildcard display order (bracket pairing
-// itself, e.g. A1 vs WC2, is handled server-side by nhl_tiebreakers.py - this
-// is purely a display order for the seeding table).
-const SEED_LABELS = ['A1', 'A2', 'A3', 'B1', 'B2', 'B3', 'WC1', 'WC2'];
 
 const COLUMNS = [
   { label: 'Rank' },
@@ -51,6 +54,14 @@ function recordStr(r) {
   const wins = (r.reg_wins || 0) + (r.ot_wins || 0) + (r.so_wins || 0);
   const otso = (r.ot_losses || 0) + (r.so_losses || 0);
   return `${wins}-${r.reg_losses || 0}-${otso}`;
+}
+
+function projRecordStr(r) {
+  if (r.projected_wins == null) return '—';
+  const wins = Math.round(r.projected_wins);
+  const rl   = Math.round(r.projected_regulation_losses ?? 0);
+  const otso = Math.round(r.projected_ot_so_losses ?? 0);
+  return `${wins}-${rl}-${otso}`;
 }
 
 function formArrow(r) {
@@ -131,57 +142,109 @@ btnLeague.addEventListener('click', () => setView('league'));
 btnConference.addEventListener('click', () => setView('conference'));
 btnDivision.addEventListener('click', () => setView('division'));
 
-function loadSeedingTable(conf, tableId) {
-  const tbody = document.querySelector(`#${tableId} tbody`);
-  const snapshot = window.__nhlProjectedStandings;
-  if (!tbody || !snapshot) return;
-
-  const confSeeds = snapshot.conference_seeds?.[conf];
-  if (!confSeeds || !confSeeds.seeds) { tbody.innerHTML = ''; return; }
-
-  // Real current record for each team, from the division standings the
-  // snapshot already computed (nhl_tiebreakers.py) - not simulated.
-  const recordByTeam = {};
-  Object.values(snapshot.divisions || {}).forEach(rows => {
-    (rows || []).forEach(r => { recordByTeam[r.team] = r; });
-  });
-  const rankingByTeam = {};
-  currentRankings.forEach(r => { rankingByTeam[r.team] = r; });
-
-  const seededTeams = SEED_LABELS
-    .map(label => confSeeds.seeds[label])
-    .filter(Boolean);
-
-  tbody.innerHTML = seededTeams.map((team, i) => {
-    const rec = recordByTeam[team];
-    const rk  = rankingByTeam[team];
-    return `
-      <tr>
-        <td class="text-center font-mono">${i + 1}</td>
-        <td>
-          <div class="flex items-center gap-2">
-            <img src="${nhlLogoUrl(team)}" alt="${team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
-            <span>${team}</span>
-          </div>
-        </td>
-        <td class="text-center font-mono">${rec ? recordStr(rec) : '—'}</td>
-        ${pctCell(rk?.percent_division_top3)}
-        ${pctCell(rk?.percent_playoffs)}
-      </tr>
-    `;
-  }).join('');
+// Cascading comparator for ranking teams by PROJECTED outcome: primary key is
+// projected end-of-season points; ties (rare with simulated floats, but
+// possible) fall back to projected ROW (regulation + OT wins, the NHL's own
+// first real tiebreaker once points are equal - "games played" isn't a
+// useful tiebreaker here since every team's projection covers a full
+// 82-game season), then current rating, for a fully deterministic order.
+function compareByProjected(a, b) {
+  const ppA = a.projected_points ?? -1;
+  const ppB = b.projected_points ?? -1;
+  if (ppB !== ppA) return ppB - ppA;
+  const rowA = a.projected_row ?? -1;
+  const rowB = b.projected_row ?? -1;
+  if (rowB !== rowA) return rowB - rowA;
+  return (b.total_rating ?? -Infinity) - (a.total_rating ?? -Infinity);
 }
 
-async function loadProjectedStandings() {
-  try {
-    const res = await fetch(apiUrl('nhl', 'projected_standings'));
-    if (!res.ok) return;
-    const json = await res.json();
-    window.__nhlProjectedStandings = json.data || {};
+// Reproduces nhl_tiebreakers.py's qualification rule (top 3 of each division
+// qualify directly, next 2 best in the conference fill the wild card spots)
+// but driven by PROJECTED points instead of real current standings -
+// answering "who's projected to make the playoffs," not "who would make it
+// if the season ended today." Grouped by real division name (not an abstract
+// "A"/"B" bracket label) since the table displays each division separately,
+// same as the actual NHL playoff picture.
+function computeProjectedSeedGroups(conf) {
+  const confTeams = currentRankings.filter(r => r.conference === conf && r.projected_points != null);
+  const divisions = [...new Set(confTeams.map(r => r.division))].sort();
 
-    loadSeedingTable('Eastern', 'seeding-table-eastern');
-    loadSeedingTable('Western', 'seeding-table-western');
-  } catch (e) { /* non-fatal — seeding table just stays empty */ }
+  const divisionGroups = divisions.map(div => ({
+    name: div,
+    teams: confTeams.filter(r => r.division === div).sort(compareByProjected).slice(0, 3),
+  }));
+
+  const divisionTeamNames = new Set(divisionGroups.flatMap(g => g.teams.map(t => t.team)));
+  const remaining = confTeams
+    .filter(t => !divisionTeamNames.has(t.team))
+    .sort(compareByProjected);
+
+  const wildcards = remaining.slice(0, 2);
+
+  // Next-best teams still mathematically alive for a wild card spot, shown
+  // below a divider as context for how close the race is - same "In the
+  // Hunt" convention nfl-rankings.js's computeSeedOrder uses. Filtered to
+  // percent_playoffs > 0 since late in the season this can shrink to fewer
+  // than 3 teams, or none at all, once teams are mathematically eliminated.
+  const inTheHunt = remaining
+    .slice(2)
+    .filter(t => (t.percent_playoffs ?? 0) > 0)
+    .slice(0, 3);
+
+  return { divisionGroups, wildcards, inTheHunt };
+}
+
+function pointsStr(t) {
+  return t.projected_points != null ? t.projected_points.toFixed(1) : '—';
+}
+
+function seedRowHtml(t, rank) {
+  return `
+    <tr>
+      <td class="text-center font-mono">${rank}</td>
+      <td>
+        <div class="flex items-center gap-2">
+          <img src="${nhlLogoUrl(t.team)}" alt="${t.team}" class="w-6 h-6 object-contain shrink-0" onerror="this.style.display='none'">
+          <span>${t.team}</span>
+        </div>
+      </td>
+      <td class="text-center font-mono">${pointsStr(t)}</td>
+      <td class="text-center font-mono">${projRecordStr(t)}</td>
+      ${pctCell(t.percent_division_top3)}
+      ${pctCell(t.percent_playoffs)}
+    </tr>
+  `;
+}
+
+function seedGroupHeaderHtml(label) {
+  return `
+    <tr>
+      <td colspan="6" class="text-xs font-semibold text-gray-500 uppercase tracking-widest" style="padding-top:0.75rem;">${label}</td>
+    </tr>
+  `;
+}
+
+function loadSeedingTable(conf, tableId) {
+  const tbody = document.querySelector(`#${tableId} tbody`);
+  if (!tbody) return;
+
+  const { divisionGroups, wildcards, inTheHunt } = computeProjectedSeedGroups(conf);
+
+  let html = '';
+  divisionGroups.forEach(g => {
+    html += seedGroupHeaderHtml(g.name);
+    html += g.teams.map((t, i) => seedRowHtml(t, i + 1)).join('');
+  });
+  if (wildcards.length) {
+    html += seedGroupHeaderHtml('Wild Card');
+    html += wildcards.map((t, i) => seedRowHtml(t, i + 1)).join('');
+  }
+  if (inTheHunt.length) {
+    html += seedGroupHeaderHtml('In the Hunt');
+    html += inTheHunt.map((t, i) => seedRowHtml(t, i + 1)).join('');
+  }
+
+  tbody.innerHTML = html;
 }
 
 async function loadRankings() {
@@ -201,11 +264,8 @@ async function loadRankings() {
   drawStanleyCupWheel(currentRankings, 'stanleyCupWheel');
   updateScatter(currentRankings);
 
-  if (window.__nhlProjectedStandings) {
-    loadSeedingTable('Eastern', 'seeding-table-eastern');
-    loadSeedingTable('Western', 'seeding-table-western');
-  }
+  loadSeedingTable('Eastern', 'seeding-table-eastern');
+  loadSeedingTable('Western', 'seeding-table-western');
 }
 
 loadRankings();
-loadProjectedStandings();
