@@ -4,6 +4,7 @@ import { apiUrl } from './api-config.js';
 import { SPORTS } from './sport-config.js';
 import { teamSlug } from './utils.js';
 import { nflLogoUrl } from './nfl-logos.js';
+import { nhlLogoUrl } from './nhl-logos.js';
 import { renderPredictionTile } from './prediction-tile.js';
 
 function nrlLogoUrl(teamName) {
@@ -83,6 +84,25 @@ function adaptNfl(p) {
   };
 }
 
+function adaptNhl(p) {
+  return {
+    sport: 'nhl',
+    date: p.date,
+    homeTeam: p.home_team,
+    awayTeam: p.away_team,
+    homeScore: p.home_score,
+    awayScore: p.away_score,
+    homePerc: p.home_perc,
+    awayPerc: p.away_perc,
+    expHome: p.exp_home_score,
+    expAway: p.exp_away_score,
+    isFinished: p.is_finished,
+    hasPrediction: p.has_prediction,
+    logoUrl: nhlLogoUrl,
+    gameId: p.game_id,
+  };
+}
+
 function dayLabel(iso) {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
@@ -103,13 +123,14 @@ async function loadUpcomingFeed() {
   const feed = document.getElementById('upcoming-feed');
   if (!feed) return;
 
-  const [nrlEntries, nrlwEntries, nflEntries] = await Promise.all([
+  const [nrlEntries, nrlwEntries, nflEntries, nhlEntries] = await Promise.all([
     fetchUpcoming('nrl', 'upcoming_predictions?days=7', adaptNrl),
     fetchUpcoming('nrl', 'upcoming_predictions/nrlw?days=7', adaptNrlw),
     fetchUpcoming('nfl', 'upcoming_predictions?days=7', adaptNfl),
+    fetchUpcoming('nhl', 'upcoming_predictions?days=7', adaptNhl),
   ]);
 
-  const entries = [...nrlEntries, ...nrlwEntries, ...nflEntries]
+  const entries = [...nrlEntries, ...nrlwEntries, ...nflEntries, ...nhlEntries]
     .filter(e => e.date)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 

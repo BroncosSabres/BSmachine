@@ -21,9 +21,10 @@ function loadPlotly() {
 }
 
 function jointBinsUrl(sport, id) {
-  // NRL's joint-bins endpoint is registered flat (not sport-nested); NFL's is under /nfl/.
-  return sport === 'nfl'
-    ? apiUrl('nfl', `game_sgm_bins_range/${id}`)
+  // NRL's joint-bins endpoint is registered flat (not sport-nested); NFL/NHL's
+  // are under /nfl/ and /nhl/ respectively.
+  return (sport === 'nfl' || sport === 'nhl')
+    ? apiUrl(sport, `game_sgm_bins_range/${id}`)
     : `${BACKEND}/match_sgm_bins_range/${id}`;
 }
 

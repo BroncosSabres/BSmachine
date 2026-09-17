@@ -37,6 +37,23 @@ export const SPORTS = {
       { label: 'Community',      href: 'betslips.html',              disabled: true },
     ],
   },
+  nhl: {
+    label: 'NHL',
+    basePath: '/nhl/pages/',
+    landingPage: 'rankings.html',
+    hasCompetitionToggle: false,
+    nav: [
+      { label: 'Rankings',       href: 'rankings.html' },
+      { label: 'Predictions',    href: 'matchups.html' },
+      { label: 'Multi Builder',  href: 'tryscorer_predictions.html' },
+      { label: 'Simulator',      href: 'simulator.html',             disabled: true },
+      { label: 'Tipping',        href: 'tipping.html',               disabled: true },
+      { label: 'Leaderboard',    href: 'leaderboard.html',           disabled: true },
+      { label: 'Tracker',        href: 'tracker.html',               disabled: true },
+      { label: 'Magic Numbers',  href: 'magic_numbers.html',         disabled: true },
+      { label: 'Community',      href: 'betslips.html',              disabled: true },
+    ],
+  },
 };
 
 export function getCurrentSport() {

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-T09VHK1QDP"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-T09VHK1QDP');
+    </script>
+    <!-- Performance hints: preconnect + early backend wakeup -->
+    <link rel="preconnect" href="https://bsmachine-backend.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NHL Power Rankings</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="site-header"></div>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+      <div class="flex items-baseline gap-4 mb-8 flex-wrap">
+        <h1 class="text-4xl font-bold">NHL Power Rankings</h1>
+        <span id="week-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
+      </div>
+
+      <!-- Projected Playoff Seeding -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Projected Playoff Seeding</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Eastern Conference</h3>
+            <div class="overflow-x-auto">
+              <table class="data-table data-table--compact" id="seeding-table-eastern">
+                <thead>
+                  <tr>
+                    <th>Seed</th>
+                    <th>Team</th>
+                    <th>Record</th>
+                    <th>Div Top-3 %</th>
+                    <th>Playoff %</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Western Conference</h3>
+            <div class="overflow-x-auto">
+              <table class="data-table data-table--compact" id="seeding-table-western">
+                <thead>
+                  <tr>
+                    <th>Seed</th>
+                    <th>Team</th>
+                    <th>Record</th>
+                    <th>Div Top-3 %</th>
+                    <th>Playoff %</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Rankings Table -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 class="text-xl font-semibold text-gray-100">Power Rankings</h2>
+          <div id="view-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+            <button id="btn-view-division" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">Division</button>
+            <button id="btn-view-conference" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">Conference</button>
+            <button id="btn-view-league" type="button"
+                    class="view-btn px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">League</button>
+          </div>
+        </div>
+        <div id="rankings-groups"></div>
+      </div>
+
+      <!-- Playoff Wheels -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Conference Playoff Odds</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div>
+            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Eastern</h3>
+            <canvas id="easternWheel"></canvas>
+          </div>
+          <div>
+            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Western</h3>
+            <canvas id="westernWheel"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Stanley Cup Odds</h2>
+        <canvas id="stanleyCupWheel"></canvas>
+      </div>
+
+      <!-- Scatterplot -->
+      <div class="card">
+        <h2 class="text-xl font-semibold mb-4 text-gray-100">Offensive vs Defensive Ratings</h2>
+        <canvas id="ratingsScatter"></canvas>
+      </div>
+    </main>
+
+    <script type="module" src="/js/nhl-rankings.js"></script>
+    <script type="module">
+      import { updateAuthNav } from '/js/supabase-client.js'
+      updateAuthNav()
+    </script>
+    <script>
+      fetch('/components/header.html')
+        .then(res => res.text())
+        .then(html => {
+          document.getElementById("site-header").innerHTML = html;
+
+          document.getElementById("bmc-button").innerHTML = `
+            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
+              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+                   alt="Buy Me a Coffee"
+                   style="height: 40px; width: 145px;">
+            </a>
+          `;
+
+          const menuToggle = document.getElementById("menu-toggle");
+          const mobileMenu = document.getElementById("mobile-menu");
+          if (menuToggle && mobileMenu) {
+            menuToggle.addEventListener("click", () => {
+              mobileMenu.classList.toggle("hidden");
+            });
+          }
+        });
+    </script>
+    <div id="site-footer"></div>
+    <script src="/js/load-footer.js"></script>
+  </body>
+</html>

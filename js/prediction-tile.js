@@ -49,7 +49,12 @@ function renderScore(entry) {
             <div class="text-xs text-gray-500 mt-0.5">Final</div>`;
   }
   if (entry.hasPrediction) {
-    return `<div class="text-lg font-bold font-mono text-gray-300">${entry.expHome} &ndash; ${entry.expAway}</div>
+    // NHL is low-scoring enough that 2 d.p. carries real signal (2.7 vs 2.5
+    // expected goals is a meaningfully different prediction); NRL/NFL keep
+    // their existing whole/1-d.p. backend-rounded display.
+    const expHome = entry.sport === 'nhl' ? Number(entry.expHome).toFixed(2) : entry.expHome;
+    const expAway = entry.sport === 'nhl' ? Number(entry.expAway).toFixed(2) : entry.expAway;
+    return `<div class="text-lg font-bold font-mono text-gray-300">${expHome} &ndash; ${expAway}</div>
             <div class="text-xs text-gray-500 mt-0.5">Predicted</div>`;
   }
   return `<div class="text-sm text-gray-500">vs</div>`;
@@ -59,6 +64,7 @@ const SPORT_BADGE_STYLE = {
   nrl:  'background:rgba(251,191,36,0.12); color:#fbbf24;',
   nrlw: 'background:rgba(232,121,249,0.12); color:#e879f9;',
   nfl:  'background:rgba(96,165,250,0.12); color:#60a5fa;',
+  nhl:  'background:rgba(129,140,248,0.12); color:#818cf8;',
 };
 
 function builderUrl(entry) {
@@ -70,6 +76,9 @@ function builderUrl(entry) {
   }
   if (entry.sport === 'nfl' && entry.gameId != null && entry.weekNumber != null) {
     return `/nfl/pages/tryscorer_predictions.html?week=${entry.weekNumber}&game_id=${entry.gameId}`;
+  }
+  if (entry.sport === 'nhl' && entry.gameId != null) {
+    return `/nhl/pages/tryscorer_predictions.html?game_id=${entry.gameId}`;
   }
   return null;
 }
