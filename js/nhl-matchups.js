@@ -14,7 +14,7 @@ const dateBadge   = document.getElementById('week-badge');
 const prevBtn     = document.getElementById('week-prev');
 const nextBtn     = document.getElementById('week-next');
 
-const WINDOW_DAYS = 14; // comfortably covers bs_machine_nhl.py's forward prediction window plus buffer
+const WINDOW_DAYS = 60; // well beyond bs_machine_nhl.py's forward prediction window so paging never stops short of predicted games
 
 let dateKeys    = [];
 let gamesByDate = {};

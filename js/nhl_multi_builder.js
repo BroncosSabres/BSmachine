@@ -43,7 +43,7 @@ const resultLegs  = document.getElementById('result-legs');
 const resultProb  = document.getElementById('result-prob');
 const resultOdds  = document.getElementById('result-odds');
 
-const WINDOW_DAYS = 14;
+const WINDOW_DAYS = 60;
 
 let dateKeys      = [];
 let gamesByDate    = {};
