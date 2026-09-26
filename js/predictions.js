@@ -2,6 +2,7 @@
 import { supabase } from './supabase-client.js';
 import { renderDistribution3D, purgeDistribution3D } from './distribution-3d.js';
 import { roundLabel } from './utils.js';
+import { createMatchLinesController } from './match-lines.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -267,6 +268,68 @@ async function fetchMachineDistributions(matchId) {
     return data;
   } catch { return null; }
 }
+
+// --- CUSTOM MATCH LINES ---
+const matchLines = createMatchLinesController({
+  storageKey: 'bsmachine_match_lines_nrl',
+  fetchDistribution: fetchMachineDistributions,
+});
+let lineSortMode = 'default'; // 'default' (kickoff order) | 'discrepant'
+let linesRoundMatches = [];   // matches currently rendered, for the "Reset All Lines" remount
+
+function mountLineControls(matches) {
+  matches.forEach(match => {
+    if (match.match_id == null) return;
+    const card = container.querySelector(`.match-card[data-match-id="${match.match_id}"]`);
+    const slot = card?.querySelector('.js-line-bar');
+    if (!slot) return;
+    const expectedMargin = (typeof match.exp_home_score === 'number' && typeof match.exp_away_score === 'number')
+      ? match.exp_home_score - match.exp_away_score
+      : null;
+    matchLines.mountControl(slot, {
+      id: String(match.match_id),
+      homeTeam: match.home_team,
+      awayTeam: match.away_team,
+      homeColor: teamColor(match.home_team),
+      awayColor: teamColor(match.away_team),
+      expectedMargin,
+      onChange: () => { if (lineSortMode === 'discrepant') applyLineSort(); },
+    });
+  });
+}
+
+function applyLineSort() {
+  const cards = Array.from(container.querySelectorAll('.match-card'));
+  if (!cards.length) return;
+  if (lineSortMode === 'discrepant') {
+    cards.sort((a, b) => {
+      const da = matchLines.getDiscrepancy(a.dataset.matchId) ?? -1;
+      const db = matchLines.getDiscrepancy(b.dataset.matchId) ?? -1;
+      return db - da;
+    });
+  } else {
+    cards.sort((a, b) => Number(a.dataset.order ?? 0) - Number(b.dataset.order ?? 0));
+  }
+  cards.forEach(c => container.appendChild(c));
+}
+
+function updateSortBtnLabel() {
+  const btn = document.getElementById('sort-lines-btn');
+  if (btn) btn.textContent = lineSortMode === 'discrepant' ? 'Sort: Most Discrepant' : 'Sort: Kickoff Time';
+}
+
+document.getElementById('sort-lines-btn')?.addEventListener('click', () => {
+  lineSortMode = lineSortMode === 'discrepant' ? 'default' : 'discrepant';
+  updateSortBtnLabel();
+  applyLineSort();
+});
+updateSortBtnLabel();
+
+document.getElementById('reset-lines-btn')?.addEventListener('click', () => {
+  if (!confirm('Reset all custom lines back to the BS Machine\'s default for every match?')) return;
+  matchLines.resetAll();
+  mountLineControls(linesRoundMatches);
+});
 
 // --- USER MODEL: PICKS FETCH ---
 const userPicksCache = {};
@@ -1405,7 +1468,7 @@ async function updateLiveScoreOverlays(predictions) {
 
 // --- MATCH CARD ---
 function createMatchCard(data) {
-  const { home_team, away_team, home_score, away_score, home_perc, away_perc, kickoff_time } = data;
+  const { home_team, away_team, home_score, away_score, home_perc, away_perc, kickoff_time, match_id } = data;
   const kickoffLabel = formatKickoff(kickoff_time);
   const matchKey = `${home_team}_v_${away_team}`;
 
@@ -1424,6 +1487,7 @@ function createMatchCard(data) {
   const card = document.createElement("div");
   card.className = "match-card";
   card.dataset.matchKey = matchKey;
+  if (match_id != null) card.dataset.matchId = match_id;
 
   // Store machine data in cache for blended display
   cardDataCache[matchKey] = {
@@ -1510,6 +1574,9 @@ function createMatchCard(data) {
 
     <!-- MOBILE layout (<md) -->
     <div class="js-blend-mobile flex flex-col gap-2 md:hidden">${initialMobile}</div>
+
+    <!-- Custom match-line probability bar (populated when a line is entered) -->
+    <div class="js-line-bar"></div>
 
     <!-- Footer row: tryscorer only, no tipping -->
     <div class="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-500">
@@ -2055,11 +2122,16 @@ async function loadRound() {
     Object.keys(cardDataCache).forEach(k => delete cardDataCache[k]);
 
     if (allMatches.length === 0) {
+      linesRoundMatches = [];
       container.innerHTML = `<p class="text-gray-400">No matches found for Round ${currentRound}.</p>`;
       return;
     }
 
-    for (const match of allMatches) {
+    lineSortMode = 'default';
+    updateSortBtnLabel();
+    linesRoundMatches = allMatches;
+
+    allMatches.forEach((match, index) => {
       // Build card data: fall back to equal 50/50 if no prediction
       const cardData = {
         home_team:  match.home_team,
@@ -2069,8 +2141,10 @@ async function loadRound() {
         home_perc:    match.home_perc ?? 0.5,
         away_perc:    match.away_perc ?? 0.5,
         kickoff_time: kickoffMap?.[match.match_id] ?? null,
+        match_id:     match.match_id ?? null,
       };
       const card = createMatchCard(cardData);
+      card.dataset.order = index;
       container.appendChild(card);
 
       checkTryscorerAvailable(match.home_team, match.away_team).then(({ available, matchId }) => {
@@ -2080,10 +2154,13 @@ async function loadRound() {
             : tryscorerButtonDisabled();
         });
       });
-    }
+    });
 
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);
+
+    // Async: mount custom-line sliders (defaulted to the BS Machine's suggested line)
+    mountLineControls(allMatches);
 
     // Start fetching user picks immediately — doesn't depend on machine distributions
     const userPicksPromise = fetchUserPicksForRound(currentRound);
