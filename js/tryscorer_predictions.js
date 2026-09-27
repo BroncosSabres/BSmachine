@@ -154,8 +154,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const matchSelect    = document.getElementById('match-select');
   const teamsContainer = document.getElementById('teams-container');
   const resultDiv      = document.getElementById('result');
-  const btnNrl         = document.getElementById('btn-nrl');
-  const btnNrlw        = document.getElementById('btn-nrlw');
   const downloadCsvBtn  = document.getElementById('download-tryscorer-csv');
   const resetMatchBtn   = document.getElementById('reset-match-btn');
   const resetAllBtn     = document.getElementById('reset-all-btn');
@@ -190,44 +188,12 @@ document.addEventListener("DOMContentLoaded", function () {
   const awayTotalValSel   = document.getElementById('away-total-val');
   const awayTotalClearBtn = document.getElementById('away-total-clear');
 
-  // --- COMPETITION TOGGLE ---
-  let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
-  const _urlCompetition = new URLSearchParams(window.location.search).get('competition');
-  if (_urlCompetition === 'nrl' || _urlCompetition === 'nrlw') {
-    competition = _urlCompetition;
-    localStorage.setItem('bsmachine_competition', competition);
-  }
-
-  function updateCompetitionButtons() {
-    if (competition === 'nrl') {
-      btnNrl.classList.add('bg-amber-400', 'text-gray-900');
-      btnNrl.classList.remove('text-gray-400');
-      btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
-      btnNrlw.classList.add('text-gray-400');
-    } else {
-      btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
-      btnNrlw.classList.remove('text-gray-400');
-      btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
-      btnNrl.classList.add('text-gray-400');
-    }
-  }
-  btnNrl.addEventListener('click', () => {
-    if (competition !== 'nrl') {
-      competition = 'nrl';
-      localStorage.setItem('bsmachine_competition', competition);
-      updateCompetitionButtons();
-      fetchMatchesAndPopulate();
-    }
-  });
-  btnNrlw.addEventListener('click', () => {
-    if (competition !== 'nrlw') {
-      competition = 'nrlw';
-      localStorage.setItem('bsmachine_competition', competition);
-      updateCompetitionButtons();
-      fetchMatchesAndPopulate();
-    }
-  });
-  updateCompetitionButtons();
+  // --- COMPETITION ---
+  // Mirrors getCompetition() in js/competition.js (classic script, can't import).
+  // ?comp=nrlw (or the legacy ?competition=nrlw) selects NRLW; otherwise NRL.
+  const _compParams = new URLSearchParams(window.location.search);
+  const competition = (_compParams.get('comp') || _compParams.get('competition')) === 'nrlw' ? 'nrlw' : 'nrl';
+  const _compQs = competition === 'nrlw' ? 'comp=nrlw' : '';
 
   // --- STATE ---
   let matchList         = [];
@@ -2894,7 +2860,7 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.textContent = '★ Saved';
         btn.style.borderColor = '#22c55e';
         btn.style.color       = '#4ade80';
-        _showBetslipToast('Betslip saved! View it on the', '/nrl/pages/betslips.html', 'betslips page');
+        _showBetslipToast('Betslip saved! View it on the', `/nrl/pages/betslips.html${_compQs ? '?' + _compQs : ''}`, 'betslips page');
         setTimeout(() => loadTryscorerCounts(currentMatchId), 500);
         setTimeout(() => renderCommunityBetslips(currentMatchId), 500);
       } else {
@@ -3007,12 +2973,12 @@ document.addEventListener("DOMContentLoaded", function () {
       let betslips;
       if (!matchId) {
         const round = matchList[0]?.round_number;
-        if (link) link.href = `/nrl/pages/betslips.html`;
+        if (link) link.href = `/nrl/pages/betslips.html${_compQs ? '?' + _compQs : ''}`;
         if (!round) { section.classList.add('hidden'); return; }
         betslips = await _fetchCommunityDirect(null, round, sortVal, 8);
         if (_communityMatchId !== null) return; // match selected while loading
       } else {
-        if (link) link.href = `/nrl/pages/betslips.html?match=${matchId}`;
+        if (link) link.href = `/nrl/pages/betslips.html?match=${matchId}${_compQs ? '&' + _compQs : ''}`;
         betslips = await _fetchCommunityDirect(matchId, null, sortVal, 5);
         if (_communityMatchId !== matchId) return; // stale
       }

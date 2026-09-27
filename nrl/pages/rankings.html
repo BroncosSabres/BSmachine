@@ -29,15 +29,8 @@
 
     <main class="max-w-7xl mx-auto px-4 py-8">
       <div class="flex items-baseline gap-4 mb-8 flex-wrap">
-        <h1 class="text-4xl font-bold">Power Rankings</h1>
+        <h1 class="text-4xl font-bold">Power Rankings <span data-comp-label class="comp-pill"></span></h1>
         <span id="round-badge" class="text-sm font-medium text-gray-500 bg-gray-800 border border-gray-700 px-2.5 py-1 rounded-full"></span>
-        <div id="competition-toggle"
-             class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
-          <button id="btn-nrl" type="button"
-                  class="competition-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">NRL</button>
-          <button id="btn-nrlw" type="button"
-                  class="competition-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">NRLW</button>
-        </div>
       </div>
 
       <!-- Rankings Table -->
@@ -121,29 +114,6 @@
     <script type="module">
       import { updateAuthNav } from '/js/supabase-client.js'
       updateAuthNav()
-    </script>
-    <script>
-      fetch('/components/header.html')
-        .then(res => res.text())
-        .then(html => {
-          document.getElementById("site-header").innerHTML = html;
-
-          document.getElementById("bmc-button").innerHTML = `
-            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
-                   alt="Buy Me a Coffee"
-                   style="height: 40px; width: 145px;">
-            </a>
-          `;
-
-          const menuToggle = document.getElementById("menu-toggle");
-          const mobileMenu = document.getElementById("mobile-menu");
-          if (menuToggle && mobileMenu) {
-            menuToggle.addEventListener("click", () => {
-              mobileMenu.classList.toggle("hidden");
-            });
-          }
-        });
     </script>
     <div id="site-footer"></div>
     <script src="/js/load-footer.js"></script>

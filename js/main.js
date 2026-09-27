@@ -1,18 +1,17 @@
 // main.js
 import { updateChart, updateScatter, formatDecimal, formatPercent } from './charts.js';
 import { teamSlug } from './utils.js';
+import { getCompetition } from './competition.js';
 
 const ladderTable   = document.querySelector("#ladder-table tbody");
 const rankingsTable = document.querySelector("#rankings-table tbody");
 const chartDropdown = document.getElementById("chart-select");
-const btnNrl        = document.getElementById("btn-nrl");
-const btnNrlw       = document.getElementById("btn-nrlw");
 
 const BACKEND = 'https://bsmachine-backend.onrender.com/api';
 
 let resultsData = [];
 let prevData     = {};
-let competition  = localStorage.getItem('bsmachine_competition') || 'nrl';
+const competition = getCompetition();
 
 // Colour a probability cell from red → yellow → green
 function probColor(val) {
@@ -172,37 +171,5 @@ async function loadRankings() {
 chartDropdown.addEventListener('change', (e) => {
   updateChart(resultsData, e.target.value, prevData);
 });
-
-// --- COMPETITION TOGGLE ---
-function updateCompetitionButtons() {
-  if (competition === 'nrl') {
-    btnNrl.classList.add('bg-amber-400', 'text-gray-900');
-    btnNrl.classList.remove('text-gray-400');
-    btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
-    btnNrlw.classList.add('text-gray-400');
-  } else {
-    btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
-    btnNrlw.classList.remove('text-gray-400');
-    btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
-    btnNrl.classList.add('text-gray-400');
-  }
-}
-btnNrl.addEventListener('click', () => {
-  if (competition !== 'nrl') {
-    competition = 'nrl';
-    localStorage.setItem('bsmachine_competition', competition);
-    updateCompetitionButtons();
-    loadRankings();
-  }
-});
-btnNrlw.addEventListener('click', () => {
-  if (competition !== 'nrlw') {
-    competition = 'nrlw';
-    localStorage.setItem('bsmachine_competition', competition);
-    updateCompetitionButtons();
-    loadRankings();
-  }
-});
-updateCompetitionButtons();
 
 loadRankings();

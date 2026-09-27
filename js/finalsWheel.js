@@ -1,4 +1,5 @@
 // js/finalsWheel.js
+import { getCompetition } from './competition.js';
 
 const BACKEND = 'https://bsmachine-backend.onrender.com/api';
 
@@ -193,15 +194,7 @@ async function drawFinalsWheel(competition) {
 }
 
 function initFinalsWheel() {
-  const btnNrl  = document.getElementById('btn-nrl');
-  const btnNrlw = document.getElementById('btn-nrlw');
-
-  drawFinalsWheel(localStorage.getItem('bsmachine_competition') || 'nrl');
-
-  // main.js owns the toggle buttons/localStorage key; this just redraws the
-  // wheel in response to the same clicks rather than duplicating that state.
-  btnNrl?.addEventListener('click', () => drawFinalsWheel('nrl'));
-  btnNrlw?.addEventListener('click', () => drawFinalsWheel('nrlw'));
+  drawFinalsWheel(getCompetition());
 }
 
 window.addEventListener('DOMContentLoaded', initFinalsWheel);

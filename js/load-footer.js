@@ -25,48 +25,83 @@ import('/js/my-stats.js').catch(function () {});
     .then(function (html) { el.innerHTML = html; });
 })();
 
-// ---- Sport-aware nav + switcher ----
-// header.html ships with empty #desktop-nav/#mobile-nav-links/#sport-switcher
-// containers (scripts injected via innerHTML don't execute, so this can't
-// live inside header.html itself) - populate them here once the header lands.
+// ---- Header ----
+// Every page just needs <div id="site-header"></div> + this script. The header
+// markup is fetched here, then its empty containers (competition tabs, section
+// nav, match ticker) are filled from js/sport-config.js. Scripts injected via
+// innerHTML don't execute, so none of this can live inside header.html.
+// Add data-no-bmc to #site-header to leave out the Buy Me a Coffee button.
+var BMC_HTML =
+  '<a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">' +
+    '<img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px; width:145px;">' +
+  '</a>';
+
 (function () {
-  function populate() {
-    var desktopNav = document.getElementById('desktop-nav');
-    var mobileNav  = document.getElementById('mobile-nav-links');
-    var switcher   = document.getElementById('sport-switcher');
-    if (!desktopNav && !mobileNav && !switcher) return false;
+  var headerEl = document.getElementById('site-header');
+  if (!headerEl) return;
 
-    import('/js/sport-config.js').then(function (mod) {
-      var sport = mod.getCurrentSport();
-      if (desktopNav) desktopNav.innerHTML = mod.renderNav(sport, 'site-nav-link');
-      if (mobileNav)  mobileNav.innerHTML  = mod.renderNav(sport, 'mobile-nav-link');
-      if (switcher) {
-        var options = Object.keys(mod.SPORTS).map(function (key) {
-          var selectedAttr = key === sport ? ' selected' : '';
-          return '<option value="' + key + '"' + selectedAttr + '>' + mod.SPORTS[key].label + '</option>';
-        }).join('');
-        switcher.innerHTML = '<select id="sport-select" class="sport-select" aria-label="Sport">' + options + '</select>';
-        var select = switcher.querySelector('select');
-        select.addEventListener('change', function () {
-          var newSport = select.value;
-          if (newSport === mod.getCurrentSport()) return;
-          mod.setCurrentSport(newSport);
-          window.location.href = mod.SPORTS[newSport].basePath + mod.SPORTS[newSport].landingPage;
-        });
-      }
-    });
-    return true;
-  }
+  function populate(mod) {
+    var sport = mod.getCurrentSport();
 
-  if (!populate()) {
-    var headerEl = document.getElementById('site-header');
-    if (headerEl) {
-      var obs = new MutationObserver(function () {
-        if (populate()) obs.disconnect();
+    document.getElementById('comp-tabs').innerHTML = mod.renderCompTabs(sport);
+
+    if (sport) {
+      var cfg = mod.SPORTS[sport];
+      // NRL/NRLW share pages - label which one this is, since the URL decides.
+      document.querySelectorAll('[data-comp-label]').forEach(function (el) {
+        el.innerHTML = '<img src="' + cfg.logo + '" alt="" class="comp-logo">' + cfg.label;
+        el.style.setProperty('--comp-color', cfg.color);
       });
-      obs.observe(headerEl, { childList: true, subtree: true });
+      if (sport === 'nrlw') {
+        document.title = /\bNRL\b/.test(document.title)
+          ? document.title.replace(/\bNRL\b/, 'NRLW')
+          : 'NRLW ' + document.title;
+      }
+
+      document.getElementById('section-nav-bar').classList.remove('hidden');
+      document.getElementById('desktop-nav').innerHTML = mod.renderNav(sport, 'site-nav-link');
+      document.getElementById('mobile-nav-links').innerHTML =
+        '<div class="mobile-nav-heading">' + cfg.label + '</div>' +
+        mod.renderNav(sport, 'mobile-nav-link');
+    } else {
+      // No section nav on general pages, so the hamburger has nothing extra to show.
+      document.getElementById('menu-toggle').classList.add('sm:hidden');
+    }
+
+    // Keep the active tab in view when the tab row scrolls on small screens
+    // (set scrollLeft directly - scrollIntoView could also scroll the page).
+    var tabs = document.getElementById('comp-tabs');
+    var activeTab = tabs.querySelector('.is-active');
+    if (activeTab && activeTab.offsetLeft + activeTab.offsetWidth > tabs.clientWidth) {
+      tabs.scrollLeft = activeTab.offsetLeft - tabs.offsetLeft;
     }
   }
+
+  function wire() {
+    if (!headerEl.hasAttribute('data-no-bmc')) {
+      document.getElementById('bmc-button').innerHTML = BMC_HTML;
+      document.getElementById('mobile-bmc').innerHTML = BMC_HTML;
+    }
+
+    var menuToggle = document.getElementById('menu-toggle');
+    var mobileMenu = document.getElementById('mobile-menu');
+    menuToggle.addEventListener('click', function () {
+      var open = mobileMenu.classList.toggle('hidden') === false;
+      menuToggle.setAttribute('aria-expanded', String(open));
+    });
+
+    import('/js/sport-config.js').then(populate);
+    import('/js/match-ticker.js').then(function (mod) {
+      mod.initMatchTicker(document.getElementById('match-ticker'));
+    });
+  }
+
+  fetch('/components/header.html')
+    .then(function (r) { return r.text(); })
+    .then(function (html) {
+      headerEl.innerHTML = html;
+      wire();
+    });
 })();
 
 // ---- Prize Banner ----
@@ -103,8 +138,12 @@ function dismissPrizeBanner() {
 (function () {
   var CACHE_KEY = 'bsm_cup_banner';
 
-  // BS Cup is an NRL-only competition - don't surface it while browsing NFL pages.
-  if ((localStorage.getItem('bsmachine_sport') || 'nrl') !== 'nrl') return;
+  // BS Cup is an NRL-only competition - only surface it on NRL pages and on
+  // general pages (home, about, ...), never while browsing NRLW/NFL/NHL.
+  var path = window.location.pathname;
+  var onNrlPage = path.indexOf('/nrl/') === 0 && !/[?&](comp|competition)=nrlw/.test(window.location.search);
+  var onSportPage = /^\/(nrl|nfl|nhl)\//.test(path);
+  if (onSportPage && !onNrlPage) return;
 
   function applyBanner(cup) {
     var label      = _cupRoundLabel(cup.current_cup_round, cup.bracket_size);

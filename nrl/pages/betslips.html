@@ -23,22 +23,13 @@
     <div id="site-header"></div>
 
     <main class="w-full max-w-3xl mx-auto px-4 py-4 md:py-8 pb-12">
-      <h1 class="text-2xl md:text-4xl font-bold mb-2 text-center">User Predictions</h1>
+      <h1 class="text-2xl md:text-4xl font-bold mb-2 text-center">User Predictions <span data-comp-label class="comp-pill"></span></h1>
       <p class="mb-6 text-gray-400 text-center text-sm">Browse SGM betslips saved by the community. Vote on your favourites!</p>
 
       <!-- Filter bar -->
       <div class="card mb-6 flex flex-col gap-3">
-        <!-- Row 1: competition + round -->
+        <!-- Row 1: round -->
         <div class="flex flex-wrap items-center gap-3">
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Competition</span>
-            <div id="comp-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
-              <button id="btn-nrl" type="button"
-                      class="comp-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">NRL</button>
-              <button id="btn-nrlw" type="button"
-                      class="comp-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">NRLW</button>
-            </div>
-          </div>
           <div id="round-filter-wrap" class="flex items-center gap-2">
             <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Round</span>
             <select id="round-select"
@@ -95,19 +86,6 @@
       import { updateAuthNav, getSession } from '/js/supabase-client.js'
       window._getSupabaseSession = getSession
       updateAuthNav()
-      fetch('/components/header.html')
-        .then(r => r.text())
-        .then(html => {
-          document.getElementById('site-header').innerHTML = html
-          updateAuthNav()
-          document.getElementById('bmc-button').innerHTML = `
-            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
-            </a>`
-          const toggle = document.getElementById('menu-toggle')
-          const menu   = document.getElementById('mobile-menu')
-          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
-        })
     </script>
     <div id="site-footer"></div>
     <script src="/js/load-footer.js"></script>

@@ -2,6 +2,7 @@
 // Registers window.openMyStats(). Load this module on any page to enable the modal.
 
 import { supabase, getSession } from './supabase-client.js'
+import { getCompetition } from './competition.js'
 
 const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
@@ -105,7 +106,7 @@ async function fetchMachinePreds(roundNums, competition) {
 }
 
 async function fetchAllData(userId) {
-  const competition = localStorage.getItem('bsmachine_competition') || 'nrl'
+  const competition = getCompetition()
   const [
     { data: scores },
     { data: picks },

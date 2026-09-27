@@ -1,7 +1,9 @@
 // prediction-tile.js
-// Sport-agnostic match tile, generalized from nfl-matchups.js's gameCard/probBar
-// for use in cross-sport feeds (e.g. the homepage's "Next 7 Days" widget).
-// Expects entries already normalized to a common shape — see homepage-predictions.js.
+// Sport-agnostic match tiles, generalized from nfl-matchups.js's gameCard/probBar
+// for use in cross-sport feeds: the full tile for the homepage's "Next 7 Days"
+// widget and a compact one for the header match ticker.
+// Expects entries already normalized to a common shape — see upcoming-matches.js.
+import { SPORTS } from './sport-config.js';
 
 function formatTime(iso) {
   if (!iso) return '';
@@ -43,36 +45,51 @@ function probBar(entry) {
   `;
 }
 
+// NHL is low-scoring enough that 2 d.p. carries real signal (2.7 vs 2.5
+// expected goals is a meaningfully different prediction); NRL/NFL keep
+// their existing whole/1-d.p. backend-rounded display.
+function formatExpScore(entry, value) {
+  if (value == null) return '';
+  return entry.sport === 'nhl' ? Number(value).toFixed(2) : value;
+}
+
 function renderScore(entry) {
   if (entry.isFinished) {
     return `<div class="text-lg font-bold font-mono">${entry.homeScore} &ndash; ${entry.awayScore}</div>
             <div class="text-xs text-gray-500 mt-0.5">Final</div>`;
   }
   if (entry.hasPrediction) {
-    // NHL is low-scoring enough that 2 d.p. carries real signal (2.7 vs 2.5
-    // expected goals is a meaningfully different prediction); NRL/NFL keep
-    // their existing whole/1-d.p. backend-rounded display.
-    const expHome = entry.sport === 'nhl' ? Number(entry.expHome).toFixed(2) : entry.expHome;
-    const expAway = entry.sport === 'nhl' ? Number(entry.expAway).toFixed(2) : entry.expAway;
+    const expHome = formatExpScore(entry, entry.expHome);
+    const expAway = formatExpScore(entry, entry.expAway);
     return `<div class="text-lg font-bold font-mono text-gray-300">${expHome} &ndash; ${expAway}</div>
             <div class="text-xs text-gray-500 mt-0.5">Predicted</div>`;
   }
   return `<div class="text-sm text-gray-500">vs</div>`;
 }
 
-const SPORT_BADGE_STYLE = {
+export const SPORT_BADGE_STYLE = {
   nrl:  'background:rgba(251,191,36,0.12); color:#fbbf24;',
   nrlw: 'background:rgba(232,121,249,0.12); color:#e879f9;',
   nfl:  'background:rgba(96,165,250,0.12); color:#60a5fa;',
   nhl:  'background:rgba(129,140,248,0.12); color:#818cf8;',
 };
 
-function builderUrl(entry) {
+const FALLBACK_BADGE_STYLE = 'background:rgba(255,255,255,0.08); color:#9ca3af;';
+
+// Competition badge: logo + label, tinted in the competition's colour.
+function compBadge(entry, className) {
+  const style = SPORT_BADGE_STYLE[entry.sport] || FALLBACK_BADGE_STYLE;
+  const logo = SPORTS[entry.sport]?.logo;
+  const img = logo ? `<img src="${logo}" alt="" class="badge-logo">` : '';
+  return `<span class="${className}" style="${style}">${img}${entry.sport.toUpperCase()}</span>`;
+}
+
+export function builderUrl(entry) {
   if (entry.sport === 'nrl' && entry.matchId != null) {
-    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&competition=nrl`;
+    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}`;
   }
   if (entry.sport === 'nrlw' && entry.matchId != null) {
-    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&competition=nrlw`;
+    return `/nrl/pages/tryscorer_predictions.html?match_id=${entry.matchId}&comp=nrlw`;
   }
   if (entry.sport === 'nfl' && entry.gameId != null && entry.weekNumber != null) {
     return `/nfl/pages/tryscorer_predictions.html?week=${entry.weekNumber}&game_id=${entry.gameId}`;
@@ -84,14 +101,13 @@ function builderUrl(entry) {
 }
 
 export function renderPredictionTile(entry) {
-  const badgeStyle = SPORT_BADGE_STYLE[entry.sport] || 'background:rgba(255,255,255,0.08); color:#9ca3af;';
   const href = builderUrl(entry);
   const tag = href ? 'a' : 'div';
   const hrefAttr = href ? `href="${href}"` : '';
   return `
     <${tag} class="card" ${hrefAttr} style="text-decoration:none;">
       <div class="flex items-center justify-between text-xs text-gray-500 mb-3">
-        <span class="font-bold uppercase tracking-wide text-[0.65rem] px-1.5 py-0.5 rounded" style="${badgeStyle}">${entry.sport.toUpperCase()}</span>
+        ${compBadge(entry, 'tile-badge')}
         <span>${formatTime(entry.date)}</span>
       </div>
       <div class="flex items-center justify-between gap-3">
@@ -111,4 +127,74 @@ export function renderPredictionTile(entry) {
       ${!entry.hasPrediction ? '<p class="text-center text-gray-500 text-xs mt-3">Prediction not yet available</p>' : ''}
     </${tag}>
   `;
+}
+
+// ---- Compact tile for the header match ticker ----
+
+// Two-word nicknames that the "last word" rule below would mangle.
+const TWO_WORD_NICKNAMES = [
+  'Sea Eagles', 'Wests Tigers', 'Maple Leafs', 'Red Wings', 'Blue Jackets',
+  'Golden Knights', 'Red Sox', 'White Sox',
+];
+
+export function shortTeamName(name) {
+  if (!name) return '';
+  // NRLW sides are named "<club> Women" — the badge already says NRLW.
+  const base = name.replace(/\s+Women$/i, '');
+  const nick = TWO_WORD_NICKNAMES.find(n => base.endsWith(n));
+  if (nick) return nick === 'Wests Tigers' ? 'Tigers' : nick;
+  return base.split(' ').pop();
+}
+
+function tickerTime(entry) {
+  if (entry.isFinished) return 'FT';
+  const d = new Date(entry.date);
+  if (isNaN(d.getTime())) return '';
+  return formatTime(entry.date);
+}
+
+function tickerRow(entry, side) {
+  const team   = side === 'home' ? entry.homeTeam : entry.awayTeam;
+  const score  = side === 'home' ? entry.homeScore : entry.awayScore;
+  const other  = side === 'home' ? entry.awayScore : entry.homeScore;
+  const perc   = side === 'home' ? entry.homePerc  : entry.awayPerc;
+  const oPerc  = side === 'home' ? entry.awayPerc  : entry.homePerc;
+  const exp    = side === 'home' ? entry.expHome   : entry.expAway;
+
+  // Finished: the final score. Upcoming: projected score + win probability.
+  let scoreCell = '';
+  let pctCell   = '';
+  let lead      = false;
+  if (entry.isFinished && score != null) {
+    scoreCell = score;
+    lead      = Number(score) > Number(other);
+  } else if (entry.hasPrediction && perc != null) {
+    scoreCell = formatExpScore(entry, exp);
+    pctCell   = `${Math.round(perc * 100)}%`;
+    lead      = perc > (oPerc ?? 0);
+  }
+
+  return `
+    <div class="ticker-row${lead ? ' is-lead' : ''}">
+      <img src="${entry.logoUrl(team)}" alt="" class="ticker-logo" onerror="this.style.visibility='hidden'">
+      <span class="ticker-team" title="${team}">${shortTeamName(team)}</span>
+      <span class="ticker-score${entry.isFinished ? ' is-final' : ''}">${scoreCell}</span>
+      ${pctCell ? `<span class="ticker-pct">${pctCell}</span>` : ''}
+    </div>`;
+}
+
+export function renderTickerTile(entry) {
+  const href = builderUrl(entry);
+  const tag = href ? 'a' : 'div';
+  const hrefAttr = href ? `href="${href}"` : '';
+  const label = `${entry.homeTeam} vs ${entry.awayTeam}`;
+  return `
+    <${tag} class="ticker-tile${entry.isFinished ? ' is-finished' : ''}" ${hrefAttr} aria-label="${label}">
+      <div class="ticker-meta">
+        ${compBadge(entry, 'ticker-badge')}
+        <span>${tickerTime(entry)}</span>
+      </div>
+      ${tickerRow(entry, 'home')}
+      ${tickerRow(entry, 'away')}
+    </${tag}>`;
 }

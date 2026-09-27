@@ -492,26 +492,6 @@
       init()
     </script>
 
-    <script>
-      fetch('/components/header.html')
-        .then(res => res.text())
-        .then(html => {
-          document.getElementById('site-header').innerHTML = html
-          document.getElementById('bmc-button').innerHTML = `
-            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
-            </a>`
-          const menuToggle = document.getElementById('menu-toggle')
-          const mobileMenu = document.getElementById('mobile-menu')
-          if (menuToggle && mobileMenu) {
-            menuToggle.addEventListener('click', () => {
-              mobileMenu.classList.toggle('hidden')
-            })
-          }
-        })
-      fetch('/components/footer.html').then(r => r.text()).then(h => {
-        document.getElementById('site-footer').innerHTML = h
-      }).catch(() => {})
-    </script>
+    <script src="/js/load-footer.js"></script>
   </body>
 </html>

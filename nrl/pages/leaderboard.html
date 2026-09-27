@@ -231,7 +231,7 @@
 
     <main class="max-w-screen-xl mx-auto px-4 py-8">
       <div class="flex items-baseline gap-4 mb-2">
-        <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Leaderboard</h1>
+        <h1 style="font-family:'Barlow Condensed',system-ui,sans-serif; font-size:2.25rem; font-weight:700;">Leaderboard <span data-comp-label class="comp-pill"></span></h1>
       </div>
       <p class="mb-6 text-sm" style="color:#8892a4;">Who's outpicking the model?</p>
 
@@ -245,10 +245,6 @@
             <button class="lb-tab" data-tab="badges">🏆 Badges</button>
           </div>
           <button id="my-stats-page-btn" onclick="window.openMyStats?.()" style="display:none;font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:#94a3b8; background:rgba(255,255,255,0.04); border:1px solid #2e3a4e; border-radius:6px; padding:0.45rem 0.75rem; cursor:pointer; white-space:nowrap;">My Stats</button>
-          <div id="competition-toggle" class="flex items-center gap-0.5 p-1 rounded-xl" style="background:#161b24; border:1px solid #2e3a4e;">
-            <button id="btn-nrl" type="button" class="competition-btn" style="padding:0.45rem 1rem; border-radius:8px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:#f59e0b; color:#0a0d14; border:none; cursor:pointer;">NRL</button>
-            <button id="btn-nrlw" type="button" class="competition-btn" style="padding:0.45rem 1rem; border-radius:8px; font-family:'Barlow Condensed',system-ui,sans-serif; font-size:0.8rem; font-weight:700; letter-spacing:0.04em; background:transparent; color:#8892a4; border:none; cursor:pointer;">NRLW</button>
-          </div>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-xs uppercase tracking-wider" style="color:#4a5568;">Round</span>
@@ -322,6 +318,7 @@
     <script type="module">
       import { supabase, getSession, getProfile, updateAuthNav } from '/js/supabase-client.js'
       import { fetchAllData, renderStats } from '/js/my-stats.js'
+      import { getCompetition } from '/js/competition.js'
 
       const BACKEND = 'https://bsmachine-backend.onrender.com/api'
 
@@ -338,7 +335,12 @@
       let machinePicks       = {}     // { game_id: { home, away } } — BS Machine predicted scores
       let crowdPicks         = {}     // { game_id: { home, away } } — crowd average picks
       let cupPollInterval    = null   // setInterval handle for live seeding auto-refresh
-      let competition        = localStorage.getItem('bsmachine_competition') || 'nrl'
+      const competition      = getCompetition()
+      // BS Cup is NRL-only, so the NRLW leaderboard doesn't offer that tab.
+      if (competition === 'nrlw') {
+        document.querySelector('.lb-tab[data-tab="cup"]')?.remove()
+        if (activeTab === 'cup') activeTab = 'individual'
+      }
 
       const seasonPanel = document.getElementById('lb-season-panel')
       const weekPanel   = document.getElementById('lb-week-panel')
@@ -363,7 +365,6 @@
       }
 
       // Populates the round-filter dropdown + live-round data for the active competition.
-      // Callable both at init and whenever the competition toggle changes.
       async function initRoundData() {
         rounds          = []
         liveRoundData   = null
@@ -472,46 +473,9 @@
           }
           activeTab = btn.dataset.tab
           window.location.hash = activeTab
-          updateCompetitionToggleAvailability()
           loadLeaderboard()
         })
       })
-
-      // ── Competition toggle ── BS Cup stays NRL-only, so the toggle is disabled while that tab is active.
-      const btnNrl  = document.getElementById('btn-nrl')
-      const btnNrlw = document.getElementById('btn-nrlw')
-
-      function updateCompetitionButtons() {
-        const active   = { background: '#f59e0b', color: '#0a0d14' }
-        const inactive = { background: 'transparent', color: '#8892a4' }
-        const nrlStyle  = competition === 'nrl'  ? active : inactive
-        const nrlwStyle = competition === 'nrlw' ? active : inactive
-        btnNrl.style.background  = nrlStyle.background
-        btnNrl.style.color       = nrlStyle.color
-        btnNrlw.style.background = nrlwStyle.background
-        btnNrlw.style.color      = nrlwStyle.color
-      }
-
-      function updateCompetitionToggleAvailability() {
-        const disabled = activeTab === 'cup'
-        btnNrl.disabled  = disabled
-        btnNrlw.disabled = disabled
-        document.getElementById('competition-toggle').style.opacity = disabled ? '0.4' : '1'
-        document.getElementById('competition-toggle').style.pointerEvents = disabled ? 'none' : 'auto'
-      }
-
-      async function setCompetition(comp) {
-        if (competition === comp) return
-        competition = comp
-        localStorage.setItem('bsmachine_competition', competition)
-        updateCompetitionButtons()
-        await initRoundData()
-        loadLeaderboard()
-      }
-      btnNrl.addEventListener('click', () => setCompetition('nrl'))
-      btnNrlw.addEventListener('click', () => setCompetition('nrlw'))
-      updateCompetitionButtons()
-      updateCompetitionToggleAvailability()
 
       function dbErrHtml(err) {
         const msg = err?.message || JSON.stringify(err)
@@ -2548,20 +2512,7 @@
         return name?.toLowerCase().replace(/\s+/g, '_') || ''
       }
 
-      // Load header
-      fetch('/components/header.html')
-        .then(r => r.text())
-        .then(html => {
-          document.getElementById('site-header').innerHTML = html
-          updateAuthNav()
-          document.getElementById('bmc-button').innerHTML = `
-            <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" rel="noopener">
-              <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height:40px;width:145px;">
-            </a>`
-          const toggle = document.getElementById('menu-toggle')
-          const menu   = document.getElementById('mobile-menu')
-          if (toggle && menu) toggle.addEventListener('click', () => menu.classList.toggle('hidden'))
-        })
+      updateAuthNav()
 
       // Show-more toggle for individual match cards (delegated, registered once)
       matchesEl.addEventListener('click', e => {

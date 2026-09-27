@@ -2,7 +2,10 @@
 document.addEventListener('DOMContentLoaded', function () {
   const API_BASE = 'https://bsmachine-backend.onrender.com/api';
 
-  let competition   = 'nrl';
+  // Mirrors getCompetition() in js/competition.js (classic script, can't import).
+  const _compParams = new URLSearchParams(window.location.search);
+  const competition = (_compParams.get('comp') || _compParams.get('competition')) === 'nrlw' ? 'nrlw' : 'nrl';
+  const compQuery   = competition === 'nrlw' ? '?comp=nrlw' : '';
   let activeTab     = 'community';
   let currentSort   = 'recent';
   let selectedRound = null;
@@ -27,23 +30,9 @@ document.addEventListener('DOMContentLoaded', function () {
   if (preMatchId && matchNotice && roundWrap) {
     matchNotice.classList.remove('hidden');
     roundWrap.classList.add('hidden');
+    const clearLink = document.getElementById('match-filter-clear');
+    if (clearLink) clearLink.href = 'betslips.html' + compQuery;
   }
-
-  // --- COMPETITION TOGGLE ---
-  document.querySelectorAll('.comp-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (preMatchId) return; // competition locked when filtering by match
-      competition = btn.id === 'btn-nrl' ? 'nrl' : 'nrlw';
-      document.querySelectorAll('.comp-btn').forEach(b => {
-        const active = b.id === `btn-${competition}`;
-        b.className = active
-          ? 'comp-btn px-5 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all'
-          : 'comp-btn px-5 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all';
-      });
-      selectedRound = null;
-      initRoundDropdown().then(reload);
-    });
-  });
 
   // --- ROUND DROPDOWN ---
   roundSel?.addEventListener('change', () => {
@@ -287,7 +276,7 @@ document.addEventListener('DOMContentLoaded', function () {
             </div>
             ${b.bookie_odds ? `<div class="text-xs text-gray-400">Bookie <span class="font-bold text-white">$${b.bookie_odds}</span> ${evText}</div>` : ''}
           </div>
-          <a href="/nrl/pages/tryscorer_predictions.html" class="text-xs text-blue-400 hover:underline">Build your own →</a>
+          <a href="/nrl/pages/tryscorer_predictions.html${compQuery}" class="text-xs text-blue-400 hover:underline">Build your own →</a>
         </div>
         ${ownerControls}
       </div>`;

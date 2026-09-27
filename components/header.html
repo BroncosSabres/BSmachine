@@ -1,26 +1,19 @@
-<header class="site-header bg-gray-900 sticky top-0 z-50" style="background-color:#0a0d14; border-bottom:1px solid #1e2a3a; box-shadow:0 2px 24px rgba(0,0,0,0.5); border-top:2px solid #f59e0b;">
-  <div class="max-w-screen-xl mx-auto px-4 py-2 flex flex-wrap items-center justify-between gap-3 min-h-16">
+<header class="site-header">
+  <div class="header-bar max-w-screen-xl mx-auto px-4">
 
     <!-- Logo -->
-    <a href="/index.html" class="site-logo shrink-0">
+    <a href="/index.html" class="site-logo header-logo">
       THE <span class="site-logo-accent">BS</span> MACHINE
     </a>
 
-    <!-- Sport switcher (populated by js/load-footer.js from js/sport-config.js) -->
-    <div id="sport-switcher" class="sport-switcher shrink-0"></div>
-
-    <!-- Desktop nav (populated by js/load-footer.js from js/sport-config.js) -->
-    <nav id="desktop-nav" class="hidden md:flex items-center gap-0.5 flex-1 justify-center"></nav>
+    <!-- Competition tabs (populated by js/load-footer.js from js/sport-config.js) -->
+    <nav id="comp-tabs" class="comp-tabs header-tabs" aria-label="Competitions"></nav>
 
     <!-- Right: auth nav + BMC + hamburger -->
-    <div class="flex items-center gap-3 shrink-0">
+    <div class="header-actions flex items-center gap-3">
       <div id="auth-nav"></div>
-      <div id="bmc-button"></div>
-      <button id="menu-toggle"
-              class="md:hidden p-2 rounded-lg transition-colors"
-              style="color:#8892a4;"
-              onmouseover="this.style.color='#fff';this.style.background='rgba(255,255,255,0.07)'"
-              onmouseout="this.style.color='#8892a4';this.style.background='transparent'">
+      <div id="bmc-button" class="hidden sm:block"></div>
+      <button id="menu-toggle" type="button" class="menu-toggle md:hidden" aria-label="Menu" aria-expanded="false">
         <svg class="h-5 w-5 fill-current" viewBox="0 0 20 20" aria-hidden="true">
           <path d="M0 3h20v2H0V3zm0 6h20v2H0V9zm0 6h20v2H0v-2z"/>
         </svg>
@@ -28,18 +21,27 @@
     </div>
   </div>
 
+  <!-- Section nav for the current competition (hidden on general pages) -->
+  <div id="section-nav-bar" class="section-nav-bar hidden">
+    <nav id="desktop-nav" class="max-w-screen-xl mx-auto px-4 hidden md:flex items-center gap-0.5 overflow-x-auto" aria-label="Sections"></nav>
+  </div>
+
   <!-- Mobile dropdown -->
-  <div id="mobile-menu" class="hidden" style="border-top:1px solid #1e2a3a; background-color:#0a0d14;">
+  <div id="mobile-menu" class="mobile-menu hidden">
     <nav class="flex flex-col py-2">
       <a href="/index.html" class="mobile-nav-link">Home</a>
       <div id="mobile-nav-links"></div>
     </nav>
+    <div id="mobile-bmc" class="sm:hidden" style="padding:0 1.5rem 0.5rem;"></div>
     <div style="border-top:1px solid #1e2a3a; padding:0.5rem 1.5rem 0.75rem; display:flex; gap:1rem;">
-      <a href="/pages/terms.html"   style="font-size:0.75rem; color:#4a5568; text-decoration:none;" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#4a5568'">Terms &amp; Conditions</a>
-      <a href="/pages/privacy.html" style="font-size:0.75rem; color:#4a5568; text-decoration:none;" onmouseover="this.style.color='#fbbf24'" onmouseout="this.style.color='#4a5568'">Privacy Policy</a>
+      <a href="/pages/terms.html"   class="mobile-legal-link">Terms &amp; Conditions</a>
+      <a href="/pages/privacy.html" class="mobile-legal-link">Privacy Policy</a>
     </div>
   </div>
 </header>
+
+<!-- Match ticker (populated by js/match-ticker.js) -->
+<div id="match-ticker" class="match-ticker"></div>
 
 <!-- Prize Banner -->
 <div id="prize-banner" class="prize-banner" style="display:none;">
@@ -53,4 +55,3 @@
     <button class="prize-banner-close" onclick="dismissPrizeBanner()" aria-label="Dismiss">&times;</button>
   </div>
 </div>
-

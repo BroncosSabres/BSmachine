@@ -1,106 +1,29 @@
-// homepage-predictions.js — drives the homepage: sport hub tiles + the
+// homepage-predictions.js — drives the homepage: sport hub cards + the
 // cross-sport "Next 7 Days" predictions feed.
-import { apiUrl } from './api-config.js';
-import { SPORTS } from './sport-config.js';
-import { teamSlug } from './utils.js';
-import { nflLogoUrl } from './nfl-logos.js';
-import { nhlLogoUrl } from './nhl-logos.js';
+import { SPORTS, sportUrl } from './sport-config.js';
+import { fetchAllUpcoming } from './upcoming-matches.js';
 import { renderPredictionTile } from './prediction-tile.js';
 
-function nrlLogoUrl(teamName) {
-  return `/logos/${teamSlug(teamName)}.svg`;
-}
+const HUB_LINKS = [
+  { label: 'Rankings',      page: 'rankings.html' },
+  { label: 'Predictions',   page: 'matchups.html' },
+  { label: 'Multi Builder', page: 'tryscorer_predictions.html' },
+];
 
 function renderSportHub() {
   const hub = document.getElementById('sport-hub');
   if (!hub) return;
   hub.innerHTML = Object.entries(SPORTS).map(([key, cfg]) => `
-    <a href="${cfg.basePath}${cfg.landingPage}" class="card flex items-center justify-between hover:border-amber-500/50 transition-colors" style="text-decoration:none;">
-      <div>
-        <div class="text-xs text-gray-500 uppercase tracking-widest mb-1">${cfg.label}</div>
-        <div class="text-xl font-bold text-white">Rankings &amp; Predictions</div>
+    <div class="hub-card" style="--comp-color:${cfg.color}">
+      <a href="${sportUrl(key)}" class="hub-card-main">
+        <span class="hub-card-label"><img src="${cfg.logo}" alt="" class="hub-card-logo">${cfg.label}</span>
+        <span class="hub-card-arrow" aria-hidden="true">→</span>
+      </a>
+      <div class="hub-card-links">
+        ${HUB_LINKS.map(l => `<a href="${sportUrl(key, l.page)}">${l.label}</a>`).join('')}
       </div>
-      <span class="text-sm font-medium" style="color:#fbbf24;">View →</span>
-    </a>
+    </div>
   `).join('');
-}
-
-function adaptNrl(p) {
-  return {
-    sport: 'nrl',
-    date: p.date,
-    homeTeam: p.home_team,
-    awayTeam: p.away_team,
-    homeScore: p.home_score,
-    awayScore: p.away_score,
-    homePerc: p.home_perc,
-    awayPerc: p.away_perc,
-    expHome: p.exp_home_score,
-    expAway: p.exp_away_score,
-    isFinished: p.is_finished,
-    hasPrediction: p.has_prediction,
-    logoUrl: nrlLogoUrl,
-    matchId: p.match_id,
-  };
-}
-
-function adaptNrlw(p) {
-  return {
-    sport: 'nrlw',
-    date: p.date,
-    homeTeam: p.home_team,
-    awayTeam: p.away_team,
-    homeScore: p.home_score,
-    awayScore: p.away_score,
-    homePerc: p.home_perc,
-    awayPerc: p.away_perc,
-    expHome: p.exp_home_score,
-    expAway: p.exp_away_score,
-    isFinished: p.is_finished,
-    hasPrediction: p.has_prediction,
-    logoUrl: nrlLogoUrl,
-    matchId: p.match_id,
-  };
-}
-
-function adaptNfl(p) {
-  return {
-    sport: 'nfl',
-    date: p.date,
-    homeTeam: p.home_team,
-    awayTeam: p.away_team,
-    homeScore: p.home_score,
-    awayScore: p.away_score,
-    homePerc: p.home_perc,
-    awayPerc: p.away_perc,
-    tiePerc: p.tie_perc,
-    expHome: p.exp_home_score,
-    expAway: p.exp_away_score,
-    isFinished: p.is_finished,
-    hasPrediction: p.has_prediction,
-    logoUrl: nflLogoUrl,
-    gameId: p.game_id,
-    weekNumber: p.week_number,
-  };
-}
-
-function adaptNhl(p) {
-  return {
-    sport: 'nhl',
-    date: p.date,
-    homeTeam: p.home_team,
-    awayTeam: p.away_team,
-    homeScore: p.home_score,
-    awayScore: p.away_score,
-    homePerc: p.home_perc,
-    awayPerc: p.away_perc,
-    expHome: p.exp_home_score,
-    expAway: p.exp_away_score,
-    isFinished: p.is_finished,
-    hasPrediction: p.has_prediction,
-    logoUrl: nhlLogoUrl,
-    gameId: p.game_id,
-  };
 }
 
 function dayLabel(iso) {
@@ -108,31 +31,12 @@ function dayLabel(iso) {
   return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-async function fetchUpcoming(sport, path, adapter) {
-  try {
-    const res = await fetch(apiUrl(sport, path));
-    if (!res.ok) return [];
-    const json = await res.json();
-    return (json.predictions || []).map(adapter);
-  } catch {
-    return [];
-  }
-}
-
 async function loadUpcomingFeed() {
   const feed = document.getElementById('upcoming-feed');
   if (!feed) return;
 
-  const [nrlEntries, nrlwEntries, nflEntries, nhlEntries] = await Promise.all([
-    fetchUpcoming('nrl', 'upcoming_predictions?days=7', adaptNrl),
-    fetchUpcoming('nrl', 'upcoming_predictions/nrlw?days=7', adaptNrlw),
-    fetchUpcoming('nfl', 'upcoming_predictions?days=7', adaptNfl),
-    fetchUpcoming('nhl', 'upcoming_predictions?days=7', adaptNhl),
-  ]);
-
-  const entries = [...nrlEntries, ...nrlwEntries, ...nflEntries, ...nhlEntries]
-    .filter(e => e.date)
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  // Shares its cache with the header match ticker, so this rarely re-fetches.
+  const entries = await fetchAllUpcoming(7);
 
   if (!entries.length) {
     feed.innerHTML = `<p class="text-gray-500 text-sm">No matches scheduled in the next 7 days.</p>`;

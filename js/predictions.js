@@ -3,6 +3,7 @@ import { supabase } from './supabase-client.js';
 import { renderDistribution3D, purgeDistribution3D } from './distribution-3d.js';
 import { roundLabel } from './utils.js';
 import { createMatchLinesController } from './match-lines.js';
+import { getCompetition } from './competition.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -14,7 +15,7 @@ let currentRound = 1;  // currently selected round
 let tryscorerMatchCache = null;
 let blendT = 0;           // 0 = pure machine, 1 = pure crowd
 const cardDataCache = {}; // matchKey → { machine: {...}, user: {...} }
-let competition = localStorage.getItem('bsmachine_competition') || 'nrl';
+const competition = getCompetition();
 let roundTypes = {}; // round_number (string) -> round_type, for finals labelling
 
 const teamColors = {
@@ -1141,7 +1142,7 @@ function tryscorerButtonDisabled() {
 }
 
 function tryscorerButtonEnabled(matchId) {
-  const url = `tryscorer_predictions.html?match_id=${matchId}`;
+  const url = `tryscorer_predictions.html?match_id=${matchId}${competition === 'nrlw' ? '&comp=nrlw' : ''}`;
   return `<a href="${url}"
              class="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 border border-gray-600 hover:border-gray-500 text-xs font-medium text-gray-200 transition-colors">
             <svg class="w-3.5 h-3.5 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
@@ -2251,52 +2252,6 @@ if (matchupBlendIncBtn) {
     matchupBlendSlider.value = Math.min(100, matchupBlendSlider.valueAsNumber + 5);
     matchupBlendSlider.dispatchEvent(new Event('input'));
   });
-}
-
-// --- COMPETITION TOGGLE ---
-const btnNrl  = document.getElementById('btn-nrl');
-const btnNrlw = document.getElementById('btn-nrlw');
-
-function updateCompetitionButtons() {
-  if (competition === 'nrl') {
-    btnNrl.classList.add('bg-amber-400', 'text-gray-900');
-    btnNrl.classList.remove('text-gray-400');
-    btnNrlw.classList.remove('bg-amber-400', 'text-gray-900');
-    btnNrlw.classList.add('text-gray-400');
-  } else {
-    btnNrlw.classList.add('bg-amber-400', 'text-gray-900');
-    btnNrlw.classList.remove('text-gray-400');
-    btnNrl.classList.remove('bg-amber-400', 'text-gray-900');
-    btnNrl.classList.add('text-gray-400');
-  }
-}
-
-function clearCompetitionAgnosticCaches() {
-  tryscorerMatchCache = null;
-  liveResultsCache    = null;
-  Object.keys(machineDistCache).forEach(k => delete machineDistCache[k]);
-}
-
-if (btnNrl && btnNrlw) {
-  btnNrl.addEventListener('click', () => {
-    if (competition !== 'nrl') {
-      competition = 'nrl';
-      localStorage.setItem('bsmachine_competition', competition);
-      updateCompetitionButtons();
-      clearCompetitionAgnosticCaches();
-      init();
-    }
-  });
-  btnNrlw.addEventListener('click', () => {
-    if (competition !== 'nrlw') {
-      competition = 'nrlw';
-      localStorage.setItem('bsmachine_competition', competition);
-      updateCompetitionButtons();
-      clearCompetitionAgnosticCaches();
-      init();
-    }
-  });
-  updateCompetitionButtons();
 }
 
 init();
