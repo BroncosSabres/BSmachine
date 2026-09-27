@@ -272,11 +272,13 @@ async function updateResultOverlays(games) {
   });
 }
 
-function formatDate(iso) {
+function formatDate(iso, withTime) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const date = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (!withTime) return date;
+  return `${date} · ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
 }
 
 function probBar(g) {
@@ -330,7 +332,7 @@ function gameCard(g, index) {
   return `
     <div class="card" data-game-id="${g.game_id}" data-order="${index}">
       <div class="flex items-center justify-between text-xs text-gray-500 mb-3">
-        <span>${formatDate(g.date)}</span>
+        <span>${formatDate(g.date, g.has_kickoff_time)}</span>
         <span>${g.venue || ''}</span>
       </div>
       <div class="flex items-center justify-between gap-4">
