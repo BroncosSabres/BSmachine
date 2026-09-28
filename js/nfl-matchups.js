@@ -3,6 +3,7 @@ import { apiUrl } from './api-config.js';
 import { nflLogoUrl } from './nfl-logos.js';
 import { openDistModal } from './nfl-distribution-chart.js';
 import { createMatchLinesController } from './match-lines.js';
+import { involvesMyTeam, myTeamsFirst, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 
 const gamesList   = document.getElementById('games-list');
 const noGamesMsg  = document.getElementById('no-games-msg');
@@ -33,7 +34,15 @@ const matchLines = createMatchLinesController({
   storageKey: 'bsmachine_match_lines_nfl',
   fetchDistribution: fetchGameDistribution,
 });
-let lineSortMode = 'default'; // 'default' (schedule order) | 'discrepant'
+// 'myteams' (My Teams' games first, then kickoff) is the default whenever one of
+// the viewer's teams plays this week; otherwise 'kickoff'. 'discrepant' is opt-in.
+let lineSortMode = 'kickoff'; // 'myteams' | 'kickoff' | 'discrepant'
+
+const SORT_LABELS = {
+  myteams:    'Sort: My Teams First',
+  kickoff:    'Sort: Kickoff Time',
+  discrepant: 'Sort: Most Discrepant',
+};
 
 // --- RESULT COMPARISON (finished games): actual score vs. predicted, plus how likely
 // the BS Machine thought that exact result was, ranked against every other final score
@@ -330,7 +339,7 @@ function renderScore(g) {
 
 function gameCard(g, index) {
   return `
-    <div class="card" data-game-id="${g.game_id}" data-order="${index}">
+    <div class="card" data-game-id="${g.game_id}" data-order="${index}" data-home="${g.home_team}" data-away="${g.away_team}">
       <div class="flex items-center justify-between text-xs text-gray-500 mb-3">
         <span>${formatDate(g.date, g.has_kickoff_time)}</span>
         <span>${g.venue || ''}</span>
@@ -385,8 +394,6 @@ async function loadWeek(week) {
 
   const games = json.predictions || [];
   gamesById = Object.fromEntries(games.map(g => [g.game_id, g]));
-  lineSortMode = 'default';
-  updateSortBtnLabel();
   // The pool of finished games these draw from grows as the season progresses.
   seasonRankingCache = null;
   totalRankingCache  = null;
@@ -395,6 +402,7 @@ async function loadWeek(week) {
     return;
   }
   gamesList.innerHTML = games.map((g, i) => gameCard(g, i)).join('');
+  resetSortMode();
   mountLineControls(games);
   updateResultOverlays(games);
 }
@@ -428,14 +436,27 @@ function applyLineSort() {
       const db = matchLines.getDiscrepancy(b.dataset.gameId) ?? -1;
       return db - da;
     });
+  } else if (lineSortMode === 'myteams') {
+    cards.sort(myTeamsFirst('nfl'));
   } else {
     cards.sort((a, b) => Number(a.dataset.order ?? 0) - Number(b.dataset.order ?? 0));
   }
   cards.forEach(c => gamesList.appendChild(c));
 }
 
+function weekHasMyTeam() {
+  return Array.from(gamesList.querySelectorAll('.card'))
+    .some(c => involvesMyTeam('nfl', c.dataset.home, c.dataset.away));
+}
+
+function resetSortMode() {
+  lineSortMode = weekHasMyTeam() ? 'myteams' : 'kickoff';
+  updateSortBtnLabel();
+  applyLineSort();
+}
+
 function updateSortBtnLabel() {
-  if (sortBtn) sortBtn.textContent = lineSortMode === 'discrepant' ? 'Sort: Most Discrepant' : 'Sort: Schedule';
+  if (sortBtn) sortBtn.textContent = SORT_LABELS[lineSortMode];
 }
 
 gamesList.addEventListener('click', e => {
@@ -453,11 +474,19 @@ gamesList.addEventListener('click', e => {
 });
 
 sortBtn?.addEventListener('click', () => {
-  lineSortMode = lineSortMode === 'discrepant' ? 'default' : 'discrepant';
+  const modes = weekHasMyTeam() ? ['myteams', 'kickoff', 'discrepant'] : ['kickoff', 'discrepant'];
+  lineSortMode = modes[(modes.indexOf(lineSortMode) + 1) % modes.length];
   updateSortBtnLabel();
   applyLineSort();
 });
 updateSortBtnLabel();
+
+// Teams loaded from the profile (or edited in the My Teams modal) re-sort the
+// week, unless the user has deliberately switched to discrepant lines.
+window.addEventListener(MY_TEAMS_CHANGED, () => {
+  if (lineSortMode !== 'discrepant') resetSortMode();
+});
+loadMyTeams();
 
 resetBtn?.addEventListener('click', () => {
   if (!confirm('Reset all custom lines back to the BS Machine\'s default for every game?')) return;

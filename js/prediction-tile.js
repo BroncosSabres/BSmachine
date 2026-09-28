@@ -183,13 +183,14 @@ function tickerRow(entry, side) {
     </div>`;
 }
 
-export function renderTickerTile(entry) {
+// myTeam: the game involves one of the viewer's My Teams (highlighted).
+export function renderTickerTile(entry, { myTeam = false } = {}) {
   const href = builderUrl(entry);
   const tag = href ? 'a' : 'div';
   const hrefAttr = href ? `href="${href}"` : '';
   const label = `${entry.homeTeam} vs ${entry.awayTeam}`;
   return `
-    <${tag} class="ticker-tile${entry.isFinished ? ' is-finished' : ''}" ${hrefAttr} aria-label="${label}">
+    <${tag} class="ticker-tile${entry.isFinished ? ' is-finished' : ''}${myTeam ? ' is-my-team' : ''}" ${hrefAttr} aria-label="${label}">
       <div class="ticker-meta">
         ${compBadge(entry, 'ticker-badge')}
         <span>${tickerTime(entry)}</span>

@@ -7,12 +7,14 @@
 import { apiUrl } from './api-config.js';
 import { nhlLogoUrl } from './nhl-logos.js';
 import { openDistModal } from './nhl-distribution-chart.js';
+import { involvesMyTeam, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 
 const gamesList   = document.getElementById('games-list');
 const noGamesMsg  = document.getElementById('no-games-msg');
 const dateBadge   = document.getElementById('week-badge');
 const prevBtn     = document.getElementById('week-prev');
 const nextBtn     = document.getElementById('week-next');
+const sortBtn     = document.getElementById('sort-lines-btn');
 
 const WINDOW_DAYS = 60; // well beyond bs_machine_nhl.py's forward prediction window so paging never stops short of predicted games
 
@@ -20,6 +22,9 @@ let dateKeys    = [];
 let gamesByDate = {};
 let currentIdx  = 0;
 let gamesById   = {};
+// 'myteams' (My Teams' games first, then kickoff) is the default whenever one of
+// the viewer's teams plays that day; otherwise plain 'kickoff'.
+let sortMode    = 'kickoff';
 
 function formatDate(iso) {
   if (!iso) return '';
@@ -115,7 +120,27 @@ function gameCard(g) {
   `;
 }
 
-function renderCurrentDate() {
+function isMine(g) {
+  return involvesMyTeam('nhl', g.home_team, g.away_team);
+}
+
+function kickoffOrder(a, b) {
+  return new Date(a.date) - new Date(b.date);
+}
+
+function sortedGames(games) {
+  const byKickoff = [...games].sort(kickoffOrder);
+  if (sortMode !== 'myteams') return byKickoff;
+  return [...byKickoff.filter(isMine), ...byKickoff.filter(g => !isMine(g))];
+}
+
+function updateSortBtn(games) {
+  if (!sortBtn) return;
+  sortBtn.classList.toggle('hidden', !games.some(isMine));
+  sortBtn.textContent = sortMode === 'myteams' ? 'Sort: My Teams First' : 'Sort: Kickoff Time';
+}
+
+function renderCurrentDate({ keepSort = false } = {}) {
   const key = dateKeys[currentIdx];
   gamesList.innerHTML = '';
   noGamesMsg.classList.add('hidden');
@@ -128,7 +153,10 @@ function renderCurrentDate() {
     return;
   }
 
-  const games = gamesByDate[key] || [];
+  const unsorted = gamesByDate[key] || [];
+  if (!keepSort) sortMode = unsorted.some(isMine) ? 'myteams' : 'kickoff';
+  updateSortBtn(unsorted);
+  const games = sortedGames(unsorted);
   dateBadge.textContent = formatDate(games[0]?.date) || key;
   gamesById = Object.fromEntries(games.map(g => [g.game_id, g]));
 
@@ -155,6 +183,17 @@ gamesList.addEventListener('click', e => {
     hasResult ? g.home_score + g.away_score : null,
   );
 });
+
+sortBtn?.addEventListener('click', () => {
+  sortMode = sortMode === 'myteams' ? 'kickoff' : 'myteams';
+  renderCurrentDate({ keepSort: true });
+});
+
+// Teams loaded from the profile (or edited in the My Teams modal) re-sort the day.
+window.addEventListener(MY_TEAMS_CHANGED, () => {
+  if (dateKeys.length) renderCurrentDate();
+});
+loadMyTeams();
 
 prevBtn.addEventListener('click', () => {
   if (currentIdx <= 0) return;

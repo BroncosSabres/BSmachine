@@ -29,6 +29,9 @@
       <div class="flex items-center gap-4 mb-8 flex-wrap">
         <h1 class="text-4xl font-bold">NHL Predictions</h1>
         <div class="flex items-center gap-2 ml-auto">
+          <!-- Only shown when one of the viewer's My Teams plays that day (js/nhl-matchups.js) -->
+          <button id="sort-lines-btn" type="button"
+                  class="hidden px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors text-sm">Sort: Kickoff Time</button>
           <button id="week-prev" type="button"
                   class="px-3 py-1.5 rounded-lg border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500 transition-colors">&larr;</button>
           <span id="week-badge" class="text-sm font-medium text-gray-300 bg-gray-800 border border-gray-700 px-3 py-1.5 rounded-full min-w-[6rem] text-center"></span>

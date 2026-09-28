@@ -474,6 +474,176 @@ a.ticker-tile:hover {
 .ticker-score.is-final { color: inherit; font-weight: inherit; }
 .ticker-pct { min-width: 2.2rem; }
 
+/* My Teams' games: amber edge so they stand out in the "All" view */
+.ticker-tile.is-my-team {
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+a.ticker-tile.is-my-team:hover { border-color: var(--accent); }
+
+/* All / My Teams toggle (only shown once the viewer follows a team) */
+.ticker-filter {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.4rem 0 0.4rem 0.75rem;
+}
+.ticker-filter[hidden] { display: none; }
+.ticker-filter button {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.ticker-filter button:hover { color: var(--text-primary); }
+.ticker-filter button[aria-pressed="true"] {
+  color: var(--accent-bright);
+  border-color: rgba(245, 158, 11, 0.4);
+  background-color: var(--accent-dim);
+}
+.ticker-empty {
+  align-self: center;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+/* ================================================
+   My Teams picker (js/my-teams-modal.js)
+   ================================================ */
+button.site-nav-link,
+button.mobile-nav-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+button.mobile-nav-link { width: 100%; text-align: left; }
+
+.mt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(4px);
+}
+.mt-overlay[hidden] { display: none; }
+.mt-dialog {
+  width: 100%;
+  max-width: 44rem;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 16px;
+}
+.mt-head { display: flex; align-items: center; justify-content: space-between; }
+.mt-title { font-size: 1.5rem; margin: 0; }
+.mt-close {
+  font-size: 1.5rem;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.mt-close:hover { color: var(--text-primary); }
+.mt-sub { margin: 0; font-size: 0.85rem; color: var(--text-secondary); }
+.mt-tabs { display: flex; gap: 0.25rem; overflow-x: auto; scrollbar-width: none; flex-shrink: 0; }
+.mt-tabs::-webkit-scrollbar { display: none; }
+.mt-tabs .comp-tab { background: none; cursor: pointer; }
+.mt-tabs .comp-tab.is-active {
+  background-color: color-mix(in srgb, var(--comp-color) 12%, transparent);
+}
+.mt-count {
+  min-width: 1.1rem;
+  padding: 0 0.3rem;
+  font-family: 'Barlow', system-ui, sans-serif;
+  font-size: 0.68rem;
+  line-height: 1.1rem;
+  text-align: center;
+  color: #0a0d14;
+  background: var(--comp-color);
+  border-radius: 999px;
+}
+.mt-grid {
+  flex: 1;
+  min-height: 8rem;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.4rem;
+  align-content: start;
+}
+.mt-team {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.8rem;
+  text-align: left;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+.mt-team:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.mt-team img { width: 1.5rem; height: 1.5rem; object-fit: contain; flex-shrink: 0; }
+.mt-team span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-team[aria-pressed="true"] {
+  color: var(--text-primary);
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+.mt-empty { grid-column: 1 / -1; font-size: 0.85rem; color: var(--text-muted); }
+.mt-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.mt-switch input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.mt-foot { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.mt-note { flex: 1; min-width: 10rem; font-size: 0.78rem; color: var(--text-muted); }
+.mt-note a { color: var(--accent-bright); }
+.mt-btn {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mt-btn:hover { color: var(--text-primary); border-color: var(--border-hover); }
+.mt-btn--primary { color: #0a0d14; background: var(--accent); border-color: var(--accent); }
+.mt-btn--primary:hover { color: #0a0d14; background: var(--accent-bright); }
+.mt-btn:disabled { opacity: 0.6; cursor: default; }
+@media (max-width: 480px) {
+  .mt-dialog { padding: 1rem; max-height: 94vh; }
+  .mt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* ---- Header mobile safety net ---- */
 /* The BMC embed's <img> ships with a fixed inline height:40px/width:145px
    from buymeacoffee.com's own markup - only !important can shrink it. */

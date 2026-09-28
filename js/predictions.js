@@ -4,6 +4,7 @@ import { renderDistribution3D, purgeDistribution3D } from './distribution-3d.js'
 import { roundLabel } from './utils.js';
 import { createMatchLinesController } from './match-lines.js';
 import { getCompetition } from './competition.js';
+import { involvesMyTeam, myTeamsFirst, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 
 const container = document.getElementById("predictions-container");
 const TRYSCORER_API = 'https://bsmachine-backend.onrender.com/api';
@@ -275,8 +276,31 @@ const matchLines = createMatchLinesController({
   storageKey: 'bsmachine_match_lines_nrl',
   fetchDistribution: fetchMachineDistributions,
 });
-let lineSortMode = 'default'; // 'default' (kickoff order) | 'discrepant'
+// 'myteams' (My Teams' games first, then kickoff) is the default whenever one of
+// the viewer's teams plays this round; otherwise 'kickoff'. 'discrepant' is opt-in.
+let lineSortMode = 'kickoff'; // 'myteams' | 'kickoff' | 'discrepant'
 let linesRoundMatches = [];   // matches currently rendered, for the "Reset All Lines" remount
+
+const SORT_LABELS = {
+  myteams:    'Sort: My Teams First',
+  kickoff:    'Sort: Kickoff Time',
+  discrepant: 'Sort: Most Discrepant',
+};
+
+function roundHasMyTeam() {
+  return Array.from(container.querySelectorAll('.match-card'))
+    .some(c => involvesMyTeam(competition, c.dataset.home, c.dataset.away));
+}
+
+function sortModes() {
+  return roundHasMyTeam() ? ['myteams', 'kickoff', 'discrepant'] : ['kickoff', 'discrepant'];
+}
+
+function resetSortMode() {
+  lineSortMode = roundHasMyTeam() ? 'myteams' : 'kickoff';
+  updateSortBtnLabel();
+  applyLineSort();
+}
 
 function mountLineControls(matches) {
   matches.forEach(match => {
@@ -308,6 +332,8 @@ function applyLineSort() {
       const db = matchLines.getDiscrepancy(b.dataset.matchId) ?? -1;
       return db - da;
     });
+  } else if (lineSortMode === 'myteams') {
+    cards.sort(myTeamsFirst(competition));
   } else {
     cards.sort((a, b) => Number(a.dataset.order ?? 0) - Number(b.dataset.order ?? 0));
   }
@@ -316,15 +342,23 @@ function applyLineSort() {
 
 function updateSortBtnLabel() {
   const btn = document.getElementById('sort-lines-btn');
-  if (btn) btn.textContent = lineSortMode === 'discrepant' ? 'Sort: Most Discrepant' : 'Sort: Kickoff Time';
+  if (btn) btn.textContent = SORT_LABELS[lineSortMode];
 }
 
 document.getElementById('sort-lines-btn')?.addEventListener('click', () => {
-  lineSortMode = lineSortMode === 'discrepant' ? 'default' : 'discrepant';
+  const modes = sortModes();
+  lineSortMode = modes[(modes.indexOf(lineSortMode) + 1) % modes.length];
   updateSortBtnLabel();
   applyLineSort();
 });
 updateSortBtnLabel();
+
+// Teams loaded from the profile (or edited in the My Teams modal) re-sort the
+// round, unless the user has deliberately switched to discrepant lines.
+window.addEventListener(MY_TEAMS_CHANGED, () => {
+  if (lineSortMode !== 'discrepant') resetSortMode();
+});
+loadMyTeams();
 
 document.getElementById('reset-lines-btn')?.addEventListener('click', () => {
   if (!confirm('Reset all custom lines back to the BS Machine\'s default for every match?')) return;
@@ -2128,8 +2162,6 @@ async function loadRound() {
       return;
     }
 
-    lineSortMode = 'default';
-    updateSortBtnLabel();
     linesRoundMatches = allMatches;
 
     allMatches.forEach((match, index) => {
@@ -2146,6 +2178,8 @@ async function loadRound() {
       };
       const card = createMatchCard(cardData);
       card.dataset.order = index;
+      card.dataset.home  = match.home_team;
+      card.dataset.away  = match.away_team;
       container.appendChild(card);
 
       checkTryscorerAvailable(match.home_team, match.away_team).then(({ available, matchId }) => {
@@ -2156,6 +2190,8 @@ async function loadRound() {
         });
       });
     });
+
+    resetSortMode();
 
     // Async: overlay result line probability for all rounds
     updateLiveScoreOverlays(predictions);

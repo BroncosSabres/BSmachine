@@ -90,6 +90,14 @@ var BMC_HTML =
       menuToggle.setAttribute('aria-expanded', String(open));
     });
 
+    document.querySelectorAll('.my-teams-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        mobileMenu.classList.add('hidden');
+        menuToggle.setAttribute('aria-expanded', 'false');
+        import('/js/my-teams-modal.js').then(function (mod) { mod.openMyTeams(); });
+      });
+    });
+
     import('/js/sport-config.js').then(populate);
     import('/js/match-ticker.js').then(function (mod) {
       mod.initMatchTicker(document.getElementById('match-ticker'));
