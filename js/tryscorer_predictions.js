@@ -110,9 +110,28 @@ function _kdeDensityAt(values, x, modelSigma) {
   const h = _calibratedBw(values, modelSigma);
   return values.reduce((s, v) => s + _normPdf(x, v, h), 0) / values.length;
 }
-// Blend machine-weighted and crowd-weighted try distributions from raw sgmDist bins.
+// Normalised per-bin weights blending machine counts with crowd KDE density.
 // bins: [{m, t, h, a, c}] — from sgmDist.bins (margin, total, home_try_dist, away_try_dist, count)
-// Returns { home_try_dist, away_try_dist } — blended distributions ready for sgm_probability
+// Returns an array of weights summing to 1 (pure machine weights when no crowd blend applies).
+function _binWeights(bins, userPicks, marginSigma, totalSigma, blendT) {
+  const totalMachine = bins.reduce((s, b) => s + (b.c || 0), 0) || 1;
+  const machineW = bins.map(b => (b.c || 0) / totalMachine);
+  if (!blendT || !userPicks?.margins?.length) return machineW;
+
+  // Crowd weight for each bin = joint density approximated as product of marginal KDE densities
+  const crowdW = bins.map(b =>
+    _kdeDensityAt(userPicks.margins, b.m, marginSigma) *
+    _kdeDensityAt(userPicks.totals,  b.t, totalSigma)
+  );
+  const totalCrowd = crowdW.reduce((s, w) => s + w, 0);
+  // If crowd has no density near any bin (picks wildly outside model range), fall back
+  if (!totalCrowd) return machineW;
+
+  return machineW.map((wm, i) => (1 - blendT) * wm + blendT * crowdW[i] / totalCrowd);
+}
+
+// Blend machine-weighted and crowd-weighted try distributions from raw sgmDist bins.
+// Returns { home_try_dist, away_try_dist } — blended marginal distributions (anytime display)
 function _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT) {
   const bins = sgmDist.bins;
   // Fall back to machine aggregate if no blending needed or no raw bins available
@@ -120,30 +139,62 @@ function _blendedTryDists(sgmDist, userPicks, marginSigma, totalSigma, blendT) {
     return { home_try_dist: sgmDist.home_try_dist, away_try_dist: sgmDist.away_try_dist };
   }
 
-  const totalMachine = bins.reduce((s, b) => s + b.c, 0) || 1;
-
-  // Crowd weight for each bin = joint density approximated as product of marginal KDE densities
-  const crowdW = bins.map(b =>
-    _kdeDensityAt(userPicks.margins, b.m, marginSigma) *
-    _kdeDensityAt(userPicks.totals,  b.t, totalSigma)
-  );
-  const totalCrowd = crowdW.reduce((s, w) => s + w, 0) || null;
-
-  // If crowd has no density near any bin (picks wildly outside model range), fall back
-  if (!totalCrowd) {
-    return { home_try_dist: sgmDist.home_try_dist, away_try_dist: sgmDist.away_try_dist };
-  }
-
+  const weights = _binWeights(bins, userPicks, marginSigma, totalSigma, blendT);
   const aggHome = {}, aggAway = {};
   bins.forEach((bin, i) => {
-    const wMachine = bin.c / totalMachine;
-    const wCrowd   = crowdW[i] / totalCrowd;
-    const w = (1 - blendT) * wMachine + blendT * wCrowd;
+    const w = weights[i];
     for (const [k, v] of Object.entries(bin.h)) aggHome[k] = (aggHome[k] || 0) + v * w;
     for (const [k, v] of Object.entries(bin.a)) aggAway[k] = (aggAway[k] || 0) + v * w;
   });
 
   return { home_try_dist: aggHome, away_try_dist: aggAway };
+}
+
+// g[n] = P(every picked player reaches their minimum tries | team scores exactly n tries).
+// Each try independently goes to player i with prob playerProbs[i], else to someone else.
+// DP over the vector of tries still needed per player (mixed-radix index; 0 = all satisfied).
+// Equivalent to the backend's multinomial_at_least, but computed once for all n.
+function _teamPickSuccessByN(playerProbs, minTries, maxN) {
+  const g = new Float64Array(maxN + 1);
+  const K = playerProbs.length;
+  if (!K) { g.fill(1); return g; }
+
+  const radix = minTries.map(k => k + 1);
+  const stride = [];
+  let nStates = 1;
+  for (let i = 0; i < K; i++) { stride.push(nStates); nStates *= radix[i]; }
+  const pOther = Math.max(0, 1 - playerProbs.reduce((s, p) => s + p, 0));
+
+  let cur = new Float64Array(nStates);
+  cur[minTries.reduce((s, k, i) => s + k * stride[i], 0)] = 1;
+  g[0] = cur[0];
+  for (let n = 1; n <= maxN; n++) {
+    const next = new Float64Array(nStates);
+    for (let s = 0; s < nStates; s++) {
+      const mass = cur[s];
+      if (!mass) continue;
+      next[s] += mass * pOther;
+      for (let i = 0; i < K; i++) {
+        const need = Math.floor(s / stride[i]) % radix[i];
+        // Once a player's minimum is met, further tries to them leave the state unchanged
+        next[need > 0 ? s - stride[i] : s] += mass * playerProbs[i];
+      }
+    }
+    cur = next;
+    g[n] = cur[0];
+  }
+  return g;
+}
+
+// E[g(N)] for a try distribution given as {n: prob}
+function _expectOverTryDist(dist, g) {
+  let s = 0;
+  for (const [k, v] of Object.entries(dist || {})) {
+    const n = +k;
+    if (n < g.length) s += v * g[n];
+    else s += v * g[g.length - 1]; // g is non-decreasing in n; out-of-range keys use the last value
+  }
+  return s;
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -1838,41 +1889,58 @@ document.addEventListener("DOMContentLoaded", function () {
       updateAnytimeDisplay(matchId, blendedDists);
     }
 
+    // Largest try count present in the (filtered) simulation bins
+    const bins = Array.isArray(sgmDist.bins) ? sgmDist.bins : [];
+    let maxN = 0;
+    const scanKeys = d => { for (const k in (d || {})) { const n = +k; if (n > maxN) maxN = n; } };
+    if (bins.length) bins.forEach(b => { scanKeys(b.h); scanKeys(b.a); });
+    else { scanKeys(blendedDists.home_try_dist); scanKeys(blendedDists.away_try_dist); }
+
+    // Per side: per-player marginals for display + g[n] = P(all this side's picks land | n team tries)
     const sideResults = await Promise.all(['home', 'away'].map(async side => {
       const picked = pickedBySide[side];
-      if (!picked.length) return { side, prob: 1, indivProbs: [], lineProb: null };
+      if (!picked.length) return { side, g: null, indivProbs: [] };
 
       const players = data[`${side}_players`] || [];
       const teamId  = players[0]?.team_id;
-      if (!teamId)  return { side, prob: 1, indivProbs: [], lineProb: null };
+      if (!teamId)  return { side, g: null, indivProbs: [] };
 
       const cachedProbs = allTryscorerData[matchId]?.[side]?.tryProbs;
       let tryProbs;
       try {
         tryProbs = cachedProbs
           ?? await fetch(`${API_BASE}/player_try_probabilities/${matchId}/${teamId}/${competition}`).then(r => r.json());
-      } catch { return { side, prob: 1, indivProbs: picked.map(() => null), lineProb: null }; }
+      } catch { return { side, g: null, indivProbs: picked.map(() => null) }; }
 
       const tryDist = blendedDists[side + '_try_dist'];
-      if (!tryDist) return { side, prob: 0, indivProbs: [], lineProb: null };
+      if (!tryDist) return { side, g: new Float64Array(maxN + 1), indivProbs: [] }; // no data → prob 0
       const tryProbsArr = picked.map(p => tryProbs[p.id] ?? tryProbs[String(p.id)]);
-      const minTriesArr = picked.map(p => p.n);
-      const indivProbs  = tryProbsArr.map(p => p != null ? anytimeTryscorerProbability(p, tryDist, 20) : null);
-      const lineProb    = hasMarginOrTotal ? effectiveLineProb : null;
-
-      try {
-        const d = await fetch(`${API_BASE}/sgm_probability`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ try_dist: tryDist, player_probs: tryProbsArr, min_tries: minTriesArr }),
-        }).then(r => r.json());
-        return { side, prob: (d.probability ?? 1) * effectiveLineProb, indivProbs, lineProb };
-      } catch {
-        return { side, prob: 1, indivProbs: picked.map(() => null), lineProb: null };
-      }
+      if (tryProbsArr.some(p => p == null)) return { side, g: null, indivProbs: picked.map(() => null) };
+      const indivProbs  = tryProbsArr.map(p => anytimeTryscorerProbability(p, tryDist, Math.max(20, maxN)));
+      const g = _teamPickSuccessByN(tryProbsArr, picked.map(p => p.n), maxN);
+      return { side, g, indivProbs };
     }));
+    const gHome = sideResults[0].g, gAway = sideResults[1].g;
 
-    const combined = sideResults.reduce((acc, r) => acc * r.prob, 1);
+    // Joint tryscorer probability conditional on the line/total selection.
+    // Home and away try counts are correlated through the scoreline, so evaluate both sides
+    // within each simulated (margin, total) bin and weight the product — not the product of
+    // two independently aggregated distributions.
+    let tryJoint;
+    if (bins.length) {
+      const weights = _binWeights(bins, userPicks, marginSigma, totalSigma, blendT);
+      tryJoint = 0;
+      for (let i = 0; i < bins.length; i++) {
+        if (!weights[i]) continue;
+        const ph = gHome ? _expectOverTryDist(bins[i].h, gHome) : 1;
+        const pa = gAway ? _expectOverTryDist(bins[i].a, gAway) : 1;
+        tryJoint += weights[i] * ph * pa;
+      }
+    } else {
+      tryJoint = (gHome ? _expectOverTryDist(blendedDists.home_try_dist, gHome) : 1)
+               * (gAway ? _expectOverTryDist(blendedDists.away_try_dist, gAway) : 1);
+    }
+
     const allPicks = [];
     ['home', 'away'].forEach(side => {
       const sr = sideResults.find(r => r.side === side);
@@ -1880,8 +1948,8 @@ document.addEventListener("DOMContentLoaded", function () {
         allPicks.push({ id: p.id, team_id: p.team_id, side, name: p.name, n: p.n, indivProb: sr?.indivProbs?.[i] ?? null });
       });
     });
-    const lineProb = sideResults.find(r => r.lineProb != null)?.lineProb ?? null;
-    return { matchId, matchLabel, picks: allPicks, prob: combined, lineOnly: false, lineItems, hasMarginOrTotal, lineProb, userPickCount, lineLegs };
+    const lineProb = hasMarginOrTotal ? effectiveLineProb : null;
+    return { matchId, matchLabel, picks: allPicks, prob: tryJoint * effectiveLineProb, lineOnly: false, lineItems, hasMarginOrTotal, lineProb, userPickCount, lineLegs };
   }
 
   // --- RECALCULATE ALL & RENDER BETSLIP ---
