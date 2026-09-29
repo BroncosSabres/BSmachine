@@ -49,7 +49,9 @@ function probBar(g) {
   const homeWin   = homeP >= awayP;
   const homeOdds  = homeP >= 1e-6 ? (1 / homeP).toFixed(2) : null;
   const awayOdds  = awayP >= 1e-6 ? (1 / awayP).toFixed(2) : null;
-  const extraPct  = ((otP + soP) * 100).toFixed(0);
+  // SO only happens after OT, so shootout_perc is a subset of overtime_perc
+  const otPct     = (otP * 100).toFixed(0);
+  const soPct     = (soP * 100).toFixed(0);
 
   return `
     <div class="mt-3">
@@ -58,7 +60,7 @@ function probBar(g) {
           <span class="${homeWin ? 'text-white' : 'text-gray-300'}">${home.toFixed(1)}%</span>
           ${homeOdds ? `<span class="text-xs font-semibold text-gray-400">$${homeOdds}</span>` : ''}
         </div>
-        ${(otP + soP) > 0.005 ? `<span class="text-xs font-normal text-gray-500 self-center">${extraPct}% to OT/SO</span>` : '<span></span>'}
+        ${otP > 0.005 ? `<span class="text-xs font-normal text-gray-500 self-center">${otPct}% to OT${soP > 0.005 ? ` (${soPct}% SO)` : ''}</span>` : '<span></span>'}
         <div class="flex flex-col items-end">
           <span class="${!homeWin ? 'text-white' : 'text-gray-300'}">${away.toFixed(1)}%</span>
           ${awayOdds ? `<span class="text-xs font-semibold text-gray-400">$${awayOdds}</span>` : ''}
