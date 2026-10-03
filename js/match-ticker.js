@@ -11,9 +11,33 @@ import {
 } from './my-teams.js';
 
 const DAYS = 7;
+// A game that kicked off within this window and isn't marked finished is
+// treated as in progress; older unfinished games are just awaiting results.
+const LIVE_WINDOW_MS = 3 * 60 * 60 * 1000;
+const REFRESH_MS = 5 * 60 * 1000;
+
+// Date-only strings (NRL games with no scraped kickoff time) would parse as
+// UTC midnight — read them as a local calendar day instead.
+function parseKickoff(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? new Date(+m[1], m[2] - 1, +m[3]) : new Date(iso);
+}
+
+// The next game to start (or one still in progress) in the viewer's clock,
+// regardless of whether earlier games have had their results recorded yet.
+function isUpcoming(entry, now) {
+  if (entry.isFinished) return false;
+  const d = parseKickoff(entry.date);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    return d >= today;
+  }
+  return d.getTime() > now - LIVE_WINDOW_MS;
+}
 
 function dayLabel(iso) {
-  const d = new Date(iso);
+  const d = parseKickoff(iso);
   const today = new Date();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
@@ -25,7 +49,7 @@ function dayLabel(iso) {
 function renderStrip(items) {
   let lastDay = null;
   return items.map(({ entry, myTeam }) => {
-    const day = new Date(entry.date).toDateString();
+    const day = parseKickoff(entry.date).toDateString();
     const divider = day !== lastDay
       ? `<div class="ticker-day"><span>${dayLabel(entry.date)}</span></div>`
       : '';
@@ -62,13 +86,15 @@ export async function initMatchTicker(root) {
 
   // Profile teams may arrive after the games; MY_TEAMS_CHANGED re-renders then.
   loadMyTeams();
-  const entries = await fetchAllUpcoming(DAYS);
-  if (!entries.length) {
-    root.classList.add('is-empty');
-    return;
-  }
+  let entries = await fetchAllUpcoming(DAYS);
+  // Set once the viewer scrolls the strip themselves, so a background refresh
+  // doesn't yank them back to the next game.
+  let userScrolled = false;
 
-  function render() {
+  function render({ keepScroll = false } = {}) {
+    root.classList.toggle('is-empty', !entries.length);
+    if (!entries.length) return;
+
     const prefs = getMyTeams();
     const following = hasAnyTeams(prefs);
     const mineOnly = following && prefs.tickerMyTeamsOnly;
@@ -90,21 +116,49 @@ export async function initMatchTicker(root) {
       return;
     }
 
+    const scrollLeft = track.scrollLeft;
     track.innerHTML = renderStrip(items);
 
-    // Start at the first game that hasn't finished yet (NRL.com-style).
-    const firstLive = track.querySelector('.ticker-tile:not(.is-finished)');
-    if (firstLive) {
-      const divider = firstLive.previousElementSibling;
-      const anchor = divider?.classList.contains('ticker-day') ? divider : firstLive;
-      // .ticker-track is position:relative, so offsetLeft is measured from it.
-      track.scrollLeft = anchor.offsetLeft;
+    if (keepScroll) {
+      track.scrollLeft = scrollLeft;
+    } else {
+      // Start at the next game to start in the viewer's time zone
+      // (NRL.com-style); earlier games stay scrollable to the left.
+      const now = Date.now();
+      const idx = items.findIndex(i => isUpcoming(i.entry, now));
+      const tiles = track.querySelectorAll('.ticker-tile');
+      const target = tiles[idx === -1 ? tiles.length - 1 : idx];
+      if (target) {
+        const divider = target.previousElementSibling;
+        const anchor = divider?.classList.contains('ticker-day') ? divider : target;
+        // .ticker-track is position:relative, so offsetLeft is measured from it.
+        track.scrollLeft = anchor.offsetLeft;
+      }
     }
     updateArrows(track, prev, next);
   }
 
   render();
-  window.addEventListener(MY_TEAMS_CHANGED, render);
+  window.addEventListener(MY_TEAMS_CHANGED, () => render());
+
+  // Keep scores, "Today"/"Tomorrow" labels and the starting game current on
+  // pages left open. fetchAllUpcoming serves its cache until it expires.
+  async function refresh({ reanchor }) {
+    const fresh = await fetchAllUpcoming(DAYS);
+    if (!fresh.length) return; // keep what we have if the backend blips
+    entries = fresh;
+    if (reanchor) userScrolled = false;
+    render({ keepScroll: userScrolled });
+  }
+  setInterval(() => {
+    if (document.visibilityState === 'visible') refresh({ reanchor: false });
+  }, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refresh({ reanchor: true });
+  });
+  for (const evt of ['wheel', 'pointerdown', 'keydown']) {
+    track.addEventListener(evt, () => { userScrolled = true; }, { passive: true });
+  }
 
   filter.addEventListener('click', e => {
     const btn = e.target.closest('button[data-mine]');
@@ -114,8 +168,8 @@ export async function initMatchTicker(root) {
   });
 
   const step = () => Math.max(track.clientWidth * 0.8, 200);
-  prev.addEventListener('click', () => track.scrollBy({ left: -step(), behavior: 'smooth' }));
-  next.addEventListener('click', () => track.scrollBy({ left:  step(), behavior: 'smooth' }));
+  prev.addEventListener('click', () => { userScrolled = true; track.scrollBy({ left: -step(), behavior: 'smooth' }); });
+  next.addEventListener('click', () => { userScrolled = true; track.scrollBy({ left:  step(), behavior: 'smooth' }); });
   track.addEventListener('scroll', () => updateArrows(track, prev, next), { passive: true });
   window.addEventListener('resize', () => updateArrows(track, prev, next));
 }
