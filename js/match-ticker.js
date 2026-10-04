@@ -1,13 +1,13 @@
 // match-ticker.js — the NRL.com-style strip of match tiles at the top of every
 // page. Shows every competition's games in kickoff order, with a day label
 // wherever the day changes, and scrolls to the next unplayed game on load.
-// Games involving the viewer's My Teams are highlighted, and once they follow
-// a team an All / My Teams toggle can narrow the strip to just those games.
+// Games involving the viewer's My Teams are highlighted, and Ticker Settings
+// (the cog at the left) can hide a competition or narrow it to My Teams' games.
 import { fetchAllUpcoming } from './upcoming-matches.js';
 import { renderTickerTile } from './prediction-tile.js';
 import {
-  getMyTeams, hasAnyTeams, involvesMyTeam, loadMyTeams,
-  setTickerMyTeamsOnly, MY_TEAMS_CHANGED,
+  getMyTeams, hasAnyTeams, involvesMyTeam, showInTicker, loadMyTeams,
+  MY_TEAMS_SPORTS, MY_TEAMS_CHANGED,
 } from './my-teams.js';
 
 const DAYS = 7;
@@ -68,10 +68,9 @@ export async function initMatchTicker(root) {
   if (!root) return;
   root.innerHTML = `
     <div class="ticker-inner">
-      <div class="ticker-filter" role="group" aria-label="Ticker games" hidden>
-        <button type="button" data-mine="0">All</button>
-        <button type="button" data-mine="1">My Teams</button>
-      </div>
+      <button type="button" class="ticker-settings" aria-label="Ticker settings" title="Ticker settings">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.53 1.53 0 0 1-2.29.95c-1.37-.84-2.94.73-2.1 2.1.54.89.06 2.04-.95 2.29-1.56.38-1.56 2.6 0 2.98 1.01.25 1.49 1.4.95 2.29-.84 1.37.73 2.94 2.1 2.1a1.53 1.53 0 0 1 2.29.95c.38 1.56 2.6 1.56 2.98 0a1.53 1.53 0 0 1 2.29-.95c1.37.84 2.94-.73 2.1-2.1a1.53 1.53 0 0 1 .95-2.29c1.56-.38 1.56-2.6 0-2.98a1.53 1.53 0 0 1-.95-2.29c.84-1.37-.73-2.94-2.1-2.1a1.53 1.53 0 0 1-2.29-.95ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clip-rule="evenodd"/></svg>
+      </button>
       <button type="button" class="ticker-arrow ticker-arrow--prev" aria-label="Scroll matches left" disabled>&#8249;</button>
       <div class="ticker-track" role="list" aria-label="Upcoming matches">
         ${'<div class="ticker-tile ticker-tile--skeleton"></div>'.repeat(8)}
@@ -82,7 +81,7 @@ export async function initMatchTicker(root) {
   const track  = root.querySelector('.ticker-track');
   const prev   = root.querySelector('.ticker-arrow--prev');
   const next   = root.querySelector('.ticker-arrow--next');
-  const filter = root.querySelector('.ticker-filter');
+  const settings = root.querySelector('.ticker-settings');
 
   // Profile teams may arrive after the games; MY_TEAMS_CHANGED re-renders then.
   loadMyTeams();
@@ -97,21 +96,23 @@ export async function initMatchTicker(root) {
 
     const prefs = getMyTeams();
     const following = hasAnyTeams(prefs);
-    const mineOnly = following && prefs.tickerMyTeamsOnly;
+    const filtered = MY_TEAMS_SPORTS.some(s => prefs.ticker[s] !== 'all');
+    settings.classList.toggle('is-filtered', filtered);
+    settings.title = filtered ? 'Ticker settings (filtered)' : 'Ticker settings';
 
-    filter.hidden = !following;
-    filter.querySelectorAll('button').forEach(b => {
-      b.setAttribute('aria-pressed', String((b.dataset.mine === '1') === mineOnly));
-    });
-
-    let items = entries.map(entry => ({
-      entry,
-      myTeam: following && involvesMyTeam(entry.sport, entry.homeTeam, entry.awayTeam),
-    }));
-    if (mineOnly) items = items.filter(i => i.myTeam);
+    const items = entries
+      .filter(entry => showInTicker(entry.sport, entry.homeTeam, entry.awayTeam, prefs))
+      .map(entry => ({
+        entry,
+        myTeam: following && involvesMyTeam(entry.sport, entry.homeTeam, entry.awayTeam),
+      }));
 
     if (!items.length) {
-      track.innerHTML = `<div class="ticker-empty">None of your teams play in the next ${DAYS} days.</div>`;
+      const allOff = MY_TEAMS_SPORTS.every(s => prefs.ticker[s] === 'off');
+      track.innerHTML = `<div class="ticker-empty">${allOff
+        ? 'Every competition is hidden.'
+        : `No games for your ticker settings in the next ${DAYS} days.`}
+        <button type="button" class="ticker-empty-link">Change settings</button></div>`;
       updateArrows(track, prev, next);
       return;
     }
@@ -160,11 +161,10 @@ export async function initMatchTicker(root) {
     track.addEventListener(evt, () => { userScrolled = true; }, { passive: true });
   }
 
-  filter.addEventListener('click', e => {
-    const btn = e.target.closest('button[data-mine]');
-    if (!btn) return;
-    const mineOnly = btn.dataset.mine === '1';
-    if (mineOnly !== getMyTeams().tickerMyTeamsOnly) setTickerMyTeamsOnly(mineOnly);
+  const openSettings = () => import('./my-teams-modal.js').then(mod => mod.openMyTeams());
+  settings.addEventListener('click', openSettings);
+  track.addEventListener('click', e => {
+    if (e.target.closest('.ticker-empty-link')) openSettings();
   });
 
   const step = () => Math.max(track.clientWidth * 0.8, 200);

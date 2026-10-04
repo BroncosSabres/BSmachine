@@ -1,8 +1,10 @@
-// my-teams.js — the teams a user follows, per competition. Shared by the header
-// match ticker, the My Teams picker modal and every predictions page.
+// my-teams.js — the teams a user follows, per competition, and how each
+// competition appears in the header match ticker. Shared by the ticker, the
+// Ticker Settings modal and every predictions page.
 //
-// Signed-in users' picks live on profiles.my_teams / profiles.ticker_my_teams_only
-// (see nrl-flask-backend/supabase_my_teams_schema.sql). A localStorage mirror
+// Signed-in users' picks live on profiles.my_teams / profiles.ticker_settings
+// (see nrl-flask-backend/supabase_my_teams_schema.sql and
+// supabase_ticker_settings_schema.sql). A localStorage mirror
 // gives an instant first paint and lets guests pick teams too; picks a guest
 // made are copied onto their profile the first time they sign in.
 import { teamSlug } from './utils.js';
@@ -12,6 +14,9 @@ import { nhlLogoUrl } from './nhl-logos.js';
 
 export const MY_TEAMS_SPORTS = ['nrl', 'nrlw', 'nfl', 'nhl'];
 export const MY_TEAMS_CHANGED = 'bsm:myteams-changed';
+
+// Per-competition ticker mode: every game, only My Teams' games, or hidden.
+export const TICKER_MODES = ['all', 'mine', 'off'];
 
 const LOCAL_KEY = 'bsm_my_teams';
 
@@ -24,9 +29,19 @@ function normalize(raw) {
     const list = raw?.teams?.[sport];
     teams[sport] = Array.isArray(list) ? [...new Set(list.filter(t => typeof t === 'string' && t))] : [];
   });
+  // Before per-competition settings there was one "only My Teams" switch: it
+  // showed My Teams' games and nothing from competitions without a team.
+  const legacyMineOnly = !!raw?.tickerMyTeamsOnly;
+  const ticker = {};
+  MY_TEAMS_SPORTS.forEach(sport => {
+    const mode = raw?.ticker?.[sport];
+    ticker[sport] = TICKER_MODES.includes(mode) ? mode
+      : legacyMineOnly ? (teams[sport].length ? 'mine' : 'off')
+      : 'all';
+  });
   return {
     teams,
-    tickerMyTeamsOnly: !!raw?.tickerMyTeamsOnly,
+    ticker,
     owner: raw?.owner ?? null,
   };
 }
@@ -46,7 +61,7 @@ function writeLocal(prefs) {
 let state = readLocal();
 
 function sameTeams(a, b) {
-  return JSON.stringify(a.teams) === JSON.stringify(b.teams) && a.tickerMyTeamsOnly === b.tickerMyTeamsOnly;
+  return JSON.stringify(a.teams) === JSON.stringify(b.teams) && JSON.stringify(a.ticker) === JSON.stringify(b.ticker);
 }
 
 function setState(next) {
@@ -77,6 +92,14 @@ export function getMyTeams() {
 
 export function hasAnyTeams(prefs = state) {
   return MY_TEAMS_SPORTS.some(s => prefs.teams[s].length > 0);
+}
+
+// Whether a game shows in the ticker under the viewer's settings for its
+// competition. A competition set to My Teams with no teams picked shows nothing.
+export function showInTicker(sport, home, away, prefs = state) {
+  const mode = prefs.ticker[sport] ?? 'all';
+  if (mode === 'off') return false;
+  return mode === 'all' || involvesMyTeam(sport, home, away);
 }
 
 export function isMyTeam(sport, name) {
@@ -124,22 +147,24 @@ export function loadMyTeams() {
     if (!auth) return state;
     const { data, error } = await auth.supabase
       .from('profiles')
-      .select('my_teams, ticker_my_teams_only')
+      .select('my_teams, ticker_settings, ticker_my_teams_only')
       .eq('id', auth.userId)
       .maybeSingle();
     if (error || !data) return state;
 
     const remote = normalize({
       teams: data.my_teams,
+      ticker: data.ticker_settings,
       tickerMyTeamsOnly: data.ticker_my_teams_only,
       owner: auth.userId,
     });
-    if (!hasAnyTeams(remote) && hasAnyTeams(state) && state.owner == null) {
-      // First sign-in after picking teams as a guest — keep them.
+    if (!hasAnyTeams(remote) && !hasTickerSettings(data) && state.owner == null
+        && (hasAnyTeams(state) || !isDefaultTicker(state))) {
+      // First sign-in after setting things up as a guest — keep them.
       const next = { ...state, owner: auth.userId };
       await auth.supabase
         .from('profiles')
-        .update({ my_teams: next.teams, ticker_my_teams_only: next.tickerMyTeamsOnly })
+        .update(profileColumns(next))
         .eq('id', auth.userId);
       setState(next);
     } else {
@@ -150,22 +175,30 @@ export function loadMyTeams() {
   return loadPromise;
 }
 
+function isDefaultTicker(prefs) {
+  return MY_TEAMS_SPORTS.every(s => prefs.ticker[s] === 'all');
+}
+
+function hasTickerSettings(row) {
+  return Object.keys(row.ticker_settings || {}).length > 0 || !!row.ticker_my_teams_only;
+}
+
+function profileColumns(prefs) {
+  return { my_teams: prefs.teams, ticker_settings: prefs.ticker };
+}
+
 // Saves to the local mirror immediately (so the UI updates at once), then to
 // the profile when signed in. Returns { ok, signedIn }.
-export async function saveMyTeams({ teams, tickerMyTeamsOnly }) {
+export async function saveMyTeams({ teams, ticker }) {
   const auth = await supabaseSession();
-  const next = normalize({ teams, tickerMyTeamsOnly, owner: auth?.userId ?? null });
+  const next = normalize({ teams, ticker, owner: auth?.userId ?? null });
   setState(next);
   if (!auth) return { ok: true, signedIn: false };
   const { error } = await auth.supabase
     .from('profiles')
-    .update({ my_teams: next.teams, ticker_my_teams_only: next.tickerMyTeamsOnly })
+    .update(profileColumns(next))
     .eq('id', auth.userId);
   return { ok: !error, signedIn: true };
-}
-
-export function setTickerMyTeamsOnly(on) {
-  return saveMyTeams({ teams: state.teams, tickerMyTeamsOnly: on });
 }
 
 // Every team in a competition, for the picker — taken from the latest power

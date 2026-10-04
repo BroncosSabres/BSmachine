@@ -72,7 +72,7 @@ export const SPORTS = {
       { label: 'Rankings',       href: 'rankings.html' },
       { label: 'Predictions',    href: 'matchups.html' },
       { label: 'Multi Builder',  href: 'tryscorer_predictions.html' },
-      { label: 'Simulator',      href: 'simulator.html',             disabled: true },
+      { label: 'Simulator',      href: 'simulator.html' },
       { label: 'Tipping',        href: 'tipping.html',               disabled: true },
       { label: 'Leaderboard',    href: 'leaderboard.html',           disabled: true },
       { label: 'Tracker',        href: 'tracker.html',               disabled: true },

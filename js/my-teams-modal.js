@@ -1,10 +1,10 @@
-// my-teams-modal.js — "My Teams" picker. Opened from the header (and the
-// profile page); registers window.openMyTeams(). Users can follow any number of
-// teams in each competition, and choose whether the header ticker shows every
-// game or only their teams'.
+// my-teams-modal.js — Ticker Settings: per competition, whether the header
+// ticker shows every game, only My Teams' games, or nothing, plus the picker
+// for the teams followed in that competition. Opened from the header, the
+// ticker's settings button and the profile page; registers window.openMyTeams().
 import { SPORTS, getCurrentSport } from './sport-config.js';
 import {
-  MY_TEAMS_SPORTS, loadMyTeams, saveMyTeams, isSignedIn,
+  MY_TEAMS_SPORTS, TICKER_MODES, loadMyTeams, saveMyTeams, isSignedIn,
   fetchTeamList, teamKey, teamLogoUrl,
 } from './my-teams.js';
 
@@ -16,8 +16,12 @@ function esc(s) {
 
 let modal = null;
 let activeSport = 'nrl';
-// Working copy while the modal is open: sport -> Map(teamKey -> stored name).
+// Working copy while the modal is open: sport -> Map(teamKey -> stored name),
+// and sport -> ticker mode.
 let draft = {};
+let draftTicker = {};
+
+const MODE_LABELS = { all: 'All games', mine: 'My Teams', off: 'Hidden' };
 
 function ensureModal() {
   if (modal) return modal;
@@ -28,16 +32,19 @@ function ensureModal() {
   modal.innerHTML = `
     <div class="mt-dialog" role="dialog" aria-modal="true" aria-labelledby="mt-title">
       <div class="mt-head">
-        <h2 id="mt-title" class="mt-title">My Teams</h2>
+        <h2 id="mt-title" class="mt-title">Ticker Settings</h2>
         <button type="button" class="mt-close" aria-label="Close">&times;</button>
       </div>
-      <p class="mt-sub">Follow as many teams as you like. Their games are listed first on predictions pages.</p>
+      <p class="mt-sub">Choose what each competition shows in the match ticker, and follow as many teams as you like. My Teams' games are also listed first on predictions pages.</p>
       <div class="mt-tabs" role="tablist"></div>
+      <div class="mt-mode">
+        <span class="mt-mode-label">In the ticker</span>
+        <div class="mt-seg" role="radiogroup" aria-label="Show in the ticker">
+          ${TICKER_MODES.map(m => `<button type="button" role="radio" data-mode="${m}">${MODE_LABELS[m]}</button>`).join('')}
+        </div>
+        <span class="mt-mode-hint"></span>
+      </div>
       <div class="mt-grid" role="group" aria-label="Teams"></div>
-      <label class="mt-switch">
-        <input type="checkbox" class="mt-ticker-only">
-        <span>Only show My Teams in the match ticker</span>
-      </label>
       <div class="mt-foot">
         <span class="mt-note"></span>
         <button type="button" class="mt-btn mt-cancel">Cancel</button>
@@ -55,7 +62,15 @@ function ensureModal() {
     if (!tab) return;
     activeSport = tab.dataset.sport;
     renderTabs();
+    renderMode();
     renderGrid();
+  });
+  modal.querySelector('.mt-seg').addEventListener('click', e => {
+    const btn = e.target.closest('[data-mode]');
+    if (!btn || btn.disabled) return;
+    draftTicker[activeSport] = btn.dataset.mode;
+    renderTabs();
+    renderMode();
   });
   modal.querySelector('.mt-grid').addEventListener('click', e => {
     const btn = e.target.closest('[data-team]');
@@ -65,7 +80,10 @@ function ensureModal() {
     const sel = draft[activeSport];
     if (sel.has(key)) sel.delete(key); else sel.set(key, name);
     btn.setAttribute('aria-pressed', String(sel.has(key)));
+    // "My Teams" with none picked would hide the whole competition.
+    if (!sel.size && draftTicker[activeSport] === 'mine') draftTicker[activeSport] = 'all';
     renderTabs();
+    renderMode();
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && modal && !modal.hidden) close();
@@ -78,11 +96,29 @@ function renderTabs() {
     const cfg = SPORTS[sport];
     const count = draft[sport].size;
     const active = sport === activeSport;
+    const hidden = draftTicker[sport] === 'off';
     return `<button type="button" role="tab" data-sport="${sport}" aria-selected="${active}"
-              class="comp-tab${active ? ' is-active' : ''}" style="--comp-color:${cfg.color}">
+              class="comp-tab${active ? ' is-active' : ''}${hidden ? ' is-hidden' : ''}" style="--comp-color:${cfg.color}"
+              ${hidden ? 'title="Hidden from the ticker"' : ''}>
               <img src="${cfg.logo}" alt="" class="comp-logo">${cfg.label}${count ? `<span class="mt-count">${count}</span>` : ''}
             </button>`;
   }).join('');
+}
+
+function renderMode() {
+  const mode = draftTicker[activeSport];
+  const noTeams = draft[activeSport].size === 0;
+  modal.querySelectorAll('.mt-seg [data-mode]').forEach(btn => {
+    btn.setAttribute('aria-checked', String(btn.dataset.mode === mode));
+    btn.disabled = btn.dataset.mode === 'mine' && noTeams;
+    btn.title = btn.disabled ? 'Pick a team below first' : '';
+  });
+  const label = SPORTS[activeSport].label;
+  modal.querySelector('.mt-mode-hint').textContent =
+    mode === 'off'  ? `No ${label} games in the ticker.` :
+    mode === 'mine' ? `Only games involving your ${label} teams.` :
+    noTeams         ? `Pick teams to highlight their games.` :
+                      `Your teams' games are highlighted.`;
 }
 
 async function renderGrid() {
@@ -107,8 +143,8 @@ function loadDraft(prefs) {
   draft = {};
   MY_TEAMS_SPORTS.forEach(sport => {
     draft[sport] = new Map(prefs.teams[sport].map(name => [teamKey(sport, name), name]));
+    draftTicker[sport] = prefs.ticker[sport];
   });
-  modal.querySelector('.mt-ticker-only').checked = prefs.tickerMyTeamsOnly;
 }
 
 async function save() {
@@ -117,10 +153,7 @@ async function save() {
   btn.disabled = true;
   const teams = {};
   MY_TEAMS_SPORTS.forEach(sport => { teams[sport] = [...draft[sport].values()]; });
-  const { ok } = await saveMyTeams({
-    teams,
-    tickerMyTeamsOnly: modal.querySelector('.mt-ticker-only').checked,
-  });
+  const { ok } = await saveMyTeams({ teams, ticker: { ...draftTicker } });
   btn.disabled = false;
   if (!ok) {
     note.textContent = 'Saved on this device, but couldn\'t save to your profile.';
@@ -147,6 +180,7 @@ export async function openMyTeams(sport) {
   // shown rather than a stale local one.
   loadDraft(await loadMyTeams());
   renderTabs();
+  renderMode();
   renderGrid();
 
   if (!(await isSignedIn()) && !modal.hidden) {

@@ -214,12 +214,13 @@
           <button id="team-edit-btn" class="btn-edit" style="align-self:flex-start; margin-top:1.1rem;">Edit</button>
         </div>
 
-        <!-- My Teams (any number per competition; edited in the shared modal) -->
+        <!-- My Teams & ticker settings (edited in the shared Ticker Settings modal) -->
         <div class="field-row">
           <div style="flex:1; min-width:0;">
-            <div class="field-label">My Teams</div>
+            <div class="field-label">My Teams &amp; Ticker</div>
             <div id="my-teams-display" class="field-value" style="display:flex; flex-wrap:wrap; gap:0.35rem; align-items:center;"></div>
-            <div style="font-size:0.8125rem; color:#8892a4; margin-top:0.35rem;">Listed first on predictions pages, and can filter the match ticker</div>
+            <div id="ticker-settings-display" style="font-size:0.8125rem; color:#c8d0dc; margin-top:0.35rem;"></div>
+            <div style="font-size:0.8125rem; color:#8892a4; margin-top:0.35rem;">My Teams are listed first on predictions pages; each competition can show all games, only My Teams, or nothing in the match ticker</div>
           </div>
           <button id="my-teams-edit-btn" class="btn-edit" style="align-self:flex-start; margin-top:1.1rem;">Edit</button>
         </div>
@@ -358,6 +359,13 @@
         const el = document.getElementById('my-teams-display')
         if (chips.length) el.replaceChildren(...chips)
         else el.textContent = 'None yet'
+
+        const { ticker } = getMyTeams()
+        const MODE = { all: 'all games', mine: 'My Teams', off: 'hidden' }
+        document.getElementById('ticker-settings-display').textContent = 'Ticker: ' +
+          (MY_TEAMS_SPORTS.every(s => ticker[s] === 'all')
+            ? 'all games'
+            : MY_TEAMS_SPORTS.map(s => `${SPORTS[s].label} ${MODE[ticker[s]]}`).join(' · '))
       }
 
       loadMyTeams().then(renderMyTeams)

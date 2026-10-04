@@ -481,41 +481,49 @@ a.ticker-tile:hover {
 }
 a.ticker-tile.is-my-team:hover { border-color: var(--accent); }
 
-/* All / My Teams toggle (only shown once the viewer follows a team) */
-.ticker-filter {
+/* Ticker Settings cog - amber dot once any competition is filtered or hidden */
+.ticker-settings {
+  position: relative;
   flex-shrink: 0;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: 0.2rem;
-  padding: 0.4rem 0 0.4rem 0.75rem;
-}
-.ticker-filter[hidden] { display: none; }
-.ticker-filter button {
-  padding: 0.15rem 0.45rem;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  width: 2.25rem;
   color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  background: #070a10;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  transition: color 0.15s ease;
 }
-.ticker-filter button:hover { color: var(--text-primary); }
-.ticker-filter button[aria-pressed="true"] {
-  color: var(--accent-bright);
-  border-color: rgba(245, 158, 11, 0.4);
-  background-color: var(--accent-dim);
+.ticker-settings svg { width: 1.05rem; height: 1.05rem; }
+.ticker-settings:hover { color: var(--text-primary); }
+.ticker-settings.is-filtered { color: var(--accent-bright); }
+.ticker-settings.is-filtered::after {
+  content: '';
+  position: absolute;
+  top: calc(50% - 0.85rem);
+  right: 0.4rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  background: var(--accent);
+  border-radius: 50%;
 }
 .ticker-empty {
   align-self: center;
   font-size: 0.78rem;
   color: var(--text-secondary);
 }
+.ticker-empty-link {
+  margin-left: 0.4rem;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-bright);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.ticker-empty-link:hover { text-decoration: underline; }
 
 /* ================================================
    My Teams picker (js/my-teams-modal.js)
@@ -613,15 +621,45 @@ button.mobile-nav-link { width: 100%; text-align: left; }
   border-color: var(--accent);
 }
 .mt-empty { grid-column: 1 / -1; font-size: 0.85rem; color: var(--text-muted); }
-.mt-switch {
+/* Competition hidden from the ticker: dimmed tab */
+.mt-tabs .comp-tab.is-hidden { opacity: 0.45; }
+.mt-tabs .comp-tab.is-hidden.is-active { opacity: 0.75; }
+
+/* Per-competition ticker mode: All games / My Teams / Hidden */
+.mt-mode {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  cursor: pointer;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
 }
-.mt-switch input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.mt-mode-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.mt-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.mt-seg button {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.mt-seg button + button { border-left: 1px solid var(--border-default); }
+.mt-seg button:hover:not(:disabled) { color: var(--text-primary); }
+.mt-seg button[aria-checked="true"] { color: #0a0d14; background: var(--accent); }
+.mt-seg button:disabled { opacity: 0.4; cursor: not-allowed; }
+.mt-mode-hint { font-size: 0.78rem; color: var(--text-muted); }
 .mt-foot { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .mt-note { flex: 1; min-width: 10rem; font-size: 0.78rem; color: var(--text-muted); }
 .mt-note a { color: var(--accent-bright); }
