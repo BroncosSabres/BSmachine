@@ -2,7 +2,7 @@
 import { apiUrl } from './api-config.js';
 import { rankChangeBadge, probColor, deltaBadge } from './rankings-shared.js';
 import { nflLogoUrl } from './nfl-logos.js';
-import { drawConferenceWheel, drawSuperBowlWheel, updateScatter } from './nfl-charts.js';
+import { drawLeagueWheel, drawConferenceWheel, drawSuperBowlWheel, updateScatter } from './nfl-charts.js';
 
 const weekBadge      = document.getElementById("week-badge");
 const groupsContainer = document.getElementById("rankings-groups");
@@ -140,6 +140,41 @@ function setView(newView) {
 btnLeague.addEventListener('click', () => setView('league'));
 btnConference.addEventListener('click', () => setView('conference'));
 btnDivision.addEventListener('click', () => setView('division'));
+
+// Playoff odds wheels: one full-league wheel (default) or a wheel per
+// conference. Only the visible view is drawn - Chart.js can't size a canvas
+// inside a display:none container - and it's redrawn on each toggle.
+const btnWheelLeague     = document.getElementById("btn-wheel-league");
+const btnWheelConference = document.getElementById("btn-wheel-conference");
+const wheelViewLeague     = document.getElementById("wheel-view-league");
+const wheelViewConference = document.getElementById("wheel-view-conference");
+let wheelView = 'league'; // 'league' | 'conference'
+
+function drawPlayoffWheels() {
+  if (wheelView === 'league') {
+    drawLeagueWheel(currentRankings, 'leagueWheel');
+  } else {
+    drawConferenceWheel(currentRankings, 'AFC', 'afcWheel');
+    drawConferenceWheel(currentRankings, 'NFC', 'nfcWheel');
+  }
+}
+
+function setWheelView(newView) {
+  if (newView === wheelView) return;
+  wheelView = newView;
+  const active   = wheelView === 'league' ? btnWheelLeague : btnWheelConference;
+  const inactive = wheelView === 'league' ? btnWheelConference : btnWheelLeague;
+  active.classList.add('bg-amber-400', 'text-gray-900', 'font-bold');
+  active.classList.remove('text-gray-400', 'font-semibold');
+  inactive.classList.remove('bg-amber-400', 'text-gray-900', 'font-bold');
+  inactive.classList.add('text-gray-400', 'font-semibold');
+  wheelViewLeague.classList.toggle('hidden', wheelView !== 'league');
+  wheelViewConference.classList.toggle('hidden', wheelView !== 'conference');
+  if (currentRankings.length) drawPlayoffWheels();
+}
+
+btnWheelLeague.addEventListener('click', () => setWheelView('league'));
+btnWheelConference.addEventListener('click', () => setWheelView('conference'));
 
 // Ordering for projected seeding: best projected record first, with
 // tiebreakers falling back to more decimal-precise/independent signals
@@ -304,8 +339,7 @@ async function loadRankings() {
 
   render();
 
-  drawConferenceWheel(currentRankings, 'AFC', 'afcWheel');
-  drawConferenceWheel(currentRankings, 'NFC', 'nfcWheel');
+  drawPlayoffWheels();
   drawSuperBowlWheel(currentRankings, 'superBowlWheel');
   updateScatter(currentRankings);
 

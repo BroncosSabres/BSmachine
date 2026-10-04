@@ -15,7 +15,8 @@ const NFL_TEAM_COLORS = {
   'San Francisco 49ers': '#AA0000', 'Seattle Seahawks': '#002244',
 };
 
-let afcWheelInstance, nfcWheelInstance, sbWheelInstance, scatterInstance;
+const wheelInstances = {};
+let scatterInstance;
 
 const darkThemeScales = {
   x: {
@@ -42,6 +43,13 @@ function drawLogoContain(ctx, img, cx, cy, maxSize) {
   ctx.drawImage(img, cx - w / 2, cy - h / 2, w, h);
 }
 
+// Wheel geometry scales with the rendered width (the canvas sits in a square,
+// width-driven box) so the logo ring and labels still fit on narrow screens.
+function wheelScale(chart) { return Math.max(0.6, Math.min(1, chart.width / 480)); }
+function wheelLogoSize(chart) { return Math.round(22 * wheelScale(chart)); }
+function wheelLogoOffset(chart) { return wheelLogoSize(chart) * 0.8; }
+function wheelPadding(chart) { return Math.ceil(wheelLogoOffset(chart) + wheelLogoSize(chart) / 2 + 2); }
+
 async function preloadLogos(teamNames) {
   const logos = {};
   await Promise.all(teamNames.map(name => new Promise(resolve => {
@@ -57,16 +65,13 @@ async function preloadLogos(teamNames) {
 function wheelChart(canvasId, teamNames, ringDatasets, ringLabels) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
-  const container = canvas.parentElement;
-  container.style.maxWidth = '480px';
-  container.style.maxHeight = '480px';
-  container.style.marginLeft = 'auto';
-  container.style.marginRight = 'auto';
-  canvas.style.height = '480px';
 
   const teamColours = teamNames.map(name => NFL_TEAM_COLORS[name] || '#CCCCCC');
 
   return preloadLogos(teamNames).then(logos => {
+    // Destroy only once the logos are in, so overlapping redraws (e.g. a quick
+    // toggle back and forth) never leave two charts on one canvas.
+    if (wheelInstances[canvasId]) wheelInstances[canvasId].destroy();
     const ctx = canvas.getContext('2d');
     const instance = new Chart(ctx, {
       type: 'doughnut',
@@ -80,7 +85,7 @@ function wheelChart(canvasId, teamNames, ringDatasets, ringLabels) {
         cutout: '15%',
         radius: '100%',
         maintainAspectRatio: false,
-        layout: { padding: { top: 30, bottom: 30, left: 30, right: 30 } },
+        layout: { padding: ({ chart }) => wheelPadding(chart) },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -100,6 +105,7 @@ function wheelChart(canvasId, teamNames, ringDatasets, ringLabels) {
             const centerX = chartArea.left + chartArea.width  / 2;
             const centerY = chartArea.top  + chartArea.height / 2;
             const baseAngle = -Math.PI / 2;
+            const fontSize = Math.max(8, Math.round(11 * wheelScale(chart)));
             ringLabels.forEach((text, i) => {
               const arc = chart.getDatasetMeta(i).data[0];
               if (!arc) return;
@@ -109,7 +115,7 @@ function wheelChart(canvasId, teamNames, ringDatasets, ringLabels) {
               ctx.save();
               ctx.translate(x, y);
               ctx.rotate(baseAngle + Math.PI / 2);
-              ctx.font         = 'bold 11px sans-serif';
+              ctx.font         = `bold ${fontSize}px sans-serif`;
               ctx.fillStyle    = '#fff';
               ctx.textAlign    = 'center';
               ctx.textBaseline = 'top';
@@ -125,20 +131,38 @@ function wheelChart(canvasId, teamNames, ringDatasets, ringLabels) {
             const meta = chart.getDatasetMeta(0);
             const arcs = meta.data;
             if (!arcs.length) return;
-            const offset = 18;
+            const offset = wheelLogoOffset(chart);
+            const size = wheelLogoSize(chart);
             arcs.forEach((arcElem, i) => {
               const angle       = (arcElem.startAngle + arcElem.endAngle) / 2;
               const outerRadius = arcElem.outerRadius;
               const x = arcElem.x + Math.cos(angle) * (outerRadius + offset);
               const y = arcElem.y + Math.sin(angle) * (outerRadius + offset);
-              drawLogoContain(ctx, logos[teamNames[i]], x, y, 22);
+              drawLogoContain(ctx, logos[teamNames[i]], x, y, size);
             });
           }
         }
       ]
     });
+    wheelInstances[canvasId] = instance;
     return instance;
   });
+}
+
+// Full-league wheel: every team with a playoff chance, one ring per round
+// through to winning the Super Bowl.
+export async function drawLeagueWheel(rankings, canvasId) {
+  const filtered = rankings
+    .filter(r => (r.percent_playoffs ?? 0) > 0)
+    .sort((a, b) => a.team.localeCompare(b.team));
+
+  const teamNames = filtered.map(r => r.team);
+  const ringLabels = ['Playoffs', 'Div Round', 'Conf Champ', 'Super Bowl', 'Champions'];
+  const ringKeys   = ['percent_playoffs', 'percent_divisional_round', 'percent_conf_championship',
+                       'percent_super_bowl_appearance', 'percent_super_bowl_champion'];
+  const ringDatasets = ringKeys.map(key => filtered.map(r => (r[key] ?? 0) * 100));
+
+  await wheelChart(canvasId, teamNames, ringDatasets, ringLabels);
 }
 
 export async function drawConferenceWheel(rankings, conference, canvasId) {
@@ -152,12 +176,7 @@ export async function drawConferenceWheel(rankings, conference, canvasId) {
                        'percent_conf_championship', 'percent_super_bowl_appearance'];
   const ringDatasets = ringKeys.map(key => filtered.map(r => (r[key] ?? 0) * 100));
 
-  if (canvasId === 'afcWheel' && afcWheelInstance) afcWheelInstance.destroy();
-  if (canvasId === 'nfcWheel' && nfcWheelInstance) nfcWheelInstance.destroy();
-
-  const instance = await wheelChart(canvasId, teamNames, ringDatasets, ringLabels);
-  if (canvasId === 'afcWheel') afcWheelInstance = instance;
-  if (canvasId === 'nfcWheel') nfcWheelInstance = instance;
+  await wheelChart(canvasId, teamNames, ringDatasets, ringLabels);
 }
 
 export async function drawSuperBowlWheel(rankings, canvasId) {
@@ -168,8 +187,7 @@ export async function drawSuperBowlWheel(rankings, canvasId) {
   const teamNames = filtered.map(r => r.team);
   const ringDatasets = [filtered.map(r => (r.percent_super_bowl_champion ?? 0) * 100)];
 
-  if (sbWheelInstance) sbWheelInstance.destroy();
-  sbWheelInstance = await wheelChart(canvasId, teamNames, ringDatasets, ['Win Super Bowl']);
+  await wheelChart(canvasId, teamNames, ringDatasets, ['Win Super Bowl']);
 }
 
 export async function updateScatter(rankings) {

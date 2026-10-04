@@ -47,12 +47,15 @@ function teamSlug(name) {
 
 let chartInstance = null;
 
+// Wheel geometry scales with the rendered width (the canvas sits in a square,
+// width-driven .wheel-box) so the logo ring and labels still fit on mobile.
+function wheelScale(chart) { return Math.max(0.55, Math.min(1, chart.width / 600)); }
+function wheelLogoSize(chart) { return Math.round(24 * wheelScale(chart)); }
+function wheelLogoOffset(chart) { return wheelLogoSize(chart) * 0.8; }
+function wheelPadding(chart) { return Math.ceil(wheelLogoOffset(chart) + wheelLogoSize(chart) / 2 + 4); }
+
 async function drawFinalsWheel(competition) {
   const canvas = document.getElementById('finalsWheel');
-  const container = canvas.parentElement;
-  container.style.maxWidth = '600px';
-  container.style.maxHeight = '600px';
-  canvas.style.height = '600px';
 
   let rankings;
   try {
@@ -112,7 +115,7 @@ async function drawFinalsWheel(competition) {
       cutout: '15%',
       radius: '100%',
       maintainAspectRatio: false,
-      layout: { padding: { top: 40, bottom: 40, left: 40, right: 40 } },
+      layout: { padding: ({ chart }) => wheelPadding(chart) },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -133,6 +136,7 @@ async function drawFinalsWheel(competition) {
           const centerY = chartArea.top  + chartArea.height / 2;
           const labels  = ['Qualifying Finals', 'Semi Finals', 'Preliminary Finals', 'Grand Final', 'Premiers'];
           const baseAngle = -Math.PI / 2;
+          const fontSize = Math.max(8, Math.round(12 * wheelScale(chart)));
           labels.forEach((text, i) => {
             const arc = chart.getDatasetMeta(i).data[0];
             const r   = arc.outerRadius - 5;
@@ -141,7 +145,7 @@ async function drawFinalsWheel(competition) {
             ctx.save();
             ctx.translate(x, y);
             ctx.rotate(baseAngle + Math.PI / 2);
-            ctx.font         = 'bold 12px sans-serif';
+            ctx.font         = `bold ${fontSize}px sans-serif`;
             ctx.fillStyle    = '#fff';
             ctx.textAlign    = 'center';
             ctx.textBaseline = 'top';
@@ -157,14 +161,14 @@ async function drawFinalsWheel(competition) {
           const meta = chart.getDatasetMeta(0);
           const arcs = meta.data;
           if (!arcs.length) return;
-          const offset = 20;
+          const offset = wheelLogoOffset(chart);
+          const size = wheelLogoSize(chart);
           arcs.forEach((arcElem, i) => {
             const angle      = (arcElem.startAngle + arcElem.endAngle) / 2;
             const outerRadius = arcElem.outerRadius;
             const x = arcElem.x + Math.cos(angle) * (outerRadius + offset);
             const y = arcElem.y + Math.sin(angle) * (outerRadius + offset);
             const img = logos[i];
-            const size = 24;
             if (img.complete && img.naturalWidth && img.naturalHeight) {
               const ratio = img.naturalWidth / img.naturalHeight;
               const w = ratio >= 1 ? size : size * ratio;

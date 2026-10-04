@@ -93,22 +93,35 @@
 
       <!-- Playoff Wheels -->
       <div class="card">
-        <h2 class="text-xl font-semibold mb-4 text-gray-100">Conference Playoff Odds</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div>
-            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">AFC</h3>
-            <canvas id="afcWheel"></canvas>
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+          <h2 class="text-xl font-semibold text-gray-100">Playoff Odds</h2>
+          <div id="wheel-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">
+            <button id="btn-wheel-league" type="button"
+                    class="px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">League</button>
+            <button id="btn-wheel-conference" type="button"
+                    class="px-4 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">Conference</button>
           </div>
-          <div>
-            <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">NFC</h3>
-            <canvas id="nfcWheel"></canvas>
+        </div>
+        <div id="wheel-view-league">
+          <div class="wheel-box"><canvas id="leagueWheel"></canvas></div>
+        </div>
+        <div id="wheel-view-conference" class="hidden">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">AFC</h3>
+              <div class="wheel-box"><canvas id="afcWheel"></canvas></div>
+            </div>
+            <div>
+              <h3 class="text-center text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">NFC</h3>
+              <div class="wheel-box"><canvas id="nfcWheel"></canvas></div>
+            </div>
           </div>
         </div>
       </div>
 
       <div class="card">
         <h2 class="text-xl font-semibold mb-4 text-gray-100">Super Bowl Odds</h2>
-        <canvas id="superBowlWheel"></canvas>
+        <div class="wheel-box"><canvas id="superBowlWheel"></canvas></div>
       </div>
 
       <!-- Scatterplot -->

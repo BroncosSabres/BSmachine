@@ -712,6 +712,18 @@ button.mobile-nav-link { width: 100%; text-align: left; }
   border-color: var(--border-hover);
 }
 
+/* Square, width-driven box for the probability wheels: the Chart.js canvas
+   (maintainAspectRatio: false) fills it, so the wheel shrinks with the card
+   on mobile instead of overflowing it. */
+.wheel-box {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+}
+.wheel-box--lg { max-width: 600px; }
+
 /* ---- Homepage sport hub ---- */
 .hub-card {
   --comp-color: var(--accent-bright);
