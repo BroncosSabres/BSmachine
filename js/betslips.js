@@ -4,8 +4,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // Mirrors getCompetition() in js/competition.js (classic script, can't import).
   const _compParams = new URLSearchParams(window.location.search);
-  const competition = (_compParams.get('comp') || _compParams.get('competition')) === 'nrlw' ? 'nrlw' : 'nrl';
+  // NFL betslips live on /nfl/pages/betslips.html (rounds are weeks there).
+  const isNfl       = window.location.pathname.startsWith('/nfl/');
+  const competition = isNfl ? 'nfl'
+    : (_compParams.get('comp') || _compParams.get('competition')) === 'nrlw' ? 'nrlw' : 'nrl';
   const compQuery   = competition === 'nrlw' ? '?comp=nrlw' : '';
+  const roundWord   = isNfl ? 'Week' : 'Round';
   let activeTab     = 'community';
   let currentSort   = 'recent';
   let selectedRound = null;
@@ -48,10 +52,17 @@ document.addEventListener('DOMContentLoaded', function () {
     roundSel.innerHTML = '<option value="">Loading…</option>';
 
     try {
-      const res = await fetch(`${API_BASE}/current_round_matches/${competition}`);
-      if (!res.ok) throw new Error();
-      const matches = await res.json();
-      const currentRound = matches[0]?.round_number;
+      let currentRound;
+      if (isNfl) {
+        const res = await fetch(`${API_BASE}/nfl/current_week`);
+        if (!res.ok) throw new Error();
+        currentRound = (await res.json()).week_number;
+      } else {
+        const res = await fetch(`${API_BASE}/current_round_matches/${competition}`);
+        if (!res.ok) throw new Error();
+        const matches = await res.json();
+        currentRound = matches[0]?.round_number;
+      }
       if (!currentRound) throw new Error();
 
       if (selectedRound === null) selectedRound = currentRound;
@@ -60,7 +71,7 @@ document.addEventListener('DOMContentLoaded', function () {
       for (let r = currentRound; r >= 1; r--) {
         const opt = document.createElement('option');
         opt.value       = r;
-        opt.textContent = `Round ${r}`;
+        opt.textContent = `${roundWord} ${r}`;
         if (r === selectedRound) opt.selected = true;
         roundSel.appendChild(opt);
       }
@@ -144,7 +155,7 @@ document.addEventListener('DOMContentLoaded', function () {
       return null;
     }
     const res = await fetch(
-      `${API_BASE}/betslips/me?sort=${currentSort}&limit=${LIMIT}&offset=${offset}`,
+      `${API_BASE}/betslips/me?competition=${isNfl ? 'nfl' : 'nrl,nrlw'}&sort=${currentSort}&limit=${LIMIT}&offset=${offset}`,
       { headers: { 'Authorization': `Bearer ${session.access_token}` } }
     );
     if (!res.ok) throw new Error();
@@ -153,7 +164,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   async function loadByMatch(matchId) {
     const res = await fetch(
-      `${API_BASE}/betslips/match/${matchId}?sort=${currentSort}&limit=${LIMIT}&offset=${offset}`
+      `${API_BASE}/betslips/match/${matchId}?competition=${competition}&sort=${currentSort}&limit=${LIMIT}&offset=${offset}`
     );
     if (!res.ok) throw new Error();
     return res.json();
@@ -192,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const picks = (b.picks || []).map(p =>
       `<span class="inline-flex items-center gap-1">
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 inline-block"></span>
-        ${p.name}${p.n > 1 ? ` <span class="text-gray-400">×${p.n}</span>` : ''}
+        ${p.label || `${p.name}${p.n > 1 ? ` <span class="text-gray-400">×${p.n}</span>` : ''}`}
       </span>`
     ).join('<span class="text-gray-600 mx-1">·</span>');
 
@@ -213,7 +224,9 @@ document.addEventListener('DOMContentLoaded', function () {
         })()
       : '';
 
-    const scoreTag = b.is_scored
+    const scoreTag = b.is_scored && b.won == null
+      ? '<span class="text-xs font-bold text-gray-300 bg-gray-400/10 border border-gray-400/30 rounded px-2 py-0.5" title="Every leg was void">Void</span>'
+      : b.is_scored
       ? (b.won
           ? '<span class="text-xs font-bold text-green-400 bg-green-400/10 border border-green-400/30 rounded px-2 py-0.5">Won ✓</span>'
           : '<span class="text-xs font-bold text-red-400 bg-red-400/10 border border-red-400/30 rounded px-2 py-0.5">Lost ✗</span>')

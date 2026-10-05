@@ -22,18 +22,20 @@
   <body class="bg-gray-900 text-white min-h-screen">
     <div id="site-header"></div>
 
-    <main class="w-full max-w-3xl mx-auto px-4 py-4 md:py-8">
+    <main class="w-full max-w-6xl mx-auto px-4 py-4 md:py-8 pb-28 md:pb-8">
       <h1 class="text-2xl md:text-4xl font-bold mb-2 md:mb-3 text-center">Multi Builder</h1>
       <p class="hidden md:block mb-8 text-gray-400 text-center">
-        Select a game, build a multi from lines, totals, touchdown scorers, passing TDs and field goals, and see the model's predicted odds!
+        Select a game, build your multi with touchdown scorers, passing TDs, field goals and lines, and see the model's predicted odds!
       </p>
 
       <!-- GAME SELECTOR -->
       <div class="card">
         <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <button id="week-prev" type="button" class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition-colors shrink-0">&larr;</button>
-          <span id="week-badge" class="text-sm font-medium text-gray-400 shrink-0 text-center sm:w-24">Week</span>
-          <button id="week-next" type="button" class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition-colors shrink-0">&rarr;</button>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="week-prev" type="button" class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition-colors">&larr;</button>
+            <span id="week-badge" class="text-sm font-medium text-gray-400 text-center w-20">Week</span>
+            <button id="week-next" type="button" class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition-colors">&rarr;</button>
+          </div>
           <div class="flex-1 flex flex-col gap-1">
             <label for="game-select" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Select Game</label>
             <select id="game-select"
@@ -44,31 +46,48 @@
 
       <p id="no-games-msg" class="hidden text-center text-gray-500 my-8">No games with prediction data this week.</p>
 
-      <!-- BUILDER -->
-      <div id="builder-section" class="hidden">
-        <div class="card">
-          <div class="flex items-center justify-between mb-4">
+      <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
+      <div id="community-betslips-section" class="hidden mb-4">
+        <div class="flex items-center justify-between mb-2 gap-3">
+          <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Community</span>
+          <div class="flex items-center gap-3 min-w-0">
+            <select id="community-sort"
+                    class="bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+              <option value="recent">Recent</option>
+              <option value="votes">Top</option>
+              <option value="prob_desc">Most Likely</option>
+              <option value="prob_asc">Least Likely</option>
+            </select>
+            <a id="community-betslips-link" href="/nfl/pages/betslips.html"
+               class="text-xs text-blue-400 hover:underline font-medium shrink-0">View all →</a>
+          </div>
+        </div>
+        <div id="community-betslips-list"
+             class="flex gap-2 overflow-x-auto pb-1"
+             style="scrollbar-width:thin;scrollbar-color:#374151 transparent;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;">
+        </div>
+      </div>
+
+      <!-- FLEX ROW: team lists left, lines + betslip right -->
+      <div id="builder-section" class="hidden w-full flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-start pb-24 md:pb-0">
+        <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8 flex-1 order-2 md:order-1"></div>
+
+        <div class="w-full md:w-72 shrink-0 order-1 md:order-2">
+          <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
             <div>
-              <div id="builder-matchup" class="text-lg font-semibold"></div>
+              <div id="builder-matchup" class="text-base font-semibold"></div>
               <div id="builder-kickoff" class="text-xs text-gray-500"></div>
             </div>
-            <button id="reset-builder-btn" type="button" disabled
-                    class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 font-semibold text-sm
-                           disabled:opacity-40 disabled:cursor-not-allowed hover:border-red-500 hover:text-red-400 transition-colors">
-              ↺ Reset
-            </button>
-          </div>
 
-          <div class="flex flex-col gap-4">
             <!-- Match Outcome -->
-            <div class="flex flex-col gap-2">
+            <div class="flex flex-col gap-1">
               <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Match Outcome</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="margin-dir-home" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Home</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">H</button>
                   <button id="margin-dir-away" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Away</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">A</button>
                 </div>
                 <select id="margin-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
@@ -79,13 +98,13 @@
 
             <!-- Total Points -->
             <div class="flex flex-col gap-1">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Total Points</span>
+              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Total Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="total-dir-over" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
                   <button id="total-dir-under" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
                 </div>
                 <select id="total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
@@ -100,9 +119,9 @@
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="home-total-dir-over" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
                   <button id="home-total-dir-under" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
                 </div>
                 <select id="home-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
@@ -117,9 +136,9 @@
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="away-total-dir-over" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Over</button>
                   <button id="away-total-dir-under" type="button"
-                          class="line-dir-btn px-3 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
+                          class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors">Under</button>
                 </div>
                 <select id="away-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
@@ -127,37 +146,23 @@
                         class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- PLAYER MARKETS -->
-        <div id="players-section" class="card hidden">
-          <div class="flex items-center justify-between gap-2 mb-3">
-            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Player Markets</span>
-            <div class="flex gap-1">
-              <button id="team-tab-home" type="button"
-                      class="team-tab px-3 py-1.5 rounded-lg border border-gray-600 text-xs font-semibold transition-colors">Home</button>
-              <button id="team-tab-away" type="button"
-                      class="team-tab px-3 py-1.5 rounded-lg border border-gray-600 text-xs font-semibold transition-colors">Away</button>
+            <div class="flex gap-2">
+              <button id="reset-match-btn" type="button" disabled
+                      class="flex-1 px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 font-semibold text-sm
+                             disabled:opacity-40 disabled:cursor-not-allowed hover:border-gray-500 hover:text-white transition-colors">
+                ↺ This Game
+              </button>
+              <button id="reset-all-btn" type="button" disabled
+                      class="flex-1 px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 font-semibold text-sm
+                             disabled:opacity-40 disabled:cursor-not-allowed hover:border-red-500 hover:text-red-400 transition-colors">
+                ↺ All
+              </button>
             </div>
           </div>
-          <p class="text-xs text-gray-500 mb-3">
-            Tap a price to add it to the multi; use &minus; / + to change the count (N+).
-            Tap <span class="text-gray-300">In/Out</span> to override a player's availability &mdash; their work is redistributed through the depth chart.
-          </p>
-          <div id="players-meta" class="text-xs text-gray-400 mb-3"></div>
-          <div id="players-table" class="flex flex-col gap-4"></div>
-          <p id="players-empty" class="hidden text-center text-gray-500 my-4">No player data for this game yet.</p>
-        </div>
 
-        <!-- RESULT -->
-        <div id="result-card" class="card hidden">
-          <div class="flex flex-col items-center gap-1 text-center">
-            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Selected Multi</span>
-            <div id="result-legs" class="text-sm text-gray-300 mb-2"></div>
-            <span id="result-prob" class="text-4xl font-bold text-white"></span>
-            <span id="result-odds" class="text-lg font-semibold text-amber-400"></span>
-          </div>
+          <!-- Betslip (fixed bottom on mobile, bottom-right on desktop via .sgm-result) -->
+          <div id="result" class="sgm-result md:w-80"></div>
         </div>
       </div>
     </main>

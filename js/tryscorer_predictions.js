@@ -2995,7 +2995,8 @@ document.addEventListener("DOMContentLoaded", function () {
     let betslipsUrl;
     if (matchId) {
       // OR across old-style match_id and new-style match_ids array
-      betslipsUrl = `${_SB_URL}/rest/v1/betslips?or=(match_id.eq.${matchId},match_ids.cs.%7B${matchId}%7D)${base}`;
+      // competition filter: match ids overlap across sports (NFL game ids vs NRL match ids)
+      betslipsUrl = `${_SB_URL}/rest/v1/betslips?or=(match_id.eq.${matchId},match_ids.cs.%7B${matchId}%7D)&competition=eq.${competition}${base}`;
     } else {
       betslipsUrl = `${_SB_URL}/rest/v1/betslips?round_number=eq.${round}&competition=eq.${competition}${base}`;
     }

@@ -58,7 +58,7 @@ export const SPORTS = {
       { label: 'Leaderboard',    href: 'leaderboard.html',           disabled: true },
       { label: 'Tracker',        href: 'tracker.html',               disabled: true },
       { label: 'Magic Numbers',  href: 'magic_numbers.html',         disabled: true },
-      { label: 'Community',      href: 'betslips.html',              disabled: true },
+      { label: 'Community',      href: 'betslips.html' },
     ],
   },
   nhl: {
