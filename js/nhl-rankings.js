@@ -245,8 +245,8 @@ function seedRowHtml(t, rank) {
       </td>
       <td class="text-center font-mono">${pointsStr(t)}</td>
       <td class="text-center font-mono">${projRecordStr(t)}</td>
-      ${pctCell(t.percent_division_top3)}
       ${pctCell(t.percent_playoffs)}
+      ${pctCell(t.percent_division_top3)}
     </tr>
   `;
 }

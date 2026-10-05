@@ -41,7 +41,8 @@ const STANDINGS_COLUMNS = [
 
 let view = 'division'; // 'division' | 'conference' | 'league'
 let currentWeekNumber = null;
-let matches = [];      // [{home_team, away_team}], same order as the backend's `matches`
+let matches = [];      // [{home_team, away_team, home_perc, away_perc}], same order as the backend's `matches`
+let weekGames = [];    // /week_predictions `predictions` for this week
 let latestTeams = [];  // last /impact_projection response's `teams` array
 
 function formatPercent(val) {
@@ -82,8 +83,18 @@ function getSelectedPicks() {
   });
 }
 
+// Model win probability (0-1) shown beside each team; finished games hide it.
+function pctLabel(p, finished) {
+  if (finished || p == null) return '';
+  return `<span class="ml-auto text-xs text-gray-400 font-mono">${(p * 100).toFixed(1)}%</span>`;
+}
+
 function renderMatchOptions() {
-  form.innerHTML = `<button id="clear-btn" type="button" class="mb-4 px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>`;
+  form.innerHTML = `
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button id="clear-btn" type="button" class="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>
+      <button id="simulate-btn" type="button" class="px-3 py-1 text-sm text-gray-900 font-semibold bg-amber-400 rounded hover:bg-amber-300 disabled:opacity-50">Simulate Remaining Games</button>
+    </div>`;
   matches.forEach((m, i) => {
     const block = document.createElement('div');
     block.className = 'bg-gray-700 p-2 rounded text-white text-sm border border-gray-500 space-y-1';
@@ -92,51 +103,67 @@ function renderMatchOptions() {
         <input type="radio" name="match-${i}" value="${m.home_team}" class="accent-amber-400 w-3 h-3 shrink-0">
         <img src="${nflLogoUrl(m.home_team)}" alt="" class="w-4 h-4 object-contain shrink-0" onerror="this.style.display='none'">
         <span>${m.home_team}</span>
+        ${pctLabel(m.home_perc, m.finished)}
       </label>
       <div class="text-xs text-gray-400 pl-5">vs</div>
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="radio" name="match-${i}" value="${m.away_team}" class="w-3 h-3 shrink-0">
         <img src="${nflLogoUrl(m.away_team)}" alt="" class="w-4 h-4 object-contain shrink-0" onerror="this.style.display='none'">
         <span>${m.away_team}</span>
+        ${pctLabel(m.away_perc, m.finished)}
       </label>
     `;
     form.appendChild(block);
   });
 }
 
-async function autoLockFinishedGames() {
+function matchIndexFor(g) {
+  return matches.findIndex(m => teamSlug(m.home_team) === teamSlug(g.home_team) && teamSlug(m.away_team) === teamSlug(g.away_team));
+}
+
+async function loadWeekGames() {
   try {
     const res = await fetch(apiUrl('nfl', `week_predictions/${currentWeekNumber}`));
     if (!res.ok) return;
-    const json = await res.json();
-    (json.predictions || []).forEach(g => {
-      if (!g.is_finished) return;
-      const idx = matches.findIndex(m => teamSlug(m.home_team) === teamSlug(g.home_team) && teamSlug(m.away_team) === teamSlug(g.away_team));
-      if (idx === -1) return;
-      // Real ties are bucketed under "away" for combo-indexing purposes on
-      // the backend (see /api/nfl/impact_meta docs) — mirror that here.
-      const winner = g.home_score > g.away_score ? g.home_team
-                    : g.away_score > g.home_score ? g.away_team
-                    : g.away_team;
-      const radios = form.querySelectorAll(`input[name='match-${idx}']`);
-      const radio = [...radios].find(r => teamSlug(r.value) === teamSlug(winner));
-      if (!radio) return;
-      radio.checked = true;
-      radios.forEach(r => {
-        r.disabled = true;
-        const label = r.closest('label');
-        if (!label) return;
-        if (r === radio) {
-          label.classList.add('text-green-400', 'font-semibold');
-          label.classList.remove('text-white');
-        } else {
-          label.classList.add('opacity-30');
-        }
-      });
+    weekGames = (await res.json()).predictions || [];
+    weekGames.forEach(g => {
+      const m = matches[matchIndexFor(g)];
+      if (!m) return;
+      m.home_perc = g.home_perc;
+      m.away_perc = g.away_perc;
+      m.finished = !!g.is_finished;
     });
   } catch (e) {
-    console.warn('Could not auto-lock finished games:', e);
+    console.warn('Could not load week predictions:', e);
   }
+}
+
+function autoLockFinishedGames() {
+  weekGames.forEach(g => {
+    if (!g.is_finished) return;
+    const idx = matchIndexFor(g);
+    if (idx === -1) return;
+    // Real ties are bucketed under "away" for combo-indexing purposes on
+    // the backend (see /api/nfl/impact_meta docs) — mirror that here.
+    const winner = g.home_score > g.away_score ? g.home_team
+                  : g.away_score > g.home_score ? g.away_team
+                  : g.away_team;
+    const radios = form.querySelectorAll(`input[name='match-${idx}']`);
+    const radio = [...radios].find(r => teamSlug(r.value) === teamSlug(winner));
+    if (!radio) return;
+    radio.checked = true;
+    radios.forEach(r => {
+      r.disabled = true;
+      const label = r.closest('label');
+      if (!label) return;
+      if (r === radio) {
+        label.classList.add('text-green-400', 'font-semibold');
+        label.classList.remove('text-white');
+      } else {
+        label.classList.add('opacity-30');
+      }
+    });
+  });
 }
 
 // --- Projection fetch --------------------------------------------------------
@@ -250,9 +277,9 @@ function seedRow(t, rank, baseSeedByTeam) {
         </div>
       </td>
       <td class="text-center font-mono">${formatRecord(t)}</td>
-      ${pctCell(t, 'pct_first_round_bye')}
-      ${pctCell(t, 'pct_division_winner')}
       ${pctCell(t, 'pct_made_playoffs')}
+      ${pctCell(t, 'pct_division_winner')}
+      ${pctCell(t, 'pct_first_round_bye')}
     </tr>
   `;
 }
@@ -383,7 +410,32 @@ btnDivision.addEventListener('click', () => setView('division'));
 // --- Form wiring -------------------------------------------------------------
 
 form.addEventListener('change', () => updateProjection());
+// Fills every unpicked game with a random result. The backend draws one
+// simulated combo consistent with the current picks (weighted by how often
+// it occurred), so the result always lands on simulated data.
+async function simulateRemaining(btn) {
+  btn.disabled = true;
+  try {
+    const picks = getSelectedPicks();
+    const res = await fetch(apiUrl('nfl', `impact_sample?week=${currentWeekNumber}&picks=${encodeURIComponent(JSON.stringify(picks))}`));
+    if (!res.ok) return;
+    const json = await res.json();
+    (json.picks || []).forEach((winner, i) => {
+      if (picks[i] || !winner) return;
+      const radio = [...form.querySelectorAll(`input[name='match-${i}']`)].find(r => r.value === winner);
+      if (radio && !radio.disabled) radio.checked = true;
+    });
+    await updateProjection();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 form.addEventListener('click', (e) => {
+  if (e.target.id === 'simulate-btn') {
+    simulateRemaining(e.target);
+    return;
+  }
   if (e.target.id !== 'clear-btn') return;
   // Only clear picks the user actually made — auto-locked (already-finished)
   // games stay locked, since they're not really "what-if" selections.
@@ -404,8 +456,9 @@ async function loadSimulator() {
   matches = (json.matches || []).map(m => ({ home_team: m.home, away_team: m.away }));
   if (weekBadge && currentWeekNumber != null) weekBadge.textContent = `Week ${currentWeekNumber}`;
 
+  await loadWeekGames();
   renderMatchOptions();
-  await autoLockFinishedGames();
+  autoLockFinishedGames();
   await updateProjection();
 }
 

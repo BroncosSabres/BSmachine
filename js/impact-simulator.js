@@ -141,8 +141,32 @@ function renderTable(rows, hasSelections) {
   container.innerHTML = thead + tbody + '</tbody></table>';
 }
 
-function renderMatchOptions(matches) {
-  form.innerHTML = `<button id="clear-btn" type="button" class="mb-4 px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>`;
+// Simulated chance of each match's winner: share of all simulations (by
+// combo count) in which that team won the match.
+function matchWinPcts(snapshotData, matches) {
+  const { combo_results, counts } = snapshotData;
+  const total = counts.reduce((a, b) => a + b, 0) || 1;
+  return matches.map((m, i) => {
+    let home = 0, away = 0;
+    combo_results.forEach((result, col) => {
+      if (result[i] === m.home_team) home += counts[col];
+      else if (result[i] === m.away_team) away += counts[col];
+    });
+    return { [m.home_team]: home / total * 100, [m.away_team]: away / total * 100 };
+  });
+}
+
+function pctLabel(pcts, team) {
+  const p = pcts?.[team];
+  return p == null ? '' : `<span class="ml-auto text-xs text-gray-400 font-mono" data-pct>${p.toFixed(1)}%</span>`;
+}
+
+function renderMatchOptions(matches, pcts) {
+  form.innerHTML = `
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button id="clear-btn" type="button" class="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>
+      <button id="simulate-btn" type="button" class="px-3 py-1 text-sm text-white font-semibold bg-blue-500 rounded hover:bg-blue-600">Simulate Remaining Games</button>
+    </div>`;
   matches.forEach((match, index) => {
     const matchBlock = document.createElement("div");
     matchBlock.className = "bg-gray-700 p-2 rounded text-white text-sm border border-gray-500 space-y-1";
@@ -150,11 +174,13 @@ function renderMatchOptions(matches) {
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="radio" name="match-${index}" value="${match.home_team}" class="accent-blue-500 w-3 h-3 shrink-0">
         <span>${match.home_team}</span>
+        ${pctLabel(pcts[index], match.home_team)}
       </label>
       <div class="text-xs text-gray-400 pl-5">vs</div>
       <label class="flex items-center gap-2 cursor-pointer">
         <input type="radio" name="match-${index}" value="${match.away_team}" class="w-3 h-3 shrink-0">
         <span>${match.away_team}</span>
+        ${pctLabel(pcts[index], match.away_team)}
       </label>
     `;
     form.appendChild(matchBlock);
@@ -212,7 +238,7 @@ async function loadSimulator() {
   const data = await getSnapshotData('ext_impacts_top8');
   matches = data.matches.map(m => ({ home_team: m.home, away_team: m.away }));
 
-  renderMatchOptions(matches);
+  renderMatchOptions(matches, matchWinPcts(data, matches));
 
   // Auto-select and lock completed game winners
   try {
@@ -232,6 +258,7 @@ async function loadSimulator() {
             r.disabled = true;
             const label = r.closest('label');
             if (!label) return;
+            label.querySelector('[data-pct]')?.remove(); // finished: odds no longer apply
             if (r === radio) {
               label.classList.add('text-green-400', 'font-semibold');
               label.classList.remove('text-white');
@@ -253,7 +280,32 @@ async function loadSimulator() {
 // reload, so use delegation on the stable `form` element rather than
 // re-attaching listeners to elements that get replaced.
 form.addEventListener("change", () => updateTable(matches));
+// Fills every unpicked match by drawing one simulated combo consistent with
+// the current picks, weighted by how often it occurred -- each match's draw
+// follows its simulated odds, and the result always has simulation data.
+async function simulateRemaining() {
+  const { combo_results, counts } = await getSnapshotData('ext_impacts_top8');
+  const picks = getSelectedWinners(matches);
+  const valid = combo_results
+    .map((result, col) => ({ result, count: counts[col] }))
+    .filter(({ result }) => picks.every((winner, i) => !winner || result[i] === winner));
+  const total = valid.reduce((sum, v) => sum + v.count, 0);
+  if (!total) return;
+  let r = Math.random() * total;
+  const { result } = valid.find(v => (r -= v.count) < 0) || valid[valid.length - 1];
+  result.forEach((winner, i) => {
+    if (picks[i]) return;
+    const radio = [...form.querySelectorAll(`input[name='match-${i}']`)].find(x => x.value === winner);
+    if (radio) radio.checked = true;
+  });
+  updateTable(matches);
+}
+
 form.addEventListener("click", (e) => {
+  if (e.target.id === "simulate-btn") {
+    simulateRemaining();
+    return;
+  }
   if (e.target.id !== "clear-btn") return;
   form.querySelectorAll("input[type='radio']").forEach(input => {
     input.checked = false;

@@ -119,7 +119,11 @@ function renderTeamOptions() {
 }
 
 function renderGameOptions() {
-  form.innerHTML = `<button id="clear-btn" type="button" class="mb-4 px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>`;
+  form.innerHTML = `
+    <div class="flex flex-wrap gap-2 mb-4">
+      <button id="clear-btn" type="button" class="px-3 py-1 text-sm text-white bg-red-500 rounded hover:bg-red-600">Clear All</button>
+      <button id="simulate-btn" type="button" class="px-3 py-1 text-sm text-gray-900 font-semibold bg-amber-400 rounded hover:bg-amber-300">Simulate Remaining Games</button>
+    </div>`;
   if (!focalTeam.games.length) {
     form.insertAdjacentHTML('beforeend', `<div class="text-gray-400">No remaining regular-season games.</div>`);
     return;
@@ -366,8 +370,8 @@ function renderSpotlight() {
         ${spotlightStat('Proj. Points', t.adjusted.exp_points != null ? t.adjusted.exp_points.toFixed(1) : '—',
                         deltaBadge(delta('exp_points'), { suffix: '', threshold: 0.05 }))}
         ${spotlightStat('Proj. Record', formatRecord(t.adjusted), '')}
-        ${pct('pct_division_top3')}
         ${pct('pct_playoffs')}
+        ${pct('pct_division_top3')}
         ${pct('pct_cup')}
       </div>
     </div>`;
@@ -395,8 +399,8 @@ function seedRowHtml(t, rank, overallRank, baseOverall) {
       ${teamCell(t)}
       ${pointsCell(t)}
       <td class="text-center font-mono">${formatRecord(t.adjusted)}</td>
-      ${pctCell(t, 'pct_division_top3')}
       ${pctCell(t, 'pct_playoffs')}
+      ${pctCell(t, 'pct_division_top3')}
     </tr>`;
 }
 
@@ -532,7 +536,28 @@ recordSection.addEventListener('pointerdown', () => setMode('record'));
 recordSection.addEventListener('focusin', () => setMode('record'));
 gamesSection.addEventListener('pointerdown', () => setMode('games'));
 gamesSection.addEventListener('focusin', () => setMode('games'));
+// Fills every unpicked, unfinished game with a W/OTL/L drawn from that
+// game's simulated odds (g.pct).
+function simulateRemaining() {
+  setMode('games', { refresh: false });
+  focalTeam.games.forEach((g, i) => {
+    if (g.finished || !g.pct) return;
+    if (form.querySelector(`input[name='game-${i}']:checked`)) return;
+    const total = OUTCOMES.reduce((sum, o) => sum + (g.pct[o] || 0), 0);
+    if (!total) return;
+    let r = Math.random() * total;
+    const outcome = OUTCOMES.find(o => (r -= g.pct[o] || 0) < 0) || OUTCOMES[OUTCOMES.length - 1];
+    const radio = form.querySelector(`input[name='game-${i}'][value='${outcome}']`);
+    if (radio) radio.checked = true;
+  });
+  updateProjection();
+}
+
 form.addEventListener('click', (e) => {
+  if (e.target.id === 'simulate-btn') {
+    simulateRemaining();
+    return;
+  }
   if (e.target.id !== 'clear-btn') return;
   // Finished games stay locked to their real result.
   form.querySelectorAll("input[type='radio']:not(:disabled)").forEach(input => {

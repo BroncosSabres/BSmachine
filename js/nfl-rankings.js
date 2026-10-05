@@ -269,9 +269,9 @@ async function loadSeedingTable(conf, tableId) {
           </div>
         </td>
         <td class="text-center font-mono">${record}</td>
-        ${pctCell(e.percent_first_round_bye, prevE?.percent_first_round_bye)}
-        ${pctCell(e.percent_division_winner, prevE?.percent_division_winner)}
         ${pctCell(e.percent_playoffs, prevE?.percent_playoffs)}
+        ${pctCell(e.percent_division_winner, prevE?.percent_division_winner)}
+        ${pctCell(e.percent_first_round_bye, prevE?.percent_first_round_bye)}
       </tr>
     `;
   }
