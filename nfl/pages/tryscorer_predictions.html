@@ -25,7 +25,7 @@
     <main class="w-full max-w-3xl mx-auto px-4 py-4 md:py-8">
       <h1 class="text-2xl md:text-4xl font-bold mb-2 md:mb-3 text-center">Multi Builder</h1>
       <p class="hidden md:block mb-8 text-gray-400 text-center">
-        Select a game, build a margin / total points / team points multi, and see the model's predicted odds!
+        Select a game, build a multi from lines, totals, touchdown scorers, passing TDs and field goals, and see the model's predicted odds!
       </p>
 
       <!-- GAME SELECTOR -->
@@ -128,6 +128,26 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- PLAYER MARKETS -->
+        <div id="players-section" class="card hidden">
+          <div class="flex items-center justify-between gap-2 mb-3">
+            <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Player Markets</span>
+            <div class="flex gap-1">
+              <button id="team-tab-home" type="button"
+                      class="team-tab px-3 py-1.5 rounded-lg border border-gray-600 text-xs font-semibold transition-colors">Home</button>
+              <button id="team-tab-away" type="button"
+                      class="team-tab px-3 py-1.5 rounded-lg border border-gray-600 text-xs font-semibold transition-colors">Away</button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 mb-3">
+            Tap a price to add it to the multi; use &minus; / + to change the count (N+).
+            Tap <span class="text-gray-300">In/Out</span> to override a player's availability &mdash; their work is redistributed through the depth chart.
+          </p>
+          <div id="players-meta" class="text-xs text-gray-400 mb-3"></div>
+          <div id="players-table" class="flex flex-col gap-4"></div>
+          <p id="players-empty" class="hidden text-center text-gray-500 my-4">No player data for this game yet.</p>
         </div>
 
         <!-- RESULT -->
