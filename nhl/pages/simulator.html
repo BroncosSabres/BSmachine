@@ -36,10 +36,32 @@
         <div class="card w-full lg:w-80 shrink-0">
           <h2 class="text-lg font-semibold mb-3 text-gray-100">Pick a Team</h2>
           <select id="team-select" class="w-full mb-4 bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-sm text-white"></select>
-          <h2 class="text-lg font-semibold mb-1 text-gray-100">Next 5 Games</h2>
+          <h2 id="next-games-heading" class="text-lg font-semibold mb-1 text-gray-100">Next 5 Games</h2>
           <p class="text-xs text-gray-500 mb-3">W = win (any) &middot; OTL = overtime/shootout loss &middot; L = regulation loss</p>
           <div id="selection-chance" class="mb-4 text-sm text-gray-400 font-medium"></div>
-          <form id="simulation-form" class="space-y-2 text-sm"></form>
+
+          <!-- Simulate by record over the next 5 (any order) -->
+          <div id="record-section" class="mode-section rounded-lg border border-gray-600 p-3 mb-3 transition-opacity">
+            <div class="text-xs text-gray-400 mb-2">
+              <span id="expected-record-label">Expected Next 5 Record</span>
+              <span class="block text-xl font-mono font-semibold text-amber-300" id="expected-record">—</span>
+              <span class="text-[0.65rem] text-gray-500 uppercase tracking-wider">W-L-OTL</span>
+            </div>
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-100 mb-2 cursor-pointer">
+              <input type="radio" name="sim-mode" value="record" class="accent-amber-400">
+              By record
+            </label>
+            <select id="record-select" class="w-full bg-gray-800 border-2 border-amber-400 rounded-lg px-3 py-2 text-lg font-bold text-amber-300 font-mono"></select>
+          </div>
+
+          <!-- Simulate game by game (default) -->
+          <div id="games-section" class="mode-section rounded-lg border border-gray-600 p-3 transition-opacity">
+            <label class="flex items-center gap-2 text-sm font-semibold text-gray-100 mb-2 cursor-pointer">
+              <input type="radio" name="sim-mode" value="games" class="accent-amber-400" checked>
+              Game by game
+            </label>
+            <form id="simulation-form" class="space-y-2 text-sm"></form>
+          </div>
         </div>
 
         <div class="flex-1 min-w-0 flex flex-col gap-6">
@@ -47,6 +69,7 @@
           <!-- Projected Playoff Seeding -->
           <div class="card">
             <h2 class="text-xl font-semibold mb-4 text-gray-100">Projected Playoff Seeding</h2>
+            <div id="focal-spotlight" class="mb-6"></div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div>
                 <h3 class="text-sm font-bold uppercase tracking-widest text-gray-400 mb-2">Eastern Conference</h3>
