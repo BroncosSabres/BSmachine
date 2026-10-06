@@ -2,6 +2,7 @@
 import { apiUrl } from './api-config.js';
 import { rankChangeBadge, probColor, deltaBadge } from './rankings-shared.js';
 import { nflLogoUrl } from './nfl-logos.js';
+import { seedNflConference } from './nfl-seeding.js';
 import { drawLeagueWheel, drawConferenceWheel, drawSuperBowlWheel, updateScatter } from './nfl-charts.js';
 
 const weekBadge      = document.getElementById("week-badge");
@@ -176,60 +177,24 @@ function setWheelView(newView) {
 btnWheelLeague.addEventListener('click', () => setWheelView('league'));
 btnWheelConference.addEventListener('click', () => setWheelView('conference'));
 
-// Ordering for projected seeding: best projected record first, with
-// tiebreakers falling back to more decimal-precise/independent signals
-// (projected_seed is deliberately NOT used here - it's only averaged over
-// the simulation trials where a team made the playoffs at all, so it isn't
-// comparable across teams with different playoff odds).
-function compareByProjectedRecord(a, b) {
-  const wpA = a.extra.projected_win_pct ?? -1;
-  const wpB = b.extra.projected_win_pct ?? -1;
-  if (wpB !== wpA) return wpB - wpA;
-  const winsA = a.extra.projected_wins ?? -1;
-  const winsB = b.extra.projected_wins ?? -1;
-  if (winsB !== winsA) return winsB - winsA;
-  return (b.rating ?? -Infinity) - (a.rating ?? -Infinity);
-}
-
 // Builds the seeded (division leaders + wildcards) and "in the hunt" lists
 // for a conference from a given week's extra-stats map, so the exact same
 // ordering logic can be replayed against last week's snapshot to derive
-// week-over-week position badges below.
+// week-over-week position badges below. Ordering lives in nfl-seeding.js,
+// shared with the simulator page.
 function computeSeedOrder(conf, extraByTeam) {
   const confTeams = currentRankings
-    .filter(r => r.conference === conf)
-    .map(r => ({ team: r.team, division: r.division, rating: r.total_rating, extra: extraByTeam[r.team] }))
-    .filter(x => x.extra && x.extra.projected_win_pct != null);
-
-  // Seeds 1-4: the team with the best projected record in each division.
-  const bestInDivision = {};
-  confTeams.forEach(x => {
-    const cur = bestInDivision[x.division];
-    if (!cur || compareByProjectedRecord(x, cur) < 0) bestInDivision[x.division] = x;
-  });
-  const divisionLeaders = Object.values(bestInDivision).sort(compareByProjectedRecord);
-  const divisionLeaderTeams = new Set(divisionLeaders.map(x => x.team));
-
-  // Seeds 5-7: the rest of the conference, by best projected record.
-  const wildcards = confTeams
-    .filter(x => !divisionLeaderTeams.has(x.team))
-    .sort(compareByProjectedRecord)
-    .slice(0, 3);
-
-  const seededTeams = [...divisionLeaders, ...wildcards];
-  const seededTeamNames = new Set(seededTeams.map(x => x.team));
-
-  // Next up to 3 teams still mathematically alive (playoff odds > 0), shown
-  // below a divider as context for who's just outside the playoff picture.
-  // Late in the season this can shrink to fewer than 3, or none at all, once
-  // teams are mathematically eliminated.
-  const inTheHunt = confTeams
-    .filter(x => !seededTeamNames.has(x.team))
-    .filter(x => (x.extra.percent_playoffs ?? 0) > 0)
-    .sort(compareByProjectedRecord)
-    .slice(0, 3);
-
-  return { seededTeams, inTheHunt };
+    .filter(r => r.conference === conf && extraByTeam[r.team]?.projected_wins != null)
+    .map(r => {
+      const e = extraByTeam[r.team];
+      return {
+        team: r.team, division: r.division, extra: e,
+        m: { wins: e.projected_wins, losses: e.projected_losses, ties: e.projected_ties,
+             divPct: e.percent_division_winner, seed1Pct: e.percent_first_round_bye, playoffPct: e.percent_playoffs },
+      };
+    });
+  const { seeded, inTheHunt } = seedNflConference(confTeams);
+  return { seededTeams: seeded, inTheHunt };
 }
 
 async function loadSeedingTable(conf, tableId) {

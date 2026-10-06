@@ -44,7 +44,7 @@ let betslipExpanded = false;
 let bookieOdds   = null;
 
 const MAX_N = { anytime: 4, pass_td: 6, fg: 5, dst_td: 3 };
-const MIN_SHOWN_PROB = 0.02;   // condensed list: hide players below 2% anytime
+const TOP_N = 10;              // anytime options listed before "Show more" (D/ST always among them)
 const EXCLUDED = ['out', 'inactive', 'ir'];
 
 function newGameState() {
@@ -285,8 +285,6 @@ const STATUS_BADGE = {
   inactive:     ['INA', 'text-red-300 border-red-500/40 bg-red-500/10', 'Inactive'],
   ir:           ['IR', 'text-red-300 border-red-500/40 bg-red-500/10', 'Injured reserve'],
 };
-const POS_ORDER = { QB: 0, RB: 1, WR: 2, TE: 3, K: 4 };
-
 function stepperHtml(key, val, max) {
   const base = 'w-6 h-6 border rounded flex items-center justify-center text-sm font-bold transition-colors';
   const minus = val > 0 ? `${base} border-red-500 text-red-400 hover:bg-red-500/20` : `${base} border-gray-700 text-gray-600`;
@@ -307,20 +305,24 @@ function priceHtml(p, loading) {
   return `<div class="text-xs font-semibold text-gray-300">${pct(p)}</div><div class="text-xs text-gray-500">${odds(p)}</div>`;
 }
 
-// One selectable row. kind: anytime | pass_td | fg | dst_td
+// One selectable row: name / price / stepper on top, a full-width stats line
+// underneath (full width so it never wraps, even on a phone). Clicking anywhere
+// but a button opens the stats window. kind: anytime | pass_td | fg | dst_td
 function marketRow(gs, side, kind, { key, name, sub = '', subTitle = '', meta = '', player = null, badge = '', availBtn = '' }) {
   const picked = gs.picks.get(key);
   const val = picked ? picked.n : 0;
   const p = singleLegProb(gs, side, kind, player, Math.max(1, val));
   return `
-    <div class="flex items-center gap-2 py-2 px-1 player-row${val > 0 ? ' bg-gray-700/40' : ''}">
-      <div class="flex-1 min-w-0">
-        <span class="text-sm">${esc(name)}</span>
-        ${sub ? `<span class="text-xs text-gray-500 ml-1"${subTitle ? ` title="${esc(subTitle)}"` : ''}>${sub}</span>` : ''}${badge}${availBtn}
-        ${meta ? `<div class="text-[11px] text-gray-500 leading-tight mt-0.5">${meta}</div>` : ''}
+    <div class="group grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1.5 py-2 px-1 player-row cursor-pointer hover:bg-gray-700/25${val > 0 ? ' bg-gray-700/40' : ''}"
+         data-detail="${key}">
+      <div class="min-w-0 flex items-center gap-1">
+        <span class="text-sm truncate group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2">${esc(name)}</span>
+        ${sub ? `<span class="text-xs text-gray-500 min-w-0 truncate shrink-[3]"${subTitle ? ` title="${esc(subTitle)}"` : ''}>${sub}</span>` : ''}${badge}
       </div>
-      <div class="w-20 text-right shrink-0">${priceHtml(p, binsCache[currentGame?.game_id] === undefined)}</div>
+      <div class="w-20 text-right">${priceHtml(p, binsCache[currentGame?.game_id] === undefined)}</div>
       ${stepperHtml(key, val, MAX_N[kind])}
+      ${meta ? `<div class="col-span-3 flex items-center gap-3 text-[11px] text-gray-500 leading-none">
+        ${meta}${availBtn ? `<span class="ml-auto">${availBtn}</span>` : ''}</div>` : ''}
     </div>`;
 }
 
@@ -328,7 +330,7 @@ function statusBadge(pl) {
   const b = STATUS_BADGE[pl.status];
   if (!b) return '';
   const title = [b[2], pl.status_detail].filter(Boolean).join(' — ');
-  return `<span class="ml-1 px-1 rounded border text-[10px] font-bold align-middle ${b[1]}" title="${esc(title)}">${b[0]}</span>`;
+  return `<span class="shrink-0 px-1 rounded border text-[10px] font-bold ${b[1]}" title="${esc(title)}">${b[0]}</span>`;
 }
 
 // "WR1" by projected role (backend role_rank); the published depth-chart slot
@@ -336,30 +338,40 @@ function statusBadge(pl) {
 const slotLabel = pl => `${pl.pos}${pl.role_rank ?? pl.depth}`;
 const slotTitle = pl => `Depth chart: ${pl.pos}${pl.depth}` + (pl.role_rank && pl.role_rank !== pl.depth ? ' (ranked by projected role)' : '');
 
-// Expected snaps · last 3 games' snaps with TDs · TD totals
+// Last-5 form: one fixed-size box per game played, newest first, so the strips
+// line up from row to row. Missing games (fewer than 5 played) are dashed.
+function formStrip(counts = [], labels = [], unit = 'TD') {
+  const base = 'inline-flex items-center justify-center w-4 h-4 rounded-sm text-[10px] font-semibold';
+  const boxes = [];
+  for (let i = 0; i < 5; i++) {
+    const n = counts[i];
+    if (n == null) { boxes.push(`<span class="${base} border border-dashed border-gray-700"></span>`); continue; }
+    const tip = `${labels[i] || 'Game'}: ${n} ${unit}${n === 1 ? '' : 's'}`;
+    boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-500'}" title="${esc(tip)}">${n}</span>`);
+  }
+  return `<span class="flex items-center gap-1 shrink-0"><span title="Last 5 games played, newest first">L5</span>
+    <span class="flex gap-0.5">${boxes.join('')}</span></span>`;
+}
+
+// Fixed-width lead cell so every row's form strip starts in the same place
+const metaLead = html => `<span class="w-[5.75rem] shrink-0 whitespace-nowrap">${html}</span>`;
+
 function playerMeta(pl) {
   const s = pl.stats || {};
-  const bits = [];
-  if (pl.active && pl.snap_proj != null) bits.push(`Exp <span class="text-gray-300">${Math.round(pl.snap_proj * 100)}%</span> snaps`);
-  const snaps = s.recent_snaps || [];
-  if (snaps.length) {
-    const games = snaps.map((v, i) => {
-      const td = (s.recent_tds || [])[i] || 0;
-      const pctTxt = v == null ? '–' : `${Math.round(v * 100)}%`;
-      return td ? `${pctTxt}<span class="text-green-400 font-semibold">${td > 1 ? ` ${td}TD` : ' TD'}</span>` : pctTxt;
-    });
-    bits.push(`<span title="Offensive snap share in the last ${snaps.length} games played, newest first">L${snaps.length}: ${games.join(' · ')}</span>`);
-  }
-  if (pl.pos !== 'K') bits.push(`${s.last5_tds ?? 0} TD L5 · ${s.season_tds ?? 0} in ${s.season_games ?? 0} gms`);
-  return bits.join(' &nbsp;|&nbsp; ');
+  const snaps = pl.active && pl.snap_proj != null
+    ? `<span class="text-gray-300 font-semibold">${Math.round(pl.snap_proj * 100)}%</span>` : '–';
+  return metaLead(`<span title="Projected offensive snap share">Exp snaps</span> ${snaps}`)
+    + formStrip(s.recent_tds, s.recent_games, 'TD');
 }
+
+const dstMeta = team => metaLead('Def / ST') + formStrip(team.dst_recent_tds, team.dst_recent_games, 'D/ST TD');
 
 function availButton(pl) {
   return pl.active
     ? `<button type="button" data-avail="${pl.id}" data-make="out" title="Mark as not playing — redistributes their work"
-               class="ml-1 text-[10px] text-gray-600 hover:text-red-400 align-middle">✕ out</button>`
+               class="text-[10px] text-gray-600 hover:text-red-400">✕ out</button>`
     : `<button type="button" data-avail="${pl.id}" data-make="in" title="Mark as playing"
-               class="ml-1 text-[10px] text-blue-400 hover:text-blue-300 align-middle">+ in</button>`;
+               class="text-[10px] text-blue-400 hover:text-blue-300">+ in</button>`;
 }
 
 // Mean of the team's TD count distribution: the sim-bin mixture the prices use,
@@ -386,38 +398,51 @@ function renderTeamCard(game, side) {
     body = '<p class="py-4 text-sm text-gray-500 text-center">No player data for this team yet.</p>';
   } else {
     const anyKey = pl => `${side}:anytime:${pl.id}`;
-    const skill = team.players.filter(pl => pl.pos !== 'K')
-      .sort((a, b) => (POS_ORDER[a.pos] - POS_ORDER[b.pos]) || ((a.role_rank ?? a.depth) - (b.role_rank ?? b.depth)));
-    // Condensed list: expected to play and a realistic scorer (or already picked)
-    const shown = [], hidden = [];
-    for (const pl of skill) {
-      const p1 = singleLegProb(gs, side, 'anytime', pl, 1);
-      const keep = gs.picks.has(anyKey(pl))
-        || (pl.active && pl.expected && (p1 == null || p1 >= MIN_SHOWN_PROB || pl.is_starting_qb));
-      (keep ? shown : hidden).push(pl);
-    }
-    const row = pl => marketRow(gs, side, 'anytime', {
-      key: anyKey(pl), name: pl.name, player: pl, meta: playerMeta(pl),
-      sub: `(${slotLabel(pl)})`, subTitle: slotTitle(pl), badge: statusBadge(pl) + (pl.overridden ? '<span class="ml-1 text-[10px] text-blue-300">manual</span>' : ''),
-      availBtn: availButton(pl),
-    });
-    const hiddenRow = pl => pl.active ? row(pl) : `
-      <div class="flex items-center gap-2 py-2 px-1 opacity-60">
-        <div class="flex-1 min-w-0"><span class="text-sm line-through">${esc(pl.name)}</span>
-          <span class="text-xs text-gray-500 ml-1" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}${availButton(pl)}</div>
+    // Anytime options — skill players plus the D/ST — by chance to score. Prices
+    // are monotone in the per-TD share, so td_share / dst_frac rank them even
+    // before the sim bins load. Shares are conditional on playing, so the default
+    // top 10 is drawn from players expected to play, with the D/ST taking 10th if
+    // it isn't there on merit; picked options always stay visible.
+    const options = [
+      ...team.players.filter(pl => pl.pos !== 'K' && pl.active)
+        .map(pl => ({ pl, key: anyKey(pl), share: pl.td_share })),
+      { pl: null, key: `${side}:dst_td:${team.team_id}`, share: team.dst_frac },
+    ].sort((a, b) => b.share - a.share);
+    const eligible = options.filter(o => !o.pl || o.pl.expected);
+    let top = eligible.slice(0, TOP_N);
+    if (!top.some(o => !o.pl)) top = [...eligible.slice(0, TOP_N - 1), eligible.find(o => !o.pl)];
+    const shown  = options.filter(o => top.includes(o) || gs.picks.has(o.key));
+    const hidden = options.filter(o => !shown.includes(o));
+    const ruledOut = team.players.filter(pl => pl.pos !== 'K' && !pl.active);
+
+    const row = o => o.pl
+      ? marketRow(gs, side, 'anytime', {
+          key: o.key, name: o.pl.name, player: o.pl, meta: playerMeta(o.pl),
+          sub: `(${slotLabel(o.pl)})`, subTitle: slotTitle(o.pl),
+          badge: statusBadge(o.pl) + (o.pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
+            + (o.pl.expected ? '' : `<span class="shrink-0 text-[10px] text-gray-500" title="Plays in about ${Math.round((o.pl.p_play ?? 0) * 100)}% of games — price assumes they play">unlikely</span>`),
+          availBtn: availButton(o.pl),
+        })
+      : marketRow(gs, side, 'dst_td', { key: o.key, name: `${team.abbr} D/ST`, meta: dstMeta(team) });
+    const ruledOutRow = pl => `
+      <div class="flex items-center gap-1 py-2 px-1 opacity-60 cursor-pointer hover:bg-gray-700/25" data-detail="${anyKey(pl)}">
+        <span class="text-sm line-through truncate">${esc(pl.name)}</span>
+        <span class="text-xs text-gray-500 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}
+        <span class="ml-auto shrink-0">${availButton(pl)}</span>
       </div>`;
 
     const qb = team.players.find(pl => pl.id === team.starting_qb_id);
     const k  = team.players.find(pl => pl.id === team.kicker_id);
     const extra = [
       qb ? marketRow(gs, side, 'pass_td', { key: `${side}:pass_td:${qb.id}`, name: qb.name, sub: '(Pass TDs)', player: qb,
-                                meta: `${qb.stats?.season_pass_tds ?? 0} pass TDs in ${qb.stats?.season_games ?? 0} gms this season` }) : '',
-      k  ? marketRow(gs, side, 'fg', { key: `${side}:fg:${k.id}`, name: k.name, sub: '(FGs made)', player: k,
-                           meta: `${k.stats?.season_fg_made ?? 0} FGs made in ${k.stats?.season_games ?? 0} gms this season`, badge: statusBadge(k), availBtn: availButton(k) }) : '',
-      marketRow(gs, side, 'dst_td', { key: `${side}:dst_td:${team.team_id}`, name: `${team.abbr} D/ST`, sub: '(Def/ST TD)' }),
+                                meta: metaLead('Passing') + formStrip(qb.stats?.recent_pass_tds, qb.stats?.recent_games, 'pass TD') }) : '',
+      k  ? marketRow(gs, side, 'fg', { key: `${side}:fg:${k.id}`, name: k.name, sub: '(FGs)', player: k,
+                           meta: metaLead('Kicking') + formStrip(k.stats?.recent_fg_made, k.stats?.recent_games, 'FG'),
+                           badge: statusBadge(k), availBtn: availButton(k) }) : '',
     ].join('');
 
     const showAll = gs.showAll[side];
+    const moreCount = hidden.length + ruledOut.length;
     body = `
       <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 px-1">
         <span class="flex-1">Player</span>
@@ -425,21 +450,22 @@ function renderTeamCard(game, side) {
         <span class="w-20 text-center">TDs</span>
       </div>
       <div class="flex flex-col divide-y divide-gray-700/50">${shown.map(row).join('')}</div>
-      ${hidden.length ? `
+      ${moreCount ? `
         <button type="button" data-showall="${side}"
                 class="w-full mt-1 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-300 text-left">
-          ${showAll ? '▾ Hide' : '▸ Show'} ${hidden.length} more (inactive, unlikely to play or &lt;2% to score)
+          ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (lower chance, unlikely to play or ruled out)
         </button>
-        ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">${hidden.map(hiddenRow).join('')}</div>` : ''}` : ''}
+        ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">${hidden.map(row).join('')}${ruledOut.map(ruledOutRow).join('')}</div>` : ''}` : ''}
+      ${extra ? `
       <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-4 mb-1 px-1">
-        <span class="flex-1">Passing · Kicking · D/ST</span>
+        <span class="flex-1">Passing · Kicking</span>
         <span class="w-20 text-right">Price</span>
         <span class="w-20 text-center">Count</span>
       </div>
-      <div class="flex flex-col divide-y divide-gray-700/50">${extra}</div>
+      <div class="flex flex-col divide-y divide-gray-700/50">${extra}</div>` : ''}
       <p class="mt-3 text-[11px] text-gray-600 leading-snug">
         Prices assume the player plays (bets on players who sit out are void). Pass TD share
-        ${pct(team.pass_frac)} · D/ST share ${pct(team.dst_frac)} of team TDs.
+        ${pct(team.pass_frac)} · D/ST share ${pct(team.dst_frac)} of team TDs. Tap a player for detailed stats.
       </p>`;
   }
 
@@ -517,8 +543,225 @@ teamsContainer.addEventListener('click', e => {
     const syncedActive = !EXCLUDED.includes(pl?.status);
     if (makeIn !== syncedActive) (makeIn ? gs.in : gs.out).add(id);
     loadPlayerData(currentGame.game_id);
+    return;
+  }
+  const detail = e.target.closest('[data-detail]');
+  if (detail && !e.target.closest('button')) {
+    const [side, kind, id] = detail.dataset.detail.split(':');
+    openDetail(side, kind, id);
   }
 });
+
+// =============================================================================
+// STATS WINDOW (last 5 games + this/last season, from /api/nfl/player_detail
+// or /api/nfl/dst_detail; the model numbers come from game_player_data)
+// =============================================================================
+const detailModal = document.createElement('div');
+detailModal.className = 'fixed inset-0 hidden items-end sm:items-center justify-center bg-black/60 sm:p-4';
+detailModal.style.zIndex = '1200';   // above the site header (1100) and betslip
+detailModal.innerHTML = `
+  <div role="dialog" aria-modal="true" aria-labelledby="nfl-detail-title"
+       class="bg-gray-800 border border-gray-700 w-full sm:max-w-xl max-h-[88vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl shadow-2xl p-4"></div>`;
+document.body.appendChild(detailModal);
+const detailPanel = detailModal.firstElementChild;
+const detailCache = new Map();   // url -> response
+let detailSeq = 0;
+
+function closeDetail() {
+  detailSeq++;
+  detailModal.classList.add('hidden');
+  detailModal.classList.remove('flex');
+  document.body.style.overflow = '';
+}
+detailModal.addEventListener('click', e => {
+  if (e.target === detailModal || e.target.closest('[data-close-detail]')) closeDetail();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !detailModal.classList.contains('hidden')) closeDetail();
+});
+
+// Column groups for a player's game log / season lines. A group shows when it's
+// the position's job or the player has any of those numbers (a WR's carries).
+const STAT_GROUPS = [
+  { label: 'Rushing',   pos: ['QB', 'RB'], cols: [{ k: 'carries', h: 'Car' }, { k: 'rz_carries', h: 'RZ' }, { k: 'rush_tds', h: 'TD', td: true }] },
+  { label: 'Receiving', pos: ['RB', 'WR', 'TE'], cols: [{ k: 'targets', h: 'Tgt' }, { k: 'rz_targets', h: 'RZ' }, { k: 'receptions', h: 'Rec' }, { k: 'rec_tds', h: 'TD', td: true }] },
+  { label: 'Passing',   pos: ['QB'], cols: [{ k: 'pass_att', h: 'Att' }, { k: 'pass_tds', h: 'TD', td: true }] },
+  { label: 'Kicking',   pos: ['K'], cols: [{ k: 'fg_made', h: 'Made', td: true }, { k: 'fg_att', h: 'Att' }] },
+];
+const DST_GROUP = { label: 'Team touchdowns', cols: [
+  { k: 'dst_td', h: 'D/ST', td: true }, { k: 'off_rush_td', h: 'Rush' }, { k: 'off_pass_td', h: 'Pass' }, { k: 'team_tds', h: 'Total' }] };
+
+const pctInt = v => (v == null ? '–' : `${Math.round(v * 100)}%`);
+
+// Table with fixed lead columns (game / season ...) then grouped stat columns.
+// flat: one header row, no group labels.
+function groupedTable(lead, groups, rows, { flat = false } = {}) {
+  const th = 'px-1.5 py-1 font-semibold text-gray-500 text-center whitespace-nowrap';
+  const sep = 'border-l border-gray-700';
+  const twoRows = !flat && groups.length > 0;
+  const leadHead = lead.map(c => `<th ${twoRows ? 'rowspan="2"' : ''} class="${th} ${c.left ? 'text-left' : ''} align-bottom">${c.h}</th>`).join('');
+  const groupHead = groups.map(g => `<th colspan="${g.cols.length}" class="${th} ${sep} text-[10px] uppercase tracking-wider">${g.label}</th>`).join('');
+  const subHead = groups.map(g => g.cols.map((c, i) => `<th class="${th}${i ? '' : ` ${sep}`}">${c.h}</th>`).join('')).join('');
+  const cell = (c, r, i) => {
+    const v = r[c.k];
+    const txt = c.fmt ? c.fmt(v, r) : (v ?? 0);
+    const tone = c.td && v > 0 ? 'text-green-400 font-semibold' : v ? 'text-gray-200' : 'text-gray-500';
+    return `<td class="px-1.5 py-1.5 text-center tabular-nums ${tone}${i ? '' : ' border-l border-gray-700/60'}">${txt}</td>`;
+  };
+  const body = rows.map(r => `
+    <tr class="border-t border-gray-700/60">
+      ${lead.map(c => `<td class="px-1.5 py-1.5 whitespace-nowrap ${c.left ? 'text-left' : 'text-center tabular-nums text-gray-200'}">${c.cell(r)}</td>`).join('')}
+      ${groups.map(g => g.cols.map((c, i) => cell(c, r, i)).join('')).join('')}
+    </tr>`).join('');
+  return `
+    <div class="overflow-x-auto -mx-1">
+      <table class="w-full text-xs">
+        <thead>${twoRows ? `<tr>${leadHead}${groupHead}</tr><tr>${subHead}</tr>` : `<tr>${leadHead}${subHead}</tr>`}</thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+}
+
+const gameLead = season => ({ h: 'Game', left: true, cell: g => `
+  <div class="leading-tight"><div class="text-gray-300">Wk ${g.week}${g.season !== season ? ` <span class="text-gray-500">’${String(g.season).slice(2)}</span>` : ''}</div>
+  <div class="text-gray-500">${g.home ? 'vs' : '@'} ${esc(g.opp)}</div></div>` });
+const seasonLead = [{ h: 'Season', left: true, cell: s => `<span class="text-gray-300">${s.season}</span>` }, { h: 'G', cell: s => s.games }];
+
+const detailTile = (label, value, sub = '') => `
+  <div class="bg-gray-900/60 border border-gray-700 rounded-lg px-2 py-2 text-center min-w-0">
+    <div class="text-[10px] uppercase tracking-wider text-gray-500 leading-tight">${label}</div>
+    <div class="text-base font-bold text-white mt-0.5">${value}</div>
+    ${sub ? `<div class="text-[11px] text-gray-500">${sub}</div>` : ''}
+  </div>`;
+const tileGrid = tiles => `<div class="grid gap-2 ${tiles.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}">${tiles.join('')}</div>`;
+const probTile = (label, p) => detailTile(label, p > 1e-6 ? pct(p) : '–', p > 1e-6 ? odds(p) : '');
+const sectionHead = (title, note = '') => `
+  <div class="flex items-baseline justify-between gap-2 mt-5 mb-1">
+    <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">${title}</h3>
+    ${note ? `<span class="text-[11px] text-gray-600">${note}</span>` : ''}
+  </div>`;
+
+function playerDetailBody(pl, data) {
+  const pos = pl.pos;
+  const anyVal = k => [...data.games, ...data.seasons].some(r => r[k]);
+  const groups = STAT_GROUPS.filter(g => g.pos.includes(pos) || g.cols.some(c => anyVal(c.k)));
+  const snapCol = pos === 'K' ? [] : [{ h: 'Snap', cell: r => pctInt(r.snap_pct) }];
+  let html = sectionHead('Last 5 games', 'newest first');
+  html += data.games.length
+    ? groupedTable([gameLead(data.season), ...snapCol], groups, data.games)
+    : '<p class="text-xs text-gray-500 py-2">No games played yet.</p>';
+
+  if (data.seasons.length) {
+    html += sectionHead('Season totals', pos === 'K' ? '' : 'snap % is the per-game average');
+    html += groupedTable([...seasonLead, ...snapCol], groups, data.seasons);
+    if (pos !== 'K') {
+      const rush = groups.some(g => g.label === 'Rushing'), recv = groups.some(g => g.label === 'Receiving');
+      const shareCols = [
+        rush && { k: 'carry_share', h: 'Carries', fmt: pctInt },
+        recv && { k: 'target_share', h: 'Targets', fmt: pctInt },
+        { k: 'rz_share', h: 'RZ opps', fmt: pctInt },
+        { k: 'td_share', h: 'Rush + rec TDs', fmt: pctInt },
+      ].filter(Boolean);
+      html += sectionHead('Share of team');
+      html += groupedTable([seasonLead[0]], [{ cols: shareCols }], data.seasons, { flat: true });
+    }
+  }
+  html += `<p class="mt-3 text-[11px] text-gray-600 leading-snug">RZ = carries / targets inside the opponent's 10-yard line.
+    Last 5 counts only games the player appeared in.</p>`;
+  return html;
+}
+
+function dstDetailBody(data) {
+  let html = sectionHead('Last 5 games', 'newest first');
+  html += data.games.length
+    ? groupedTable([gameLead(data.season)], [DST_GROUP], data.games)
+    : '<p class="text-xs text-gray-500 py-2">No games played yet.</p>';
+  if (data.seasons.length) {
+    html += sectionHead('Season totals');
+    html += groupedTable(seasonLead, [{ ...DST_GROUP, cols: [...DST_GROUP.cols, { k: 'dst_share', h: 'D/ST %', fmt: pctInt }] }], data.seasons);
+  }
+  html += `<p class="mt-3 text-[11px] text-gray-600 leading-snug">D/ST TDs are every TD the offense didn't score:
+    interception and fumble returns, kick and punt returns, blocked kicks.</p>`;
+  return html;
+}
+
+// data: undefined = loading, null = failed
+function renderDetail({ gs, side, team, pl, data }) {
+  const teamName = side === 'home' ? currentGame.home_team : currentGame.away_team;
+  let title, subtitle, tiles;
+  if (!pl) {
+    title = `${team.abbr} D/ST`;
+    subtitle = esc(teamName);
+    tiles = [
+      probTile('Anytime D/ST TD', singleLegProb(gs, side, 'dst_td', null, 1)),
+      detailTile('Team TD share', pct(team.dst_frac), 'model'),
+      detailTile('League average', data?.league_dst_frac != null ? pct(data.league_dst_frac) : '–', 'last 3 seasons'),
+    ];
+  } else {
+    const status = STATUS_BADGE[pl.status];
+    title = esc(pl.name);
+    subtitle = `<span title="${esc(slotTitle(pl))}">${slotLabel(pl)}</span> · ${esc(teamName)}`
+      + (status ? ` · <span class="${status[1].split(' ')[0]}">${status[2]}${pl.status_detail ? ` — ${esc(pl.status_detail)}` : ''}</span>` : '');
+    if (pl.pos === 'K') {
+      tiles = [1, 2, 3].map(n => probTile(`${n}+ FG${n > 1 ? 's' : ''}`, singleLegProb(gs, side, 'fg', pl, n)));
+    } else {
+      tiles = [
+        probTile('Anytime TD', singleLegProb(gs, side, 'anytime', pl, 1)),
+        detailTile('Exp. snaps', pl.active && pl.snap_proj != null ? pctInt(pl.snap_proj) : '–'),
+        detailTile('Team TD share', pl.active ? pct(pl.td_share) : '–', 'model'),
+      ];
+      if (pl.is_starting_qb) tiles.push(probTile('1+ pass TD', singleLegProb(gs, side, 'pass_td', pl, 1)));
+    }
+  }
+
+  let body;
+  if (data === undefined) {
+    body = `<div class="mt-5 space-y-2">${'<span class="bsm-skeleton h-4 w-full block"></span>'.repeat(6)}</div>`;
+  } else if (data === null) {
+    body = '<p class="mt-5 text-sm text-gray-500 text-center">Could not load stats. Try again in a moment.</p>';
+  } else {
+    body = pl ? playerDetailBody(pl, data) : dstDetailBody(data);
+  }
+
+  return `
+    <div class="flex items-start gap-3">
+      <img src="${nflLogoUrl(teamName)}" class="w-9 h-9 object-contain shrink-0" alt="" onerror="this.style.display='none'">
+      <div class="min-w-0 flex-1">
+        <h2 id="nfl-detail-title" class="text-lg font-bold leading-tight truncate">${title}</h2>
+        <div class="text-xs text-gray-400 mt-0.5">${subtitle}</div>
+      </div>
+      <button type="button" data-close-detail aria-label="Close"
+              class="shrink-0 w-8 h-8 -mr-1 -mt-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 text-lg leading-none">✕</button>
+    </div>
+    <div class="mt-4">${tileGrid(tiles)}</div>
+    ${pl && pl.pos !== 'K' ? '<p class="mt-1.5 text-[11px] text-gray-600">Prices assume the player plays.</p>' : ''}
+    ${body}`;
+}
+
+async function openDetail(side, kind, id) {
+  const gs = S(), game = currentGame, team = gs.playerData?.[side];
+  if (!game || !team) return;
+  const pl = kind === 'dst_td' ? null : findPlayer(gs, side, id);
+  if (kind !== 'dst_td' && !pl) return;
+  const ctx = { gs, side, team, pl };
+  const seq = ++detailSeq;
+  const url = pl ? apiUrl('nfl', `player_detail/${game.game_id}/${pl.id}`)
+                 : apiUrl('nfl', `dst_detail/${game.game_id}/${team.team_id}`);
+  detailPanel.innerHTML = renderDetail({ ...ctx, data: detailCache.get(url) });
+  detailPanel.scrollTop = 0;
+  detailModal.classList.remove('hidden');
+  detailModal.classList.add('flex');
+  document.body.style.overflow = 'hidden';
+  if (detailCache.has(url)) return;
+
+  let data = null;
+  try {
+    const res = await fetch(url);
+    data = res.ok ? await res.json() : null;
+  } catch { /* leave null */ }
+  if (data) detailCache.set(url, data);
+  if (seq === detailSeq) detailPanel.innerHTML = renderDetail({ ...ctx, data });
+}
 
 // =============================================================================
 // LINE CONTROLS (state lives in gameState[game].lines)

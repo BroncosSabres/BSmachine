@@ -10,6 +10,7 @@ import { apiUrl } from './api-config.js';
 import { probColor, rankChangeBadge, deltaBadge } from './rankings-shared.js';
 import { nflLogoUrl } from './nfl-logos.js';
 import { teamSlug } from './utils.js';
+import { rankNflTeams, seedNflConference } from './nfl-seeding.js';
 
 const form            = document.getElementById('simulation-form');
 const weekBadge       = document.getElementById('week-badge');
@@ -188,66 +189,22 @@ async function updateProjection() {
 
 // --- Projected Playoff Seeding (division-scoped, always) -------------------
 
-// win_pct is unconditional -- exp_wins/exp_losses/exp_ties are accumulated
-// for every team on every simulation trial regardless of outcome, so it's
-// directly comparable across teams. avg_conf_seed/avg_division_rank are NOT:
-// they're only averaged over the trials where a team actually made the
-// playoffs / held that specific division rank at all, so a team with a tiny
-// playoff chance that occasionally backs into a weak division's #1 seed can
-// show a *better* avg_conf_seed than a team that's reliably a 3-4 seed --
-// this was producing seeding tables that looked out of order. Sorting by
-// projected record instead mirrors nfl-rankings.js's loadSeedingTable /
-// compareByProjectedRecord, which hit this same trap first.
-function winPct(m) {
-  const w = m.exp_wins ?? 0, l = m.exp_losses ?? 0, ties = m.exp_ties ?? 0;
-  const games = w + l + ties;
-  return games > 0 ? (w + 0.5 * ties) / games : -1;
-}
-
-function compareByProjectedRecord(a, b, useBase) {
-  const ma = useBase ? a.base : a.adjusted;
-  const mb = useBase ? b.base : b.adjusted;
-  const wpDiff = winPct(mb) - winPct(ma);
-  if (wpDiff !== 0) return wpDiff;
-  const winsDiff = (mb.exp_wins ?? -1) - (ma.exp_wins ?? -1);
-  if (winsDiff !== 0) return winsDiff;
-  return (mb.pct_made_playoffs ?? -1) - (ma.pct_made_playoffs ?? -1);
+// Ordering lives in nfl-seeding.js, shared with the power rankings page:
+// projected record, then Div Title % within a division, 1st seed % (the only
+// seed with a bye) and playoff % across divisions. avg_conf_seed isn't used --
+// it's averaged only over the trials where a team made the playoffs, so it
+// isn't comparable across teams with different playoff odds.
+function seedingEntry(t, useBase) {
+  const m = useBase ? t.base : t.adjusted;
+  return { team: t.team, division: t.division, t,
+           m: { wins: m.exp_wins, losses: m.exp_losses, ties: m.exp_ties, divPct: m.pct_division_winner,
+                seed1Pct: m.pct_first_round_bye, playoffPct: m.pct_made_playoffs } };
 }
 
 function seedConference(conf, useBase = false) {
-  const confTeams = latestTeams.filter(t => t.conference === conf);
-  const cmp = (a, b) => compareByProjectedRecord(a, b, useBase);
-
-  const bestByDivision = {};
-  confTeams.forEach(t => {
-    const cur = bestByDivision[t.division];
-    if (!cur || cmp(t, cur) < 0) bestByDivision[t.division] = t;
-  });
-  const leaders = Object.values(bestByDivision).sort(cmp);
-  const leaderNames = new Set(leaders.map(t => t.team));
-
-  const wildcards = confTeams
-    .filter(t => !leaderNames.has(t.team))
-    .sort(cmp)
-    .slice(0, 3);
-
-  return [...leaders, ...wildcards];
-}
-
-// Next up to 3 teams still mathematically alive (playoff odds > 0) but not
-// among the 7 seeded, shown below a divider — mirrors nfl-rankings.js's
-// power-rankings "In the Hunt" section so both pages read the same way.
-function huntForConference(conf, seeded, useBase = false) {
-  const confTeams = latestTeams.filter(t => t.conference === conf);
-  const cmp = (a, b) => compareByProjectedRecord(a, b, useBase);
-  const seededNames = new Set(seeded.map(t => t.team));
-  const metric = useBase ? 'base' : 'adjusted';
-
-  return confTeams
-    .filter(t => !seededNames.has(t.team))
-    .filter(t => (t[metric].pct_made_playoffs ?? 0) > 0)
-    .sort(cmp)
-    .slice(0, 3);
+  const { seeded, inTheHunt } = seedNflConference(
+    latestTeams.filter(t => t.conference === conf).map(t => seedingEntry(t, useBase)));
+  return { seeded: seeded.map(e => e.t), hunt: inTheHunt.map(e => e.t) };
 }
 
 // Seed number a team held before the currently-selected picks were applied
@@ -256,9 +213,8 @@ function huntForConference(conf, seeded, useBase = false) {
 // Extends across the "in the hunt" teams too, so those rows get arrows too.
 function seedRankByTeam(conf) {
   const rankByTeam = {};
-  const seeded = seedConference(conf, true);
-  seeded.forEach((t, i) => { rankByTeam[t.team] = i + 1; });
-  huntForConference(conf, seeded, true).forEach((t, i) => { rankByTeam[t.team] = seeded.length + i + 1; });
+  const { seeded, hunt } = seedConference(conf, true);
+  [...seeded, ...hunt].forEach((t, i) => { rankByTeam[t.team] = i + 1; });
   return rankByTeam;
 }
 
@@ -291,8 +247,7 @@ const huntDividerRow = `
 `;
 
 function seedingBodyHtml(conf, baseSeedByTeam) {
-  const seeded = seedConference(conf);
-  const hunt = huntForConference(conf, seeded);
+  const { seeded, hunt } = seedConference(conf);
   const seededRows = seeded.map((t, i) => seedRow(t, i + 1, baseSeedByTeam)).join('');
   const huntRows = hunt.map((t, i) => seedRow(t, seeded.length + i + 1, baseSeedByTeam)).join('');
   return seededRows + (hunt.length ? huntDividerRow : '') + huntRows;
@@ -310,22 +265,26 @@ function renderSeeding() {
 // --- Standings, grouped per view-toggle, sorted by projected finish --------
 
 function groupRank(teamsInGroup, metricKey, useBase) {
-  // The 'conference' view ranks by avg_conf_seed, which has the same
-  // conditional-average trap described above compareByProjectedRecord --
-  // use the same win-pct-based comparator here too rather than sorting on
-  // it directly. 'division'/'league' use avg_division_rank/avg_league_rank,
-  // which ARE unconditional (every team gets ranked every trial), so a
-  // plain numeric sort on them is fine.
-  const cmp = metricKey === 'avg_conf_seed'
-    ? (a, b) => compareByProjectedRecord(a, b, useBase)
-    : (a, b) => {
-        const av = (useBase ? a.base : a.adjusted)[metricKey];
-        const bv = (useBase ? b.base : b.adjusted)[metricKey];
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1;
-        if (bv == null) return -1;
-        return av - bv; // lower rank/seed number = better = sorts first
-      };
+  // The 'conference' view ranks by avg_conf_seed, which has the
+  // conditional-average trap described above seedingEntry -- rank by
+  // projected record (with the seeding tiebreakers) instead.
+  // 'division'/'league' use avg_division_rank/avg_league_rank, which ARE
+  // unconditional (every team gets ranked every trial), so a plain numeric
+  // sort on them is fine.
+  if (metricKey === 'avg_conf_seed') {
+    const sorted = rankNflTeams(teamsInGroup.map(t => seedingEntry(t, useBase))).map(e => e.t);
+    const rankByTeam = {};
+    sorted.forEach((t, i) => { rankByTeam[t.team] = i + 1; });
+    return { sorted, rankByTeam };
+  }
+  const cmp = (a, b) => {
+    const av = (useBase ? a.base : a.adjusted)[metricKey];
+    const bv = (useBase ? b.base : b.adjusted)[metricKey];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return av - bv; // lower rank/seed number = better = sorts first
+  };
   const sorted = [...teamsInGroup].sort(cmp);
   const rankByTeam = {};
   sorted.forEach((t, i) => { rankByTeam[t.team] = i + 1; });
