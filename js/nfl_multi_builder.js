@@ -13,6 +13,7 @@
 import { apiUrl, BACKEND } from './api-config.js';
 import { nflLogoUrl } from './nfl-logos.js';
 import { getSession } from './supabase-client.js';
+import { nflWeatherLabel } from './nfl-weather.js';
 
 const $ = id => document.getElementById(id);
 
@@ -1005,7 +1006,9 @@ async function selectGame(gid) {
   if (!currentGame) { builderSection.classList.add('hidden'); return; }
   const gs = S();
   builderMatchup.textContent = `${currentGame.home_team} vs ${currentGame.away_team}`;
-  builderKickoff.textContent = formatKickoff(currentGame);
+  const wx = currentGame?.is_finished ? null : nflWeatherLabel(currentGame?.weather);
+  builderKickoff.textContent = formatKickoff(currentGame) + (wx ? ` · ${wx.text}` : '');
+  builderKickoff.title = wx ? wx.title : '';
   $('home-pts-label').textContent = `${currentGame.home_team} Pts`;
   $('away-pts-label').textContent = `${currentGame.away_team} Pts`;
   marginDirHome.textContent = currentGame.home_abbr || 'H';

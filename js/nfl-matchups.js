@@ -1,6 +1,7 @@
 // nfl-matchups.js — drives nfl/pages/matchups.html
 import { apiUrl } from './api-config.js';
 import { nflLogoUrl } from './nfl-logos.js';
+import { nflWeatherLabel } from './nfl-weather.js';
 import { openDistModal } from './nfl-distribution-chart.js';
 import { createMatchLinesController } from './match-lines.js';
 import { involvesMyTeam, myTeamsFirst, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
@@ -337,12 +338,17 @@ function renderScore(g) {
   return `<div class="text-sm text-gray-500">vs</div>`;
 }
 
+function weatherBadge(g) {
+  const w = g.is_finished ? null : nflWeatherLabel(g.weather);
+  return w ? ` &middot; <span class="text-gray-400" title="${w.title}">${w.text}</span>` : '';
+}
+
 function gameCard(g, index) {
   return `
     <div class="card" data-game-id="${g.game_id}" data-order="${index}" data-home="${g.home_team}" data-away="${g.away_team}">
       <div class="flex items-center justify-between text-xs text-gray-500 mb-3">
         <span>${formatDate(g.date, g.has_kickoff_time)}</span>
-        <span>${g.venue || ''}</span>
+        <span>${g.venue || ''}${weatherBadge(g)}</span>
       </div>
       <div class="flex items-center justify-between gap-4">
         <div class="flex items-center gap-2 flex-1 min-w-0">
