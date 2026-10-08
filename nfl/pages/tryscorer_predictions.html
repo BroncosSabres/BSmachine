@@ -37,19 +37,19 @@
             <button id="week-next" type="button" class="px-3 py-2 rounded-lg bg-gray-700 border border-gray-600 text-gray-300 hover:border-gray-500 hover:text-white transition-colors">&rarr;</button>
           </div>
           <div class="flex-1 flex flex-col gap-1">
-            <label for="game-select" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Select Game</label>
+            <label for="game-select" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Select Game</label>
             <select id="game-select"
                     class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"></select>
           </div>
         </div>
       </div>
 
-      <p id="no-games-msg" class="hidden text-center text-gray-500 my-8">No games with prediction data this week.</p>
+      <p id="no-games-msg" class="hidden text-center text-gray-400 my-8">No games with prediction data this week.</p>
 
       <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
       <div id="community-betslips-section" class="hidden mb-4">
         <div class="flex items-center justify-between mb-2 gap-3">
-          <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Community</span>
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest shrink-0">Community</span>
           <div class="flex items-center gap-3 min-w-0">
             <select id="community-sort"
                     class="bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
@@ -76,12 +76,12 @@
           <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
             <div>
               <div id="builder-matchup" class="text-base font-semibold"></div>
-              <div id="builder-kickoff" class="text-xs text-gray-500"></div>
+              <div id="builder-kickoff" class="text-xs text-gray-400"></div>
             </div>
 
             <!-- Match Outcome -->
             <div class="flex flex-col gap-1">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Match Outcome</span>
+              <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Match Outcome</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="margin-dir-home" type="button"
@@ -92,13 +92,13 @@
                 <select id="margin-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="margin-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
 
             <!-- Total Points -->
             <div class="flex flex-col gap-1">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Total Pts</span>
+              <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Total Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="total-dir-over" type="button"
@@ -109,13 +109,13 @@
                 <select id="total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="total-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
 
             <!-- Home Team Pts -->
             <div class="flex flex-col gap-1">
-              <span id="home-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Home Pts</span>
+              <span id="home-pts-label" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Home Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="home-total-dir-over" type="button"
@@ -126,13 +126,13 @@
                 <select id="home-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="home-total-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
 
             <!-- Away Team Pts -->
             <div class="flex flex-col gap-1">
-              <span id="away-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Away Pts</span>
+              <span id="away-pts-label" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Away Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="away-total-dir-over" type="button"
@@ -143,7 +143,7 @@
                 <select id="away-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="away-total-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
 

@@ -1122,7 +1122,7 @@ document.addEventListener("DOMContentLoaded", function () {
           </div>
           <button type="button" class="clear-team-btn text-xs text-gray-400 hover:text-white border border-gray-600 hover:border-gray-400 px-2 py-1 rounded transition-colors">Clear</button>
         </div>
-        <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 px-1">
+        <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 px-1">
           <span class="flex-1">Player</span>
           <span class="w-20 text-right">Anytime</span>
           <span class="w-20 text-center">Tries</span>
@@ -1134,7 +1134,7 @@ document.addEventListener("DOMContentLoaded", function () {
             <div class="flex items-center gap-2 py-2 px-1 player-row${val > 0 ? ' bg-gray-700/40' : ''}" data-side="${side}" data-id="${p.id}">
               <div class="flex-1 min-w-0">
                 <span class="text-sm">${p.name}</span>
-                <span class="text-xs text-gray-500 ml-1">(${p.position})</span>
+                <span class="text-xs text-gray-400 ml-1">(${p.position})</span>
                 <span id="badge-${side}-${p.id}" class="inline-flex gap-0.5 ml-1"></span>
               </div>
               <div id="anytime-${side}-${p.id}" class="w-20 text-right shrink-0"><span class="bsm-skeleton h-3 w-14 ml-auto block"></span></div>
@@ -1210,9 +1210,9 @@ document.addEventListener("DOMContentLoaded", function () {
           const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
           if (playerProb !== undefined && tryDist) {
             const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-            el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+            el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-400">$${(1 / prob).toFixed(2)}</div>`;
           } else {
-            el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+            el.innerHTML = '<div class="text-xs font-semibold text-gray-400">–</div>';
           }
         });
         if (tryStats) applyPlayerBadges(matchId, side, tryStats, oppConcession);
@@ -1260,9 +1260,9 @@ document.addEventListener("DOMContentLoaded", function () {
                 const playerProb = tryProbs[p.id] ?? tryProbs[String(p.id)];
                 if (playerProb !== undefined && tryDist) {
                   const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-                  el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+                  el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-400">$${(1 / prob).toFixed(2)}</div>`;
                 } else {
-                  el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+                  el.innerHTML = '<div class="text-xs font-semibold text-gray-400">–</div>';
                 }
               });
               applyPlayerBadges(matchId, side, tryStats, oppConcession);
@@ -1279,7 +1279,7 @@ document.addEventListener("DOMContentLoaded", function () {
               if (!allTryscorerData[matchId][side]) {
                 (data[`${side}_players`] || []).forEach(p => {
                   const el = document.getElementById(`anytime-${side}-${p.id}`);
-                  if (el) el.innerHTML = '<div class="text-xs font-semibold text-gray-500">–</div>';
+                  if (el) el.innerHTML = '<div class="text-xs font-semibold text-gray-400">–</div>';
                 });
               }
             });
@@ -1616,7 +1616,7 @@ document.addEventListener("DOMContentLoaded", function () {
         const playerProb = cached.tryProbs[p.id] ?? cached.tryProbs[String(p.id)];
         if (playerProb !== undefined) {
           const prob = anytimeTryscorerProbability(playerProb, tryDist, 20);
-          el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-500">$${(1 / prob).toFixed(2)}</div>`;
+          el.innerHTML = `<div class="text-xs font-semibold text-gray-300">${(prob * 100).toFixed(1)}%</div><div class="text-xs text-gray-400">$${(1 / prob).toFixed(2)}</div>`;
         }
       });
     });
@@ -2099,7 +2099,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-0.5"></span>
                 <span class="text-sm text-gray-300 italic">${label}</span>
               </div>
-              ${isLast ? `<span class="text-sm font-bold text-amber-400 shrink-0">${gameOdds} <span class="text-xs font-normal text-gray-500">${gamePct}</span></span>` : ''}
+              ${isLast ? `<span class="text-sm font-bold text-amber-400 shrink-0">${gameOdds} <span class="text-xs font-normal text-gray-400">${gamePct}</span></span>` : ''}
             </div>`;
         }).join('');
         return `
@@ -2121,7 +2121,7 @@ document.addEventListener("DOMContentLoaded", function () {
             </div>
             ${indivPct ? `<div class="text-right shrink-0">
               <div class="text-sm font-semibold text-gray-300">${indivPct}</div>
-              <div class="text-xs text-gray-500">${indivOdds}</div>
+              <div class="text-xs text-gray-400">${indivOdds}</div>
             </div>` : ''}
           </div>`;
       }).join('');
@@ -2141,7 +2141,7 @@ document.addEventListener("DOMContentLoaded", function () {
             </div>
             ${isLast && linePct ? `<div class="text-right shrink-0">
               <div class="text-sm font-semibold text-gray-300">${linePct}</div>
-              <div class="text-xs text-gray-500">${lineOdds}</div>
+              <div class="text-xs text-gray-400">${lineOdds}</div>
             </div>` : ''}
           </div>`;
       }).join('');
@@ -2163,7 +2163,7 @@ document.addEventListener("DOMContentLoaded", function () {
           <span class="text-sm font-semibold text-gray-300">${finalLabel}</span>
           <div class="text-right">
             <div class="text-2xl font-extrabold text-amber-400">${combinedPct}%</div>
-            <div class="text-xs text-gray-500">$${combinedOdds}</div>
+            <div class="text-xs text-gray-400">$${combinedOdds}</div>
           </div>
         </div>
       </div>` : '';
@@ -2172,14 +2172,14 @@ document.addEventListener("DOMContentLoaded", function () {
     const insurance = totalLegs >= 2 ? _computeInsurance(results, allCombinedProb) : [];
     const insuranceHtml = insurance.length > 0 ? `
       <div class="mt-3 pt-3 border-t border-gray-700/40">
-        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Combinations</div>
+        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Combinations</div>
         <div class="flex flex-col gap-1">
           ${insurance.map(ins => `
             <div class="flex items-center justify-between gap-2">
               <span class="text-xs text-gray-400">${ins.X}+ legs win</span>
               <div class="text-right">
                 <div class="text-sm font-semibold text-gray-300">${(ins.prob * 100).toFixed(1)}%</div>
-                <div class="text-xs text-gray-500">$${ins.odds}</div>
+                <div class="text-xs text-gray-400">$${ins.odds}</div>
               </div>
             </div>`).join('')}
         </div>
@@ -2193,7 +2193,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const bookieOddsHtml = hasPicks ? `
       <div class="mt-3 pt-3 border-t border-gray-700/40">
         <div class="flex items-center gap-2">
-          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-500 uppercase tracking-wider shrink-0">Bookie Odds</label>
+          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">Bookie Odds</label>
           <div class="flex items-center gap-1 flex-1">
             <span class="text-sm text-gray-400">$</span>
             <input id="bookie-odds-input" type="number" min="1.01" step="0.05"
@@ -2201,7 +2201,7 @@ document.addEventListener("DOMContentLoaded", function () {
                    class="flex-1 min-w-0 bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-amber-500/60">
           </div>
         </div>
-        <p class="text-xs text-gray-600 mt-1">Optional · shown on your share card</p>
+        <p class="text-xs text-gray-400 mt-1">Optional · shown on your share card</p>
       </div>` : '';
 
     // Share Card stays inside the collapsible body; Save is always visible below the toggle
@@ -2218,7 +2218,7 @@ document.addEventListener("DOMContentLoaded", function () {
       <div class="mt-2 flex justify-center">
         <button id="save-betslip-btn" type="button"
                 ${_anyStarted ? 'disabled title="Match has started — bets are locked"' : ''}
-                class="px-4 py-1.5 rounded-lg border font-semibold text-sm transition-colors ${_anyStarted ? 'border-gray-600 text-gray-500 opacity-50 cursor-not-allowed' : 'border-blue-500/40 text-blue-400 hover:bg-blue-500/10'}">
+                class="px-4 py-1.5 rounded-lg border font-semibold text-sm transition-colors ${_anyStarted ? 'border-gray-600 text-gray-400 opacity-50 cursor-not-allowed' : 'border-blue-500/40 text-blue-400 hover:bg-blue-500/10'}">
           ${_anyStarted ? 'Locked' : '☆ Save Betslip'}
         </button>
       </div>` : '';
@@ -3035,7 +3035,7 @@ document.addEventListener("DOMContentLoaded", function () {
     _communityMatchId = matchId;
     const sortVal = sort || document.getElementById('community-sort')?.value || 'recent';
 
-    list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Loading…</div>';
+    list.innerHTML = '<div class="text-xs text-gray-400 py-2 px-1">Loading…</div>';
     section.classList.remove('hidden');
 
     try {
@@ -3054,7 +3054,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
       if (!betslips.length) {
         if (!matchId) { section.classList.add('hidden'); return; }
-        list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
+        list.innerHTML = '<div class="text-xs text-gray-400 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
         return;
       }
 
@@ -3063,7 +3063,7 @@ document.addEventListener("DOMContentLoaded", function () {
         btn.addEventListener('click', () => _handleVote(btn, matchId, sortVal));
       });
     } catch {
-      list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Could not load betslips.</div>';
+      list.innerHTML = '<div class="text-xs text-gray-400 py-2 px-1">Could not load betslips.</div>';
     }
   }
 
@@ -3081,7 +3081,7 @@ document.addEventListener("DOMContentLoaded", function () {
          <span class="truncate">${item.text}</span>
        </span>`
     ).join('');
-    const extraHtml = extraCount > 0 ? `<span class="text-gray-600 shrink-0">+${extraCount}</span>` : '';
+    const extraHtml = extraCount > 0 ? `<span class="text-gray-400 shrink-0">+${extraCount}</span>` : '';
 
     const oddsText  = b.combined_odds ? `$${b.combined_odds}` : '–';
     const probText  = b.calculated_prob ? `${(b.calculated_prob * 100).toFixed(1)}%` : '';
@@ -3090,7 +3090,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const scoreIcon = b.is_scored
       ? (b.won ? '<span class="text-green-400 text-xs font-bold" title="Won">✓</span>'
                : '<span class="text-red-400 text-xs font-bold" title="Lost">✗</span>')
-      : '<span class="text-gray-600 text-xs" title="Pending">·</span>';
+      : '<span class="text-gray-400 text-xs" title="Pending">·</span>';
 
     const netVotes  = b.net_votes || 0;
     const voteColor = netVotes > 0 ? '#4ade80' : netVotes < 0 ? '#f87171' : '#6b7280';
@@ -3104,12 +3104,12 @@ document.addEventListener("DOMContentLoaded", function () {
           <div class="flex items-center gap-1.5 shrink-0">
             ${scoreIcon}
             <button data-vote-betslip="${b.id}" data-v="1"
-                    class="text-gray-600 hover:text-green-400 transition-colors font-bold leading-none"
+                    class="text-gray-400 hover:text-green-400 transition-colors font-bold leading-none"
                     style="font-size:10px;">▲</button>
             <span style="font-size:10px;font-weight:700;color:${voteColor};min-width:1rem;text-align:center;"
                   data-community-votes="${b.id}">${netVotes}</span>
             <button data-vote-betslip="${b.id}" data-v="-1"
-                    class="text-gray-600 hover:text-red-400 transition-colors font-bold leading-none"
+                    class="text-gray-400 hover:text-red-400 transition-colors font-bold leading-none"
                     style="font-size:10px;">▼</button>
           </div>
         </div>
@@ -3121,7 +3121,7 @@ document.addEventListener("DOMContentLoaded", function () {
         <!-- Row 3: odds -->
         <div class="flex items-baseline justify-between mt-auto pt-1 border-t border-gray-700/50">
           <span class="text-sm font-extrabold text-amber-400">${oddsText}</span>
-          ${probText ? `<span class="text-xs text-gray-500">${probText}</span>` : ''}
+          ${probText ? `<span class="text-xs text-gray-400">${probText}</span>` : ''}
         </div>
       </div>`;
   }

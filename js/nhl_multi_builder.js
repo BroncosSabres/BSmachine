@@ -4,11 +4,12 @@
 // (NHL has no weeks).
 //
 // Lines (margin / total / team goals) filter nhl.game_sgm_bins joint score
-// distributions (/api/nhl/game_sgm_bins_range). Player legs — N+ goals and N+
-// assists for any player, goalies included — come from /api/nhl/game_player_data
-// (per-player goal / assist weights, see nrl-flask-backend/nhl_player_model.py)
-// and are priced bin by bin against each team's goals, so they stay correlated
-// with the lines. A shootout winner's extra goal isn't scored by any player, so
+// distributions (/api/nhl/game_sgm_bins_range). Player legs — N+ goals, N+
+// assists and N+ points for any player, goalies included, and N+ shots on goal
+// for skaters — come from /api/nhl/game_player_data (per-player goal / assist
+// weights and shot inputs, see nrl-flask-backend/nhl_player_model.py) and are
+// priced bin by bin against each team's goals, so they stay correlated with the
+// lines (a goal is always a shot on goal; saved shots scale with team goals). A shootout winner's extra goal isn't scored by any player, so
 // it is removed per bin (bin.so = share of the bin's sims decided by shootout).
 // Selections are kept per game; the betslip multiplies across games.
 import { apiUrl } from './api-config.js';
@@ -45,7 +46,13 @@ const gameState    = {};   // game_id -> per-game selections, see newGameState()
 let betslipExpanded = false;
 let bookieOdds     = null;
 
-const MAX_N = { goal: 4, assist: 4 };
+// No fixed caps: goals / assists / points go up to the most player goals the
+// team scores in any bin (beyond that the model gives exactly 0); shots on goal
+// have an open-ended tail, so the stepper just stops at SOG_MAX.
+const SOG_MAX = 20;
+const KINDS = ['goal', 'assist', 'point', 'sog'];
+const SCORER_KINDS = new Set(['goal', 'point', 'sog']);
+const ASSISTER_KINDS = new Set(['assist', 'point']);
 const TOP_N = { F: 9, D: 4 };   // listed before "Show more" (all expected goalies always shown)
 const EXCLUDED = ['out', 'ir', 'ltir', 'suspended'];
 
@@ -85,11 +92,13 @@ function lineToN(L) { return Math.floor(-L) + 1; }
 // assumed to play (void otherwise); everyone else is weighted by p_play (goalies:
 // start probability). Returns [{p, cred}] with cred = credited pick indices.
 function buildAtoms(team, teamPicks) {
+  // A goal credits the scorer's goal / point / SOG picks and each assister's
+  // assist / point picks.
   const goalIdx = new Map(), astIdx = new Map();
+  const push = (m, id, i) => { if (!m.has(id)) m.set(id, []); m.get(id).push(i); };
   teamPicks.forEach((pk, i) => {
-    const m = pk.kind === 'goal' ? goalIdx : astIdx;
-    if (!m.has(pk.playerId)) m.set(pk.playerId, []);
-    m.get(pk.playerId).push(i);
+    if (SCORER_KINDS.has(pk.kind)) push(goalIdx, pk.playerId, i);
+    if (ASSISTER_KINDS.has(pk.kind)) push(astIdx, pk.playerId, i);
   });
   const units = [];
   for (const pl of team.players) {
@@ -155,12 +164,27 @@ function buildAtoms(team, teamPicks) {
 }
 
 // S[n] = P(every pick reaches its min | team's players score n goals); DP with counts capped at mins.
-function pickSuccessByN(atoms, mins, maxN) {
+// weights[i] (shots-on-goal picks): table w[n][c] = P(pick hits | n team goals, c credited to it).
+function pickSuccessByN(atoms, mins, maxN, weights = null) {
   const target = mins.join(',');
+  const weighted = weights && weights.some(w => w);
   let state = new Map([[mins.map(() => 0).join(','), 1]]);
   const out = [];
   for (let n = 0; n <= maxN; n++) {
-    out.push(state.get(target) || 0);
+    if (!weighted) {
+      out.push(state.get(target) || 0);
+    } else {
+      let tot = 0;
+      for (const [key, sp] of state) {
+        const st = key.split(',').map(Number);
+        let f = sp;
+        for (let i = 0; i < mins.length && f > 0; i++) {
+          f *= weights[i] ? weights[i][n][st[i]] : (st[i] >= mins[i] ? 1 : 0);
+        }
+        tot += f;
+      }
+      out.push(tot);
+    }
     if (n === maxN) break;
     const next = new Map();
     for (const [key, sp] of state) {
@@ -178,6 +202,45 @@ function pickSuccessByN(atoms, mins, maxN) {
     state = next;
   }
   return out;
+}
+
+// --- shots on goal (mirrors nhl_player_model.negbin_sf / sog_tail_table) ---
+// SOG = the player's goals (from the atoms) + saved shots X, X ~ negative
+// binomial with mean sog_mu_x × (n / E[n])^gamma when his team scores n.
+function negbinSf(m, mu, r) {
+  if (m <= 0) return 1;
+  if (mu <= 0) return 0;
+  let below = 0;
+  if (r == null) {
+    let p = Math.exp(-mu);
+    for (let x = 0; x < m; x++) { below += p; p *= mu / (x + 1); }
+  } else {
+    const q = mu / (r + mu);
+    let p = Math.pow(r / (r + mu), r);
+    for (let x = 0; x < m; x++) { below += p; p *= (x + r) / (x + 1) * q; }
+  }
+  return Math.max(0, 1 - below);
+}
+
+function sogParams(gs) { return gs.playerData?.sog_params || { dispersion: null, gamma: 0 }; }
+
+function sogTailTable(gs, side, pl, k, maxN) {
+  const { dispersion, gamma } = sogParams(gs);
+  const expN = gs.playerData?.[side]?.exp_skater_goals || 0;
+  const out = [];
+  for (let n = 0; n <= maxN; n++) {
+    const mu = (pl.sog_mu_x || 0) * (gamma && expN > 0 ? Math.pow(n / expN, gamma) : 1);
+    const row = [];
+    for (let c = 0; c <= k; c++) row.push(negbinSf(k - c, mu, dispersion));
+    out.push(row);
+  }
+  return out;
+}
+
+function binomPmf(n, p, j) {
+  let c = 1;
+  for (let i = 0; i < j; i++) c = c * (n - i) / (i + 1);
+  return c * Math.pow(p, j) * Math.pow(1 - p, n - j);
 }
 
 function binomAtLeast(n, p, k) {
@@ -211,7 +274,10 @@ function playerGoalDists(bins) {
   return { home, away };
 }
 
-const legShare = (kind, pl) => (kind === 'goal' ? pl.goal_share : pl.assist_share);
+// P(the player is credited with a given team goal | he plays) for this market
+// (a point is a goal or an assist, never both on one goal).
+const legShare = (kind, pl) => (kind === 'goal' || kind === 'sog' ? pl.goal_share
+  : kind === 'assist' ? pl.assist_share : pl.goal_share + pl.assist_share);
 
 // Unconditional single-leg probability (whole game, no lines) — the table prices.
 function singleLegProb(gs, side, kind, pl, n) {
@@ -225,8 +291,27 @@ function singleLegProb(gs, side, kind, pl, n) {
   }
   const share = legShare(kind, pl);
   let s = 0;
+  if (kind === 'sog') {
+    if (pl.sog_mu_x == null) return null;
+    const tail = sogTailTable(gs, side, pl, n, dist.length - 1);
+    dist.forEach((pn, k) => {
+      if (!pn) return;
+      for (let g = 0; g <= k; g++) s += pn * binomPmf(k, share, g) * tail[k][Math.min(g, n)];
+    });
+    return s;
+  }
   dist.forEach((pn, k) => { if (pn) s += pn * binomAtLeast(k, share, n); });
   return s;
+}
+
+// Highest N worth offering for a market: goals / assists / points can't
+// exceed the team's player goals in any bin; SOG has an open tail.
+function maxLegN(gs, side, kind) {
+  if (kind === 'sog') return SOG_MAX;
+  const dist = gs.teamDists?.[side];
+  if (dist?.length) return Math.max(1, dist.length - 1);
+  const d = gs.playerData?.[side]?.goal_dist;
+  return d ? Math.max(1, ...Object.keys(d).map(Number)) : 10;
 }
 
 // --- LINES ---
@@ -271,6 +356,8 @@ function lineLabels(game, L) {
 
 function legLabel(kind, name, n) {
   if (kind === 'goal') return n === 1 ? `${name} Anytime Goal` : `${name} ${n}+ Goals`;
+  if (kind === 'point') return `${name} ${n}+ Point${n > 1 ? 's' : ''}`;
+  if (kind === 'sog') return `${name} ${n}+ Shot${n > 1 ? 's' : ''} on Goal`;
   return `${name} ${n}+ Assist${n > 1 ? 's' : ''}`;
 }
 
@@ -288,7 +375,9 @@ function gameProbability(gid) {
     Sn[side] = null;
     if (sidePicks.length && team) {
       const maxN = Math.max(0, ...filtered.map(b => (side === 'home' ? binGoals(b).h : binGoals(b).a)));
-      Sn[side] = pickSuccessByN(buildAtoms(team, sidePicks), sidePicks.map(p => p.n), maxN);
+      const weights = sidePicks.map(p => (p.kind === 'sog'
+        ? sogTailTable(gs, side, findPlayer(gs, side, p.playerId) || {}, p.n, maxN) : null));
+      Sn[side] = pickSuccessByN(buildAtoms(team, sidePicks), sidePicks.map(p => p.n), maxN, weights);
     }
   }
   const at = (side, n) => (Sn[side] ? (n >= 0 ? (Sn[side][n] || 0) : 0) : 1);
@@ -338,18 +427,19 @@ function marketCell(gs, side, kind, pl) {
   const n = Math.max(1, val);
   const p = singleLegProb(gs, side, kind, pl, n);
   const loading = binsCache[currentGame?.game_id] === undefined;
-  const label = `${n > 1 ? `${n}+ ` : ''}${kind === 'goal' ? 'Goal' : 'Assist'}${n > 1 ? 's' : ''}`;
+  const noun = { goal: 'Goal', assist: 'Assist', point: 'Point', sog: 'SOG' }[kind];
+  const label = kind === 'sog' ? `${n}+ SOG` : `${n > 1 ? `${n}+ ` : ''}${noun}${n > 1 ? 's' : ''}`;
   const price = p == null
-    ? (loading ? '<span class="bsm-skeleton h-3 w-12 block mt-0.5"></span>' : '<span class="text-gray-500">–</span>')
-    : `<span class="text-gray-200 font-semibold">${odds(p)}</span> <span class="text-gray-500">${pct(p)}</span>`;
+    ? (loading ? '<span class="bsm-skeleton h-3 w-12 block mt-0.5"></span>' : '<span class="text-gray-400">–</span>')
+    : `<span class="text-gray-200 font-semibold">${odds(p)}</span> <span class="text-gray-400">${pct(p)}</span>`;
   return `
     <div class="flex items-center justify-between gap-1 rounded-md px-1.5 py-1 min-w-0
                 ${val > 0 ? 'bg-green-500/10 ring-1 ring-green-500/40' : 'bg-gray-900/40'}">
       <div class="leading-tight min-w-0">
-        <div class="text-[10px] uppercase tracking-wider text-gray-500">${label}</div>
+        <div class="text-[10px] uppercase tracking-wider text-gray-400">${label}</div>
         <div class="text-xs whitespace-nowrap">${price}</div>
       </div>
-      ${stepperHtml(key, val, MAX_N[kind])}
+      ${stepperHtml(key, val, maxLegN(gs, side, kind))}
     </div>`;
 }
 
@@ -378,23 +468,24 @@ const roleTitle = pl => {
   return bits.join('. ');
 };
 
-// Last-5 form: one fixed-size box per game played, newest first, so the strips
-// line up from row to row. Missing games (fewer than 5 played) are dashed.
+// Last-5 form: one box per game played, newest first. Missing games (fewer than
+// 5 played) are dashed. Boxes stretch to fill a grid column (capped at 16px) so
+// G / A / S always fit on one line and line up from row to row.
 function formStrip(counts = [], labels = [], unit = 'goal', tag = 'G') {
-  const base = 'inline-flex items-center justify-center w-4 h-4 rounded-sm text-[10px] font-semibold';
+  const base = 'flex items-center justify-center h-4 rounded-sm text-[10px] font-semibold';
   const boxes = [];
   for (let i = 0; i < 5; i++) {
-    const n = counts[i];
+    const n = counts?.[i];
     if (n == null) { boxes.push(`<span class="${base} border border-dashed border-gray-700"></span>`); continue; }
-    const tip = `${labels[i] || 'Game'}: ${n} ${unit}${n === 1 ? '' : 's'}`;
-    boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-500'}" title="${esc(tip)}">${n}</span>`);
+    const tip = `${labels?.[i] || 'Game'}: ${n} ${unit}${n === 1 ? '' : 's'}`;
+    boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-400'}" title="${esc(tip)}">${n}</span>`);
   }
-  return `<span class="flex items-center gap-1 shrink-0"><span class="w-2.5 text-center" title="${unit[0].toUpperCase() + unit.slice(1)}s in the last 5 games played, newest first">${tag}</span>
-    <span class="flex gap-0.5">${boxes.join('')}</span></span>`;
+  return `<span class="flex items-center gap-[3px] min-w-0"><span class="w-2 shrink-0 text-center" title="${unit[0].toUpperCase() + unit.slice(1)}s in the last 5 games played, newest first">${tag}</span>
+    <span class="grid grid-cols-5 gap-px flex-1 max-w-[5.25rem]">${boxes.join('')}</span></span>`;
 }
 
-// Fixed-width lead cell so every row's form strips start in the same place
-const metaLead = html => `<span class="w-[5.25rem] shrink-0 whitespace-nowrap">${html}</span>`;
+// Lead cell (TOI / start chance) sits in the meta grid's fixed first column
+const metaLead = html => `<span class="whitespace-nowrap overflow-hidden">${html}</span>`;
 
 function playerMeta(pl) {
   const s = pl.stats || {};
@@ -409,41 +500,45 @@ function playerMeta(pl) {
   }
   return metaLead(lead)
     + formStrip(s.recent_goals, s.recent_games, 'goal', 'G')
-    + formStrip(s.recent_assists, s.recent_games, 'assist', 'A');
+    + formStrip(s.recent_assists, s.recent_games, 'assist', 'A')
+    + (pl.pos !== 'G' ? formStrip(s.recent_sog, s.recent_games, 'shot', 'S') : '');
 }
 
 function availButton(pl, forcedStarter = false) {
   if (pl.pos === 'G' && pl.active) {
     return forcedStarter
       ? `<button type="button" data-avail="${pl.id}" data-make="auto" title="Back to the model's start chances"
-                 class="text-[10px] text-gray-600 hover:text-gray-300">↺ auto</button>`
+                 class="text-[10px] text-gray-400 hover:text-gray-300">↺ auto</button>`
       : `<button type="button" data-avail="${pl.id}" data-make="start" title="Set as tonight's starter"
                  class="text-[10px] text-blue-400 hover:text-blue-300">★ starts</button>`;
   }
   return pl.active
     ? `<button type="button" data-avail="${pl.id}" data-make="out" title="Mark as not playing — redistributes their ice time"
-               class="text-[10px] text-gray-600 hover:text-red-400">✕ out</button>`
+               class="text-[10px] text-gray-400 hover:text-red-400">✕ out</button>`
     : `<button type="button" data-avail="${pl.id}" data-make="in" title="Mark as playing"
                class="text-[10px] text-blue-400 hover:text-blue-300">+ in</button>`;
 }
 
+const hasPick = (gs, side, pl) => KINDS.some(k => gs.picks.has(`${side}:${k}:${pl.id}`));
+
 function playerRow(gs, side, pl) {
-  const picked = gs.picks.has(`${side}:goal:${pl.id}`) || gs.picks.has(`${side}:assist:${pl.id}`);
+  const picked = hasPick(gs, side, pl);
   const badges = statusBadge(pl)
     + (pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
     + (pl.pos !== 'G' && !pl.expected
-      ? `<span class="shrink-0 text-[10px] text-gray-500" title="Dresses in about ${Math.round((pl.p_play ?? 0) * 100)}% of games on recent form — price assumes he plays">unlikely</span>` : '');
+      ? `<span class="shrink-0 text-[10px] text-gray-400" title="Dresses in about ${Math.round((pl.p_play ?? 0) * 100)}% of games on recent form — price assumes he plays">unlikely</span>` : '');
   return `
     <div class="group py-2 px-1 player-row cursor-pointer hover:bg-gray-700/25${picked ? ' bg-gray-700/40' : ''}" data-detail="${side}:${pl.id}">
       <div class="flex items-center gap-1 min-w-0">
         <span class="text-sm truncate group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2">${esc(pl.name)}</span>
-        <span class="text-xs text-gray-500 min-w-0 truncate shrink-[3]" title="${esc(roleTitle(pl))}">(${roleLabel(pl)})</span>${badges}
+        <span class="text-xs text-gray-400 min-w-0 truncate shrink-[3]" title="${esc(roleTitle(pl))}">(${roleLabel(pl)})</span>${badges}
         <span class="ml-auto shrink-0 pl-1">${availButton(pl, gs.in.has(pl.id))}</span>
       </div>
       <div class="grid grid-cols-2 gap-1.5 mt-1.5">
         ${marketCell(gs, side, 'goal', pl)}${marketCell(gs, side, 'assist', pl)}
+        ${marketCell(gs, side, 'point', pl)}${pl.pos !== 'G' ? marketCell(gs, side, 'sog', pl) : ''}
       </div>
-      <div class="flex items-center gap-2.5 mt-1.5 text-[11px] text-gray-500 leading-none">${playerMeta(pl)}</div>
+      <div class="grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 mt-1.5 text-[11px] text-gray-400 leading-none">${playerMeta(pl)}</div>
     </div>`;
 }
 
@@ -451,7 +546,7 @@ function ruledOutRow(side, pl) {
   return `
     <div class="flex items-center gap-1 py-2 px-1 opacity-60 cursor-pointer hover:bg-gray-700/25" data-detail="${side}:${pl.id}">
       <span class="text-sm line-through truncate">${esc(pl.name)}</span>
-      <span class="text-xs text-gray-500 shrink-0">(${POS_LABEL[pl.pos] || pl.pos})</span>${statusBadge(pl)}
+      <span class="text-xs text-gray-400 shrink-0">(${POS_LABEL[pl.pos] || pl.pos})</span>${statusBadge(pl)}
       <span class="ml-auto shrink-0">${availButton(pl)}</span>
     </div>`;
 }
@@ -466,8 +561,8 @@ function expectedGoals(gs, side) {
 }
 
 const sectionLabel = (title, right = true) => `
-  <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-3 mb-0.5 px-1">
-    <span class="flex-1">${title}</span>${right ? '<span class="text-[10px] normal-case tracking-normal text-gray-600">tap a player for stats</span>' : ''}
+  <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-3 mb-0.5 px-1">
+    <span class="flex-1">${title}</span>${right ? '<span class="text-[10px] normal-case tracking-normal text-gray-400">tap a player for stats</span>' : ''}
   </div>`;
 
 function renderTeamCard(game, side) {
@@ -481,9 +576,9 @@ function renderTeamCard(game, side) {
   if (!gs.playerData) {
     body = '<div class="py-6 text-center"><span class="bsm-skeleton h-3 w-32 inline-block"></span></div>';
   } else if (!team?.players?.length) {
-    body = '<p class="py-4 text-sm text-gray-500 text-center">No player data for this team yet.</p>';
+    body = '<p class="py-4 text-sm text-gray-400 text-center">No player data for this team yet.</p>';
   } else {
-    const isPicked = pl => gs.picks.has(`${side}:goal:${pl.id}`) || gs.picks.has(`${side}:assist:${pl.id}`);
+    const isPicked = pl => hasPick(gs, side, pl);
     const shown = [], hidden = [];
     for (const grp of ['F', 'D']) {
       const list = team.players.filter(pl => pl.group === grp && pl.active)
@@ -508,14 +603,15 @@ function renderTeamCard(game, side) {
       ${shownG.length ? `${sectionLabel('Goalies', false)}${rows(shownG)}` : ''}
       ${moreCount ? `
         <button type="button" data-showall="${side}"
-                class="w-full mt-1 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-300 text-left">
+                class="w-full mt-1 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-300 text-left">
           ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (depth players, unlikely to dress or ruled out)
         </button>
         ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">
           ${hidden.map(pl => playerRow(gs, side, pl)).join('')}${ruledOut.map(pl => ruledOutRow(side, pl)).join('')}</div>` : ''}` : ''}
-      <p class="mt-3 text-[11px] text-gray-600 leading-snug">
+      <p class="mt-3 text-[11px] text-gray-400 leading-snug">
         Prices assume the player dresses (goalies: starts) — bets on players who don't are void.
-        Team goals are split by projected ice time × goal / assist rates per 60.
+        Team goals are split by projected ice time × goal / assist rates per 60; a point is a goal or an assist.
+        Shots on goal = his goals plus saved shots around expected goals ÷ shooting %.
         ${ast.length ? `Assists per goal: ${pctInt(ast[2])} two, ${pctInt(ast[1])} one, ${pctInt(ast[0])} none.` : ''}
         ${team.played_yesterday ? ' <span class="text-amber-400/80">Played last night (back-to-back).</span>' : ''}
       </p>`;
@@ -557,7 +653,7 @@ teamsContainer.addEventListener('click', e => {
     const key = step.dataset.key;
     const [side, kind, id] = key.split(':');
     const cur = gs.picks.get(key)?.n || 0;
-    const n = Math.max(0, Math.min(MAX_N[kind], cur + Number(step.dataset.step)));
+    const n = Math.max(0, Math.min(maxLegN(gs, side, kind), cur + Number(step.dataset.step)));
     if (n === 0) {
       gs.picks.delete(key);
     } else {
@@ -642,7 +738,7 @@ document.addEventListener('keydown', e => {
 // Table with fixed lead columns (game / season ...) then grouped stat columns.
 // flat: one header row, no group labels.
 function groupedTable(lead, groups, rows, { flat = false } = {}) {
-  const th = 'px-1.5 py-1 font-semibold text-gray-500 text-center whitespace-nowrap';
+  const th = 'px-1.5 py-1 font-semibold text-gray-400 text-center whitespace-nowrap';
   const sep = 'border-l border-gray-700';
   const twoRows = !flat && groups.length > 0;
   const leadHead = lead.map(c => `<th ${twoRows ? 'rowspan="2"' : ''} class="${th} ${c.left ? 'text-left' : ''} align-bottom">${c.h}</th>`).join('');
@@ -651,7 +747,7 @@ function groupedTable(lead, groups, rows, { flat = false } = {}) {
   const cell = (c, r, i) => {
     const v = r[c.k];
     const txt = c.fmt ? c.fmt(v, r) : (v ?? 0);
-    const tone = c.hi && v > 0 ? 'text-green-400 font-semibold' : v ? 'text-gray-200' : 'text-gray-500';
+    const tone = c.hi && v > 0 ? 'text-green-400 font-semibold' : v ? 'text-gray-200' : 'text-gray-400';
     return `<td class="px-1.5 py-1.5 text-center tabular-nums ${tone}${i ? '' : ' border-l border-gray-700/60'}">${txt}</td>`;
   };
   const body = rows.map(r => `
@@ -670,16 +766,16 @@ function groupedTable(lead, groups, rows, { flat = false } = {}) {
 
 const detailTile = (label, value, sub = '') => `
   <div class="bg-gray-900/60 border border-gray-700 rounded-lg px-2 py-2 text-center min-w-0">
-    <div class="text-[10px] uppercase tracking-wider text-gray-500 leading-tight">${label}</div>
+    <div class="text-[10px] uppercase tracking-wider text-gray-400 leading-tight">${label}</div>
     <div class="text-base font-bold text-white mt-0.5">${value}</div>
-    ${sub ? `<div class="text-[11px] text-gray-500">${sub}</div>` : ''}
+    ${sub ? `<div class="text-[11px] text-gray-400">${sub}</div>` : ''}
   </div>`;
 const tileGrid = tiles => `<div class="grid gap-2 grid-cols-2 sm:grid-cols-4">${tiles.join('')}</div>`;
 const probTile = (label, p) => detailTile(label, p > 1e-6 ? odds(p) : '–', p > 1e-6 ? pct(p) : '');
 const sectionHead = (title, note = '') => `
   <div class="flex items-baseline justify-between gap-2 mt-5 mb-1">
     <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">${title}</h3>
-    ${note ? `<span class="text-[11px] text-gray-600">${note}</span>` : ''}
+    ${note ? `<span class="text-[11px] text-gray-400">${note}</span>` : ''}
   </div>`;
 
 const num2 = v => (v == null ? '–' : Number(v).toFixed(2));
@@ -689,7 +785,7 @@ const svp = v => (v == null ? '–' : Number(v).toFixed(3).replace(/^0/, ''));
 const gameLead = { h: 'Game', left: true, cell: g => `<span class="text-gray-300">${esc(g.label)}</span>` };
 const roleLead = { h: 'Pos', cell: g => {
   const pos = POS_LABEL[g.pos] || g.pos || '–';
-  return g.role ? `<span title="Position · line (by EV ice time) · PP unit">${pos} <span class="text-gray-500">${esc(g.role)}</span></span>` : pos;
+  return g.role ? `<span title="Position · line (by EV ice time) · PP unit">${pos} <span class="text-gray-400">${esc(g.role)}</span></span>` : pos;
 } };
 const seasonName = s => `${s}-${String(s + 1).slice(2)}`;
 
@@ -738,7 +834,7 @@ function playerDetailBody(pl, data) {
   let html = sectionHead('Last 5 games', 'newest first');
   html += data.games.length
     ? groupedTable(g ? [gameLead] : [gameLead, roleLead], g ? G_GAME_GROUPS : SK_GAME_GROUPS, data.games)
-    : '<p class="text-xs text-gray-500 py-2">No NHL games played yet.</p>';
+    : '<p class="text-xs text-gray-400 py-2">No NHL games played yet.</p>';
   if (data.averages?.length) {
     html += sectionHead('Recent vs season averages');
     html += groupedTable([{ h: '', left: true, cell: a => `<span class="text-gray-300">${a.label}</span>` }, { h: 'GP', cell: a => a.games }],
@@ -752,7 +848,7 @@ function playerDetailBody(pl, data) {
     html += sectionHead('Share of team', 'in games he played');
     html += groupedTable([lead[0]], [{ cols: g ? [SK_SHARE_COLS[1]] : SK_SHARE_COLS }], data.seasons, { flat: true });
   }
-  html += `<p class="mt-3 text-[11px] text-gray-600 leading-snug">${g
+  html += `<p class="mt-3 text-[11px] text-gray-400 leading-snug">${g
     ? 'Last 5 counts only games he dressed for.'
     : 'Line / pair (L1–L4, P1–P3) and PP unit are read off each game\'s even-strength and power-play ice time — the NHL publishes no line combinations. Last 5 counts only games he played.'}</p>`;
   return html;
@@ -767,6 +863,8 @@ function renderDetail({ gs, side, pl, data }) {
   const tiles = [
     probTile('Anytime goal', singleLegProb(gs, side, 'goal', pl, 1)),
     probTile('1+ assist', singleLegProb(gs, side, 'assist', pl, 1)),
+    probTile('1+ point', singleLegProb(gs, side, 'point', pl, 1)),
+    probTile('2+ points', singleLegProb(gs, side, 'point', pl, 2)),
   ];
   if (pl.pos === 'G') {
     tiles.push(detailTile('Start chance', pctInt(pl.start_prob), gs.playerData[side].played_yesterday ? 'back-to-back' : 'recent starts'));
@@ -779,13 +877,16 @@ function renderDetail({ gs, side, pl, data }) {
     tiles.push(detailTile('Team assist share', pl.active ? pct(pl.assist_share) : '–', 'model, per goal'));
     tiles.push(probTile('2+ goals', singleLegProb(gs, side, 'goal', pl, 2)));
     tiles.push(probTile('2+ assists', singleLegProb(gs, side, 'assist', pl, 2)));
+    tiles.push(detailTile('Proj. shots on goal', pl.active && pl.sog_mean != null ? num2(pl.sog_mean) : '–',
+                          pl.sh_pct_est != null ? `model sh% ${pct1(pl.sh_pct_est)}` : ''));
+    tiles.push(probTile('3+ SOG', singleLegProb(gs, side, 'sog', pl, 3)));
   }
 
   let body;
   if (data === undefined) {
     body = `<div class="mt-5 space-y-2">${'<span class="bsm-skeleton h-4 w-full block"></span>'.repeat(6)}</div>`;
   } else if (data === null) {
-    body = '<p class="mt-5 text-sm text-gray-500 text-center">Could not load stats. Try again in a moment.</p>';
+    body = '<p class="mt-5 text-sm text-gray-400 text-center">Could not load stats. Try again in a moment.</p>';
   } else {
     body = playerDetailBody(pl, data);
   }
@@ -801,7 +902,7 @@ function renderDetail({ gs, side, pl, data }) {
               class="shrink-0 w-8 h-8 -mr-1 -mt-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 text-lg leading-none">✕</button>
     </div>
     <div class="mt-4">${tileGrid(tiles)}</div>
-    <p class="mt-1.5 text-[11px] text-gray-600">Prices assume he ${pl.pos === 'G' ? 'starts' : 'plays'}. Shares are of team goals, split by projected ice time × per-60 rates.</p>
+    <p class="mt-1.5 text-[11px] text-gray-400">Prices assume he ${pl.pos === 'G' ? 'starts' : 'plays'}. Shares are of team goals, split by projected ice time × per-60 rates.</p>
     ${body}`;
 }
 
@@ -978,14 +1079,14 @@ function renderBetslip(results) {
         <span class="text-sm ${italic ? 'text-gray-300 italic' : 'text-white'} truncate">${esc(text)}</span>
       </div>
       ${right ? `<div class="text-right shrink-0"><div class="text-sm font-semibold text-gray-300">${pct(right)}</div>
-                 <div class="text-xs text-gray-500">${odds(right)}</div></div>` : ''}
+                 <div class="text-xs text-gray-400">${odds(right)}</div></div>` : ''}
     </div>`;
 
   const legsHtml = results.map(r => {
     const lines = r.lineItems.map((l, i) => dotRow('bg-blue-400', l, true, i === r.lineItems.length - 1 ? r.lineProb : null)).join('');
     const picks = r.picks.map(p => dotRow('bg-green-400', p.label, false, p.indivProb)).join('');
     const gameOdds = results.length > 1 && (r.picks.length + r.lineItems.length) > 1
-      ? `<div class="flex justify-between text-xs text-gray-500 mt-1"><span>Same game</span><span class="text-amber-400 font-semibold">${odds(r.prob)} · ${pct(r.prob)}</span></div>` : '';
+      ? `<div class="flex justify-between text-xs text-gray-400 mt-1"><span>Same game</span><span class="text-amber-400 font-semibold">${odds(r.prob)} · ${pct(r.prob)}</span></div>` : '';
     return `
       <div class="py-2.5 border-b border-gray-700/40 last:border-b-0">
         <div class="text-xs font-semibold text-gray-400 truncate mb-1.5">${esc(r.matchLabel)}</div>
@@ -1008,13 +1109,13 @@ function renderBetslip(results) {
           <span class="text-sm font-semibold text-gray-300">${isMulti ? `Multi (${totalLegs} legs)` : 'Selection'}</span>
           <div class="text-right">
             <div class="text-2xl font-extrabold text-amber-400">${(combinedProb * 100).toFixed(2)}%</div>
-            <div class="text-xs text-gray-500">$${combinedOdds}</div>
+            <div class="text-xs text-gray-400">$${combinedOdds}</div>
           </div>
         </div>
       </div>
       <div class="mt-3 pt-3 border-t border-gray-700/40">
         <div class="flex items-center gap-2">
-          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-500 uppercase tracking-wider shrink-0">Bookie Odds</label>
+          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">Bookie Odds</label>
           <div class="flex items-center gap-1 flex-1">
             <span class="text-sm text-gray-400">$</span>
             <input id="bookie-odds-input" type="number" min="1.01" step="0.05" placeholder="e.g. 4.50"
@@ -1022,7 +1123,7 @@ function renderBetslip(results) {
                    class="flex-1 min-w-0 bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-amber-500/60">
           </div>
         </div>
-        <p id="bookie-ev" class="text-xs mt-1 ${bookieOdds ? '' : 'text-gray-600'}">${evText(combinedProb)}</p>
+        <p id="bookie-ev" class="text-xs mt-1 ${bookieOdds ? '' : 'text-gray-400'}">${evText(combinedProb)}</p>
       </div>
       <div class="text-xs mt-3 text-gray-400 text-center leading-tight">
         Find this useful? <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" class="text-yellow-300 hover:underline">Buy me a coffee</a> to help pay server costs.
@@ -1041,7 +1142,7 @@ function renderBetslip(results) {
     bookieOdds = input.value ? parseFloat(input.value) : null;
     const ev = resultDiv.querySelector('#bookie-ev');
     ev.innerHTML = evText(combinedProb);
-    ev.className = `text-xs mt-1 ${bookieOdds ? '' : 'text-gray-600'}`;
+    ev.className = `text-xs mt-1 ${bookieOdds ? '' : 'text-gray-400'}`;
   });
 }
 

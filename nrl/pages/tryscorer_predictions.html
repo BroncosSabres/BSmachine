@@ -36,7 +36,7 @@
           <!-- Row 2: match selector + download -->
           <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <div class="flex-1 flex flex-col gap-1">
-              <label for="match-select" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Select Match</label>
+              <label for="match-select" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Select Match</label>
               <select id="match-select"
                       class="bg-gray-700 border border-gray-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full"></select>
             </div>
@@ -52,7 +52,7 @@
       <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
       <div id="community-betslips-section" class="hidden mb-4">
         <div class="flex items-center justify-between mb-2 gap-3">
-          <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest shrink-0">Community</span>
+          <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest shrink-0">Community</span>
           <div class="flex items-center gap-3 min-w-0">
             <select id="community-sort"
                     class="bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
@@ -80,10 +80,10 @@
           <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">
             <!-- Match Outcome -->
             <div class="flex flex-col gap-2">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Match Outcome</span>
+              <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Match Outcome</span>
               <!-- Line 1 -->
               <div id="line1-row" class="flex items-center gap-2">
-                <span class="text-xs font-semibold text-gray-600 shrink-0">Line</span>
+                <span class="text-xs font-semibold text-gray-400 shrink-0">Line</span>
                 <div class="flex gap-1 shrink-0">
                   <button id="line1-dir-home" type="button"
                           class="line-dir-btn px-2.5 py-1.5 rounded-lg border border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-white transition-colors truncate max-w-[4.5rem]">
@@ -97,26 +97,26 @@
                 <select id="line1-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="line1-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
               <!-- Add second line button (shown when line1 active, no line2 set) -->
               <button id="add-line2-btn" type="button"
-                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-500 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
+                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
                 + Add second line
               </button>
               <!-- Line 2 (shown after clicking "Add second line") -->
               <div id="line2-row" class="hidden flex items-center gap-2">
-                <span class="text-xs font-semibold text-gray-600 shrink-0">+ Line</span>
-                <span id="line2-team-label" class="text-xs font-semibold text-gray-500 shrink-0 hidden"></span>
+                <span class="text-xs font-semibold text-gray-400 shrink-0">+ Line</span>
+                <span id="line2-team-label" class="text-xs font-semibold text-gray-400 shrink-0 hidden"></span>
                 <select id="line2-val"
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
                 <button id="line2-clear" type="button"
-                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="hidden text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
             <!-- Total Points -->
             <div class="flex flex-col gap-1">
-              <span class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Total Pts</span>
+              <span class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Total Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="total-dir-over" type="button"
@@ -131,23 +131,23 @@
                 <select id="total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="total-clear" type="button"
-                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="hidden text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
               <button id="add-total-cap-btn" type="button"
-                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-500 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
+                      class="hidden w-full px-2.5 py-1.5 rounded-lg border border-dashed border-gray-600 text-gray-400 text-xs font-semibold hover:border-blue-400 hover:text-gray-300 transition-colors text-left">
                 + Add second line
               </button>
               <div id="total-cap-row" class="hidden flex items-center gap-2">
-                <span id="total-cap-dir-label" class="text-xs font-semibold text-gray-600 shrink-0">Under</span>
+                <span id="total-cap-dir-label" class="text-xs font-semibold text-gray-400 shrink-0">Under</span>
                 <select id="total-cap-val"
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
                 <button id="total-cap-clear" type="button"
-                        class="text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
             <!-- Home Team Pts -->
             <div class="flex flex-col gap-1">
-              <span id="home-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Home Pts</span>
+              <span id="home-pts-label" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Home Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="home-total-dir-over" type="button"
@@ -162,12 +162,12 @@
                 <select id="home-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="home-total-clear" type="button"
-                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="hidden text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
             <!-- Away Team Pts -->
             <div class="flex flex-col gap-1">
-              <span id="away-pts-label" class="text-xs font-semibold text-gray-500 uppercase tracking-widest">Away Pts</span>
+              <span id="away-pts-label" class="text-xs font-semibold text-gray-400 uppercase tracking-widest">Away Pts</span>
               <div class="flex items-center gap-2">
                 <div class="flex gap-1 shrink-0">
                   <button id="away-total-dir-over" type="button"
@@ -182,14 +182,14 @@
                 <select id="away-total-val" disabled
                         class="flex-1 min-w-0 bg-gray-700 border border-gray-600 text-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"></select>
                 <button id="away-total-clear" type="button"
-                        class="hidden text-gray-500 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
+                        class="hidden text-gray-400 hover:text-red-400 text-sm font-bold shrink-0 px-1 transition-colors">✕</button>
               </div>
             </div>
             <!-- Crowd blend slider -->
             <div id="model-blend-row" class="flex flex-col gap-1.5 pt-1 border-t border-gray-700/50">
               <div class="flex items-center justify-between">
-                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Crowd Blend</span>
-                <span id="blend-info" class="text-xs text-gray-600"></span>
+                <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Crowd Blend</span>
+                <span id="blend-info" class="text-xs text-gray-400"></span>
               </div>
               <div class="flex items-center gap-2">
                 <span class="text-xs font-semibold text-amber-400 shrink-0 w-16">Machine</span>
@@ -203,7 +203,7 @@
                         style="touch-action:manipulation">+</button>
                 <span class="text-xs font-semibold text-blue-400 shrink-0 w-12 text-right">Crowd</span>
               </div>
-              <div id="blend-pct-label" class="text-center text-xs text-gray-500">100% Machine Model</div>
+              <div id="blend-pct-label" class="text-center text-xs text-gray-400">100% Machine Model</div>
             </div>
 
             <div class="flex gap-2">

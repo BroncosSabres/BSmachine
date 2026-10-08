@@ -301,8 +301,8 @@ function stepperHtml(key, val, max) {
 
 function priceHtml(p, loading) {
   if (p == null) return loading ? '<span class="bsm-skeleton h-3 w-14 ml-auto block"></span>'
-                                : '<div class="text-xs font-semibold text-gray-500">–</div>';
-  return `<div class="text-xs font-semibold text-gray-300">${pct(p)}</div><div class="text-xs text-gray-500">${odds(p)}</div>`;
+                                : '<div class="text-xs font-semibold text-gray-400">–</div>';
+  return `<div class="text-xs font-semibold text-gray-300">${pct(p)}</div><div class="text-xs text-gray-400">${odds(p)}</div>`;
 }
 
 // One selectable row: name / price / stepper on top, a full-width stats line
@@ -317,11 +317,11 @@ function marketRow(gs, side, kind, { key, name, sub = '', subTitle = '', meta = 
          data-detail="${key}">
       <div class="min-w-0 flex items-center gap-1">
         <span class="text-sm truncate group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2">${esc(name)}</span>
-        ${sub ? `<span class="text-xs text-gray-500 min-w-0 truncate shrink-[3]"${subTitle ? ` title="${esc(subTitle)}"` : ''}>${sub}</span>` : ''}${badge}
+        ${sub ? `<span class="text-xs text-gray-400 min-w-0 truncate shrink-[3]"${subTitle ? ` title="${esc(subTitle)}"` : ''}>${sub}</span>` : ''}${badge}
       </div>
       <div class="w-20 text-right">${priceHtml(p, binsCache[currentGame?.game_id] === undefined)}</div>
       ${stepperHtml(key, val, MAX_N[kind])}
-      ${meta ? `<div class="col-span-3 flex items-center gap-3 text-[11px] text-gray-500 leading-none">
+      ${meta ? `<div class="col-span-3 flex items-center gap-3 text-[11px] text-gray-400 leading-none">
         ${meta}${availBtn ? `<span class="ml-auto">${availBtn}</span>` : ''}</div>` : ''}
     </div>`;
 }
@@ -347,7 +347,7 @@ function formStrip(counts = [], labels = [], unit = 'TD') {
     const n = counts[i];
     if (n == null) { boxes.push(`<span class="${base} border border-dashed border-gray-700"></span>`); continue; }
     const tip = `${labels[i] || 'Game'}: ${n} ${unit}${n === 1 ? '' : 's'}`;
-    boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-500'}" title="${esc(tip)}">${n}</span>`);
+    boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-400'}" title="${esc(tip)}">${n}</span>`);
   }
   return `<span class="flex items-center gap-1 shrink-0"><span title="Last 5 games played, newest first">L5</span>
     <span class="flex gap-0.5">${boxes.join('')}</span></span>`;
@@ -369,7 +369,7 @@ const dstMeta = team => metaLead('Def / ST') + formStrip(team.dst_recent_tds, te
 function availButton(pl) {
   return pl.active
     ? `<button type="button" data-avail="${pl.id}" data-make="out" title="Mark as not playing — redistributes their work"
-               class="text-[10px] text-gray-600 hover:text-red-400">✕ out</button>`
+               class="text-[10px] text-gray-400 hover:text-red-400">✕ out</button>`
     : `<button type="button" data-avail="${pl.id}" data-make="in" title="Mark as playing"
                class="text-[10px] text-blue-400 hover:text-blue-300">+ in</button>`;
 }
@@ -395,7 +395,7 @@ function renderTeamCard(game, side) {
   if (!gs.playerData) {
     body = '<div class="py-6 text-center"><span class="bsm-skeleton h-3 w-32 inline-block"></span></div>';
   } else if (!team?.players?.length) {
-    body = '<p class="py-4 text-sm text-gray-500 text-center">No player data for this team yet.</p>';
+    body = '<p class="py-4 text-sm text-gray-400 text-center">No player data for this team yet.</p>';
   } else {
     const anyKey = pl => `${side}:anytime:${pl.id}`;
     // Anytime options — skill players plus the D/ST — by chance to score. Prices
@@ -420,14 +420,14 @@ function renderTeamCard(game, side) {
           key: o.key, name: o.pl.name, player: o.pl, meta: playerMeta(o.pl),
           sub: `(${slotLabel(o.pl)})`, subTitle: slotTitle(o.pl),
           badge: statusBadge(o.pl) + (o.pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
-            + (o.pl.expected ? '' : `<span class="shrink-0 text-[10px] text-gray-500" title="Plays in about ${Math.round((o.pl.p_play ?? 0) * 100)}% of games — price assumes they play">unlikely</span>`),
+            + (o.pl.expected ? '' : `<span class="shrink-0 text-[10px] text-gray-400" title="Plays in about ${Math.round((o.pl.p_play ?? 0) * 100)}% of games — price assumes they play">unlikely</span>`),
           availBtn: availButton(o.pl),
         })
       : marketRow(gs, side, 'dst_td', { key: o.key, name: `${team.abbr} D/ST`, meta: dstMeta(team) });
     const ruledOutRow = pl => `
       <div class="flex items-center gap-1 py-2 px-1 opacity-60 cursor-pointer hover:bg-gray-700/25" data-detail="${anyKey(pl)}">
         <span class="text-sm line-through truncate">${esc(pl.name)}</span>
-        <span class="text-xs text-gray-500 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}
+        <span class="text-xs text-gray-400 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}
         <span class="ml-auto shrink-0">${availButton(pl)}</span>
       </div>`;
 
@@ -444,7 +444,7 @@ function renderTeamCard(game, side) {
     const showAll = gs.showAll[side];
     const moreCount = hidden.length + ruledOut.length;
     body = `
-      <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1 px-1">
+      <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 px-1">
         <span class="flex-1">Player</span>
         <span class="w-20 text-right">Anytime</span>
         <span class="w-20 text-center">TDs</span>
@@ -452,18 +452,18 @@ function renderTeamCard(game, side) {
       <div class="flex flex-col divide-y divide-gray-700/50">${shown.map(row).join('')}</div>
       ${moreCount ? `
         <button type="button" data-showall="${side}"
-                class="w-full mt-1 px-2 py-1.5 text-xs text-gray-500 hover:text-gray-300 text-left">
+                class="w-full mt-1 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-300 text-left">
           ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (lower chance, unlikely to play or ruled out)
         </button>
         ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">${hidden.map(row).join('')}${ruledOut.map(ruledOutRow).join('')}</div>` : ''}` : ''}
       ${extra ? `
-      <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mt-4 mb-1 px-1">
+      <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-4 mb-1 px-1">
         <span class="flex-1">Passing · Kicking</span>
         <span class="w-20 text-right">Price</span>
         <span class="w-20 text-center">Count</span>
       </div>
       <div class="flex flex-col divide-y divide-gray-700/50">${extra}</div>` : ''}
-      <p class="mt-3 text-[11px] text-gray-600 leading-snug">
+      <p class="mt-3 text-[11px] text-gray-400 leading-snug">
         Prices assume the player plays (bets on players who sit out are void). Pass TD share
         ${pct(team.pass_frac)} · D/ST share ${pct(team.dst_frac)} of team TDs. Tap a player for detailed stats.
       </p>`;
@@ -596,7 +596,7 @@ const pctInt = v => (v == null ? '–' : `${Math.round(v * 100)}%`);
 // Table with fixed lead columns (game / season ...) then grouped stat columns.
 // flat: one header row, no group labels.
 function groupedTable(lead, groups, rows, { flat = false } = {}) {
-  const th = 'px-1.5 py-1 font-semibold text-gray-500 text-center whitespace-nowrap';
+  const th = 'px-1.5 py-1 font-semibold text-gray-400 text-center whitespace-nowrap';
   const sep = 'border-l border-gray-700';
   const twoRows = !flat && groups.length > 0;
   const leadHead = lead.map(c => `<th ${twoRows ? 'rowspan="2"' : ''} class="${th} ${c.left ? 'text-left' : ''} align-bottom">${c.h}</th>`).join('');
@@ -605,7 +605,7 @@ function groupedTable(lead, groups, rows, { flat = false } = {}) {
   const cell = (c, r, i) => {
     const v = r[c.k];
     const txt = c.fmt ? c.fmt(v, r) : (v ?? 0);
-    const tone = c.td && v > 0 ? 'text-green-400 font-semibold' : v ? 'text-gray-200' : 'text-gray-500';
+    const tone = c.td && v > 0 ? 'text-green-400 font-semibold' : v ? 'text-gray-200' : 'text-gray-400';
     return `<td class="px-1.5 py-1.5 text-center tabular-nums ${tone}${i ? '' : ' border-l border-gray-700/60'}">${txt}</td>`;
   };
   const body = rows.map(r => `
@@ -623,22 +623,22 @@ function groupedTable(lead, groups, rows, { flat = false } = {}) {
 }
 
 const gameLead = season => ({ h: 'Game', left: true, cell: g => `
-  <div class="leading-tight"><div class="text-gray-300">Wk ${g.week}${g.season !== season ? ` <span class="text-gray-500">’${String(g.season).slice(2)}</span>` : ''}</div>
-  <div class="text-gray-500">${g.home ? 'vs' : '@'} ${esc(g.opp)}</div></div>` });
+  <div class="leading-tight"><div class="text-gray-300">Wk ${g.week}${g.season !== season ? ` <span class="text-gray-400">’${String(g.season).slice(2)}</span>` : ''}</div>
+  <div class="text-gray-400">${g.home ? 'vs' : '@'} ${esc(g.opp)}</div></div>` });
 const seasonLead = [{ h: 'Season', left: true, cell: s => `<span class="text-gray-300">${s.season}</span>` }, { h: 'G', cell: s => s.games }];
 
 const detailTile = (label, value, sub = '') => `
   <div class="bg-gray-900/60 border border-gray-700 rounded-lg px-2 py-2 text-center min-w-0">
-    <div class="text-[10px] uppercase tracking-wider text-gray-500 leading-tight">${label}</div>
+    <div class="text-[10px] uppercase tracking-wider text-gray-400 leading-tight">${label}</div>
     <div class="text-base font-bold text-white mt-0.5">${value}</div>
-    ${sub ? `<div class="text-[11px] text-gray-500">${sub}</div>` : ''}
+    ${sub ? `<div class="text-[11px] text-gray-400">${sub}</div>` : ''}
   </div>`;
 const tileGrid = tiles => `<div class="grid gap-2 ${tiles.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}">${tiles.join('')}</div>`;
 const probTile = (label, p) => detailTile(label, p > 1e-6 ? pct(p) : '–', p > 1e-6 ? odds(p) : '');
 const sectionHead = (title, note = '') => `
   <div class="flex items-baseline justify-between gap-2 mt-5 mb-1">
     <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">${title}</h3>
-    ${note ? `<span class="text-[11px] text-gray-600">${note}</span>` : ''}
+    ${note ? `<span class="text-[11px] text-gray-400">${note}</span>` : ''}
   </div>`;
 
 function playerDetailBody(pl, data) {
@@ -649,7 +649,7 @@ function playerDetailBody(pl, data) {
   let html = sectionHead('Last 5 games', 'newest first');
   html += data.games.length
     ? groupedTable([gameLead(data.season), ...snapCol], groups, data.games)
-    : '<p class="text-xs text-gray-500 py-2">No games played yet.</p>';
+    : '<p class="text-xs text-gray-400 py-2">No games played yet.</p>';
 
   if (data.seasons.length) {
     html += sectionHead('Season totals', pos === 'K' ? '' : 'snap % is the per-game average');
@@ -666,7 +666,7 @@ function playerDetailBody(pl, data) {
       html += groupedTable([seasonLead[0]], [{ cols: shareCols }], data.seasons, { flat: true });
     }
   }
-  html += `<p class="mt-3 text-[11px] text-gray-600 leading-snug">RZ = carries / targets inside the opponent's 10-yard line.
+  html += `<p class="mt-3 text-[11px] text-gray-400 leading-snug">RZ = carries / targets inside the opponent's 10-yard line.
     Last 5 counts only games the player appeared in.</p>`;
   return html;
 }
@@ -675,12 +675,12 @@ function dstDetailBody(data) {
   let html = sectionHead('Last 5 games', 'newest first');
   html += data.games.length
     ? groupedTable([gameLead(data.season)], [DST_GROUP], data.games)
-    : '<p class="text-xs text-gray-500 py-2">No games played yet.</p>';
+    : '<p class="text-xs text-gray-400 py-2">No games played yet.</p>';
   if (data.seasons.length) {
     html += sectionHead('Season totals');
     html += groupedTable(seasonLead, [{ ...DST_GROUP, cols: [...DST_GROUP.cols, { k: 'dst_share', h: 'D/ST %', fmt: pctInt }] }], data.seasons);
   }
-  html += `<p class="mt-3 text-[11px] text-gray-600 leading-snug">D/ST TDs are every TD the offense didn't score:
+  html += `<p class="mt-3 text-[11px] text-gray-400 leading-snug">D/ST TDs are every TD the offense didn't score:
     interception and fumble returns, kick and punt returns, blocked kicks.</p>`;
   return html;
 }
@@ -718,7 +718,7 @@ function renderDetail({ gs, side, team, pl, data }) {
   if (data === undefined) {
     body = `<div class="mt-5 space-y-2">${'<span class="bsm-skeleton h-4 w-full block"></span>'.repeat(6)}</div>`;
   } else if (data === null) {
-    body = '<p class="mt-5 text-sm text-gray-500 text-center">Could not load stats. Try again in a moment.</p>';
+    body = '<p class="mt-5 text-sm text-gray-400 text-center">Could not load stats. Try again in a moment.</p>';
   } else {
     body = pl ? playerDetailBody(pl, data) : dstDetailBody(data);
   }
@@ -734,7 +734,7 @@ function renderDetail({ gs, side, team, pl, data }) {
               class="shrink-0 w-8 h-8 -mr-1 -mt-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 text-lg leading-none">✕</button>
     </div>
     <div class="mt-4">${tileGrid(tiles)}</div>
-    ${pl && pl.pos !== 'K' ? '<p class="mt-1.5 text-[11px] text-gray-600">Prices assume the player plays.</p>' : ''}
+    ${pl && pl.pos !== 'K' ? '<p class="mt-1.5 text-[11px] text-gray-400">Prices assume the player plays.</p>' : ''}
     ${body}`;
 }
 
@@ -918,14 +918,14 @@ function renderBetslip(results) {
         <span class="text-sm ${italic ? 'text-gray-300 italic' : 'text-white'} truncate">${esc(text)}</span>
       </div>
       ${right ? `<div class="text-right shrink-0"><div class="text-sm font-semibold text-gray-300">${pct(right)}</div>
-                 <div class="text-xs text-gray-500">${odds(right)}</div></div>` : ''}
+                 <div class="text-xs text-gray-400">${odds(right)}</div></div>` : ''}
     </div>`;
 
   const legsHtml = results.map(r => {
     const lines = r.lineItems.map((l, i) => dotRow('bg-blue-400', l, true, i === r.lineItems.length - 1 ? r.lineProb : null)).join('');
     const picks = r.picks.map(p => dotRow('bg-green-400', p.label, false, p.indivProb)).join('');
     const gameOdds = results.length > 1 && (r.picks.length + r.lineItems.length) > 1
-      ? `<div class="flex justify-between text-xs text-gray-500 mt-1"><span>Same game</span><span class="text-amber-400 font-semibold">${odds(r.prob)} · ${pct(r.prob)}</span></div>` : '';
+      ? `<div class="flex justify-between text-xs text-gray-400 mt-1"><span>Same game</span><span class="text-amber-400 font-semibold">${odds(r.prob)} · ${pct(r.prob)}</span></div>` : '';
     return `
       <div class="py-2.5 border-b border-gray-700/40 last:border-b-0">
         <div class="text-xs font-semibold text-gray-400 truncate mb-1.5">${esc(r.matchLabel)}</div>
@@ -949,13 +949,13 @@ function renderBetslip(results) {
           <span class="text-sm font-semibold text-gray-300">${isMulti ? `Multi (${totalLegs} legs)` : 'Selection'}</span>
           <div class="text-right">
             <div class="text-2xl font-extrabold text-amber-400">${(combinedProb * 100).toFixed(2)}%</div>
-            <div class="text-xs text-gray-500">$${combinedOdds}</div>
+            <div class="text-xs text-gray-400">$${combinedOdds}</div>
           </div>
         </div>
       </div>
       <div class="mt-3 pt-3 border-t border-gray-700/40">
         <div class="flex items-center gap-2">
-          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-500 uppercase tracking-wider shrink-0">Bookie Odds</label>
+          <label for="bookie-odds-input" class="text-xs font-semibold text-gray-400 uppercase tracking-wider shrink-0">Bookie Odds</label>
           <div class="flex items-center gap-1 flex-1">
             <span class="text-sm text-gray-400">$</span>
             <input id="bookie-odds-input" type="number" min="1.01" step="0.05" placeholder="e.g. 4.50"
@@ -963,7 +963,7 @@ function renderBetslip(results) {
                    class="flex-1 min-w-0 bg-gray-800 border border-gray-600 text-white text-sm rounded px-2 py-1 focus:outline-none focus:border-amber-500/60">
           </div>
         </div>
-        <p id="bookie-ev" class="text-xs mt-1 ${bookieOdds ? '' : 'text-gray-600'}">${evText(combinedProb)}</p>
+        <p id="bookie-ev" class="text-xs mt-1 ${bookieOdds ? '' : 'text-gray-400'}">${evText(combinedProb)}</p>
       </div>
       <div class="text-xs mt-3 text-gray-400 text-center leading-tight">
         Find this useful? <a href="https://www.buymeacoffee.com/BroncosSabres" target="_blank" class="text-yellow-300 hover:underline">Buy me a coffee</a> to help pay server costs.
@@ -972,7 +972,7 @@ function renderBetslip(results) {
     <div class="mt-2 flex justify-center">
       <button id="save-betslip-btn" type="button" ${anyStarted ? 'disabled title="Game has started — bets are locked"' : ''}
               class="px-4 py-1.5 rounded-lg border font-semibold text-sm transition-colors ${anyStarted
-                ? 'border-gray-600 text-gray-500 opacity-50 cursor-not-allowed'
+                ? 'border-gray-600 text-gray-400 opacity-50 cursor-not-allowed'
                 : 'border-blue-500/40 text-blue-400 hover:bg-blue-500/10'}">
         ${anyStarted ? 'Locked' : '☆ Save Betslip'}
       </button>
@@ -990,7 +990,7 @@ function renderBetslip(results) {
     bookieOdds = input.value ? parseFloat(input.value) : null;
     const ev = resultDiv.querySelector('#bookie-ev');
     ev.innerHTML = evText(combinedProb);
-    ev.className = `text-xs mt-1 ${bookieOdds ? '' : 'text-gray-600'}`;
+    ev.className = `text-xs mt-1 ${bookieOdds ? '' : 'text-gray-400'}`;
   });
   resultDiv.querySelector('#save-betslip-btn').addEventListener('click', e => saveBetslip(e.currentTarget, results));
 }
@@ -1117,7 +1117,7 @@ function communityTile(b) {
     ? (b.won === true ? '<span class="text-green-400 text-xs font-bold" title="Won">✓</span>'
       : b.won === false ? '<span class="text-red-400 text-xs font-bold" title="Lost">✗</span>'
       : '<span class="text-gray-400 text-xs font-bold" title="Void">–</span>')
-    : '<span class="text-gray-600 text-xs" title="Pending">·</span>';
+    : '<span class="text-gray-400 text-xs" title="Pending">·</span>';
   const net = b.net_votes || 0;
   const voteColor = net > 0 ? '#4ade80' : net < 0 ? '#f87171' : '#6b7280';
   return `
@@ -1126,18 +1126,18 @@ function communityTile(b) {
         <span class="text-xs font-semibold text-gray-200 truncate min-w-0">${esc(b.username || 'Unknown')}</span>
         <div class="flex items-center gap-1.5 shrink-0">
           ${score}
-          <button data-vote-betslip="${b.id}" data-v="1" class="text-gray-600 hover:text-green-400 font-bold leading-none" style="font-size:10px;">▲</button>
+          <button data-vote-betslip="${b.id}" data-v="1" class="text-gray-400 hover:text-green-400 font-bold leading-none" style="font-size:10px;">▲</button>
           <span style="font-size:10px;font-weight:700;color:${voteColor};min-width:1rem;text-align:center;" data-community-votes="${b.id}">${net}</span>
-          <button data-vote-betslip="${b.id}" data-v="-1" class="text-gray-600 hover:text-red-400 font-bold leading-none" style="font-size:10px;">▼</button>
+          <button data-vote-betslip="${b.id}" data-v="-1" class="text-gray-400 hover:text-red-400 font-bold leading-none" style="font-size:10px;">▼</button>
         </div>
       </div>
       <div class="flex flex-col gap-0.5 text-xs text-gray-400 min-w-0">
         ${visible.map(it => `<span class="flex items-center gap-1 min-w-0"><span class="w-1.5 h-1.5 rounded-full ${it.dot} shrink-0"></span><span class="truncate">${esc(it.text)}</span></span>`).join('')}
-        ${extra > 0 ? `<span class="text-gray-600">+${extra}</span>` : ''}
+        ${extra > 0 ? `<span class="text-gray-400">+${extra}</span>` : ''}
       </div>
       <div class="flex items-baseline justify-between mt-auto pt-1 border-t border-gray-700/50">
         <span class="text-sm font-extrabold text-amber-400">${b.combined_odds ? `$${b.combined_odds}` : '–'}</span>
-        ${b.calculated_prob ? `<span class="text-xs text-gray-500">${(b.calculated_prob * 100).toFixed(1)}%</span>` : ''}
+        ${b.calculated_prob ? `<span class="text-xs text-gray-400">${(b.calculated_prob * 100).toFixed(1)}%</span>` : ''}
       </div>
     </div>`;
 }
@@ -1151,16 +1151,16 @@ async function renderCommunityBetslips(gameId) {
   const sort = $('community-sort').value || 'recent';
   link.href = `/nfl/pages/betslips.html?match=${gameId}`;
   section.classList.remove('hidden');
-  list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Loading…</div>';
+  list.innerHTML = '<div class="text-xs text-gray-400 py-2 px-1">Loading…</div>';
   try {
     const res = await fetch(`${BACKEND}/betslips/match/${gameId}?competition=nfl&sort=${sort}&limit=5`);
     const betslips = res.ok ? await res.json() : [];
     if (communityGameId !== gameId) return;
     list.innerHTML = betslips.length
       ? betslips.map(communityTile).join('')
-      : '<div class="text-xs text-gray-500 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
+      : '<div class="text-xs text-gray-400 py-2 px-1 italic">No betslips saved yet — be the first!</div>';
   } catch {
-    list.innerHTML = '<div class="text-xs text-gray-500 py-2 px-1">Could not load betslips.</div>';
+    list.innerHTML = '<div class="text-xs text-gray-400 py-2 px-1">Could not load betslips.</div>';
   }
 }
 
