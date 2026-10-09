@@ -9,6 +9,10 @@
 // /api/nfl/game_player_data (per-player shares of team TDs, see
 // nrl-flask-backend/nfl_player_model.py) and are combined with each bin's own
 // TD/FG count distributions, so they stay correlated with the lines.
+// Yards legs (QB passing, rushing, receiving — any N+ yards) are priced per
+// bin too: team yards conditional on the bin's points / margin and the TD
+// count, shared by every yards leg on that team, and each player's yards
+// conditional on the TDs credited to him (see the yards engine below).
 // Selections are kept per game; the betslip multiplies across games like NRL.
 import { apiUrl, BACKEND } from './api-config.js';
 import { nflLogoUrl } from './nfl-logos.js';
@@ -26,6 +30,7 @@ const builderSection = $('builder-section');
 const builderMatchup = $('builder-matchup');
 const builderKickoff = $('builder-kickoff');
 const teamsContainer = $('teams-container');
+const marketTabs     = $('market-tabs');
 const resultDiv      = $('result');
 const resetMatchBtn  = $('reset-match-btn');
 const resetAllBtn    = $('reset-all-btn');
@@ -47,19 +52,32 @@ const MAX_N = { anytime: 4, pass_td: 6, fg: 5, dst_td: 3 };
 const TOP_N = 10;              // anytime options listed before "Show more" (D/ST always among them)
 const EXCLUDED = ['out', 'inactive', 'ir'];
 
-function newGameState() {
+// Market tabs: the team cards show one market at a time. Picks in the other
+// tabs stay on the betslip. yards: hidden when the yards model isn't available.
+const MARKETS = [
+  { id: 'td',      tab: 'TD Scorer',     kinds: ['anytime', 'dst_td'] },
+  { id: 'pass',    tab: 'QB Passing',    kinds: ['pass_td', 'pass_yds'] },
+  { id: 'rush',    tab: 'Rushing Yds',   kinds: ['rush_yds'], yards: true },
+  { id: 'rec',     tab: 'Receiving Yds', kinds: ['rec_yds'], yards: true },
+  { id: 'fg',      tab: 'Field Goals',   kinds: ['fg'] },
+];
+let market = 'td';
+
+function newGameState(gid) {
   return {
+    gameId: gid,
     lines: { marginTeam: null, marginL: null, totalDir: null, totalN: null,
              homeTotalDir: null, homeTotalN: null, awayTotalDir: null, awayTotalN: null },
-    picks: new Map(),          // key -> { side, kind, playerId, teamId, name, n }
+    picks: new Map(),          // key -> { side, kind, playerId, teamId, name, n } (n = yardage line for yards legs)
     out: new Set(), in: new Set(),
-    showAll: { home: false, away: false },
+    showAll: {},               // `${market}:${side}` -> "Show more" expanded
     playerData: null,          // /api/nfl/game_player_data for this game's overrides
     teamDists: null,           // { home: {td, fg}, away: {td, fg} } — whole-game mixtures
+    yardsCache: new Map(),     // whole-game yards prices / expectations for this playerData
     loadSeq: 0,                // drops stale game_player_data responses
   };
 }
-const S = (gid = currentGame?.game_id) => (gameState[gid] ||= newGameState());
+const S = (gid = currentGame?.game_id) => (gameState[gid] ||= newGameState(gid));
 const gameById = gid => games.find(g => String(g.game_id) === String(gid));
 
 // --- FORMATTING ---
@@ -81,13 +99,19 @@ function buildAtoms(team, teamPicks) {
   const pickedIds = new Set(teamPicks.filter(p => p.playerId != null).map(p => p.playerId));
   const atoms = new Map();
   let used = 0;
-  const add = (scorerId, passerId, isDst, p) => {
+  // Yards picks are credited with the TDs that carry yards for them: a QB's
+  // passing-yards pick with his pass TDs, rushing / receiving yards with the
+  // player's own rush / receiving TDs.
+  const add = (scorerId, passerId, isDst, p, isPass = false) => {
     if (p <= 0) return;
     const cred = [];
     teamPicks.forEach((pk, i) => {
-      if (pk.kind === 'dst_td' && isDst) cred.push(i);
-      else if (pk.kind === 'anytime' && scorerId != null && pk.playerId === scorerId) cred.push(i);
-      else if (pk.kind === 'pass_td' && passerId != null && pk.playerId === passerId) cred.push(i);
+      const k = pk.kind;
+      if (k === 'dst_td' && isDst) cred.push(i);
+      else if (k === 'anytime' && scorerId != null && pk.playerId === scorerId) cred.push(i);
+      else if ((k === 'pass_td' || k === 'pass_yds') && passerId != null && pk.playerId === passerId) cred.push(i);
+      else if (k === 'rush_yds' && !isPass && scorerId != null && pk.playerId === scorerId) cred.push(i);
+      else if (k === 'rec_yds' && isPass && scorerId != null && pk.playerId === scorerId) cred.push(i);
     });
     const key = cred.join(',');
     const a = atoms.get(key) || { p: 0, cred };
@@ -100,7 +124,7 @@ function buildAtoms(team, teamPicks) {
     if (!pl.active) continue;
     const w = pickedIds.has(pl.id) ? 1 : (pl.p_play ?? 1);
     add(pl.id, null, false, (1 - dst) * (1 - pf) * pl.rush_share * w);
-    add(pl.id, qbId, false, (1 - dst) * pf * pl.rec_share * w);
+    add(pl.id, qbId, false, (1 - dst) * pf * pl.rec_share * w, true);
   }
   const list = [...atoms.values()];
   if (used < 1) list.push({ p: 1 - used, cred: [] });
@@ -161,6 +185,294 @@ function mixtureDist(bins, key) {
   return out;
 }
 
+// --- yards legs (mirrors nfl_player_model.py '--- yards', checked by
+// nrl-flask-backend/tests/test_nfl_js_mirror.py) ---
+// Conditional on each sim bin (team points + margin) and the team's TD count:
+// team yards (log pass, log rush) ~ correlated normal with mean
+// base(n, points - 7n, margin, weather) × exp(adj); player yards ~ gamma
+// (fixed scale) with mean beta_share × share × team yards + beta_td × his
+// credited TDs. Every yards pick on a team shares its team yards.
+const YARDS_KINDS = new Set(['pass_yds', 'rush_yds', 'rec_yds']);
+const YARDS_TEAM_KIND = { pass_yds: 'pass', rec_yds: 'pass', rush_yds: 'rush' };
+const GH_X = [-4.1445471861258945, -2.8024858612875416, -1.636519042435108, -0.5390798113513751,
+  0.5390798113513751, 1.636519042435108, 2.8024858612875416, 4.1445471861258945];
+const GH_W = [0.00011261453837536762, 0.009635220120788256, 0.11723990766175904, 0.3730122576790773,
+  0.3730122576790773, 0.11723990766175904, 0.009635220120788256, 0.00011261453837536762];
+const LANCZOS = [76.18009172947146, -86.50532032941677, 24.01409824083091,
+  -1.231739572450155, 0.1208650973866179e-2, -0.5395239384953e-5];
+
+function lgamma(x) {
+  let y = x;
+  let tmp = x + 5.5;
+  tmp -= (x + 0.5) * Math.log(tmp);
+  let ser = 1.000000000190015;
+  for (const c of LANCZOS) { y += 1; ser += c / y; }
+  return -tmp + Math.log(2.5066282746310005 * ser / x);
+}
+
+// Regularised upper incomplete gamma Q(a, x)
+function gammaQ(a, x) {
+  if (x <= 0) return 1;
+  const gln = lgamma(a);
+  if (x < a + 1) {
+    let ap = a, s = 1 / a, d = s;
+    for (let k = 0; k < 1000; k++) {
+      ap += 1; d *= x / ap; s += d;
+      if (Math.abs(d) < Math.abs(s) * 1e-12) break;
+    }
+    return Math.max(0, 1 - s * Math.exp(-x + a * Math.log(x) - gln));
+  }
+  let b = x + 1 - a, c = 1e300, d = 1 / b, h = d;
+  for (let i = 1; i < 1000; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b; if (Math.abs(d) < 1e-300) d = 1e-300;
+    c = b + an / c; if (Math.abs(c) < 1e-300) c = 1e-300;
+    d = 1 / d;
+    const delta = d * c;
+    h *= delta;
+    if (Math.abs(delta - 1) < 1e-12) break;
+  }
+  return Math.min(1, Math.exp(-x + a * Math.log(x) - gln) * h);
+}
+
+function gammaSf(x, mean, shape) {
+  if (x <= 0) return 1;
+  if (mean <= 0) return 0;
+  return gammaQ(shape, x * shape / mean);
+}
+
+function teamYardsBase(tp, kind, n, points, margin, terms) {
+  const c = tp[kind].coef, clip = tp.margin_clip;
+  const m = Math.min(Math.max(margin, -clip), clip);
+  let mu = c.intercept + c.td * n + c.other_pts * (points - 7 * n)
+    + c.trail * Math.min(m, 0) + c.lead * Math.max(m, 0);
+  for (const t of terms) mu += c[t] || 0;
+  return Math.max(mu, tp.floor);
+}
+
+function pickYardsShare(yp, kind, pl) {
+  if (kind === 'pass_yds') return pl.is_starting_qb ? yp.player.pass_yds.share : 0;
+  return kind === 'rush_yds' ? pl.rush_yds_share : pl.rec_yds_share;
+}
+
+function yardsPickSpec(yp, kind, pos, share) {
+  const pp = yp.player[kind];
+  return [pp.beta_share * share, pp.beta_td, pp.scale[pos] ?? pp.scale.default];
+}
+
+// w[c][y] = P(player yards >= line | team yards y, c credited TDs), y = 0..grid max
+function yardsWeightTable(yp, kind, pos, share, line) {
+  const [a, b, scale] = yardsPickSpec(yp, kind, pos, share);
+  const yMax = yp.grid_max[YARDS_TEAM_KIND[kind]];
+  const out = [];
+  for (let c = 0; c <= yp.td_cap; c++) {
+    const row = new Array(yMax + 1);
+    for (let y = 0; y <= yMax; y++) {
+      const mean = a * y + b * c;
+      row[y] = gammaSf(line - 0.5, mean, mean / scale);
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+function interp(row, y) {
+  if (y <= 0) return row[0];
+  const top = row.length - 1;
+  if (y >= top) return row[top];
+  const i = Math.floor(y), f = y - i;
+  return row[i] + f * (row[i + 1] - row[i]);
+}
+
+// [[weight, Y_pass, Y_rush]] quadrature over the team's lognormal yards
+function teamYardsNodes(yp, muPass, muRush, needPass, needRush) {
+  const tp = yp.team, sp = tp.pass.sigma, sr = tp.rush.sigma, rho = tp.rho;
+  const lp = needPass ? Math.log(muPass) - sp * sp / 2 : 0;
+  const lr = needRush ? Math.log(muRush) - sr * sr / 2 : 0;
+  const out = [];
+  if (needPass && needRush) {
+    const q = Math.sqrt(1 - rho * rho);
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+      out.push([GH_W[i] * GH_W[j], Math.exp(lp + sp * GH_X[i]), Math.exp(lr + sr * (rho * GH_X[i] + q * GH_X[j]))]);
+    }
+  } else if (needPass) {
+    for (let i = 0; i < 8; i++) out.push([GH_W[i], Math.exp(lp + sp * GH_X[i]), 0]);
+  } else {
+    for (let i = 0; i < 8; i++) out.push([GH_W[i], 0, Math.exp(lr + sr * GH_X[i])]);
+  }
+  return out;
+}
+
+// pickSuccessByN's DP, keeping the states: for n = 0..maxN, Map(state -> p)
+function pickStatesByN(atoms, mins, maxN) {
+  let state = new Map([[mins.map(() => 0).join(','), 1]]);
+  const out = [state];
+  for (let n = 0; n < maxN; n++) {
+    const next = new Map();
+    for (const [key, sp] of state) {
+      const st = key.split(',').map(Number);
+      for (const { p, cred } of atoms) {
+        let k2 = key;
+        if (cred.length) {
+          const s2 = st.slice();
+          for (const i of cred) if (s2[i] < mins[i]) s2[i]++;
+          k2 = s2.join(',');
+        }
+        next.set(k2, (next.get(k2) || 0) + sp * p);
+      }
+    }
+    state = next;
+    out.push(state);
+  }
+  return out;
+}
+
+// DP states -> per n, Map(c-vector of the yards picks -> p), only states
+// where every other pick reached its minimum.
+function yardsKeyDists(statesByN, picks, yardIdx) {
+  const others = picks.map((_, i) => i).filter(i => !yardIdx.includes(i));
+  return statesByN.map(state => {
+    const d = new Map();
+    for (const [key, sp] of state) {
+      const st = key.split(',').map(Number);
+      if (!others.every(i => st[i] >= picks[i].n)) continue;
+      const k = yardIdx.map(i => st[i]);
+      const ks = k.join(',');
+      const e = d.get(ks) || { c: k, p: 0 };
+      e.p += sp;
+      d.set(ks, e);
+    }
+    return d;
+  });
+}
+
+// One team's legs priced inside one sim bin (TD legs + yards legs).
+function sideYardsFactor(yp, ctx, keyDists, tdDist, tables, kinds, points, margin) {
+  const tp = yp.team;
+  const needP = kinds.some(k => YARDS_TEAM_KIND[k] === 'pass');
+  const needR = kinds.some(k => YARDS_TEAM_KIND[k] === 'rush');
+  let total = 0;
+  tdDist.forEach((pn, n) => {
+    if (!pn || n >= keyDists.length || !keyDists[n].size) return;
+    const muP = needP ? teamYardsBase(tp, 'pass', n, points, margin, ctx.terms) * Math.exp(ctx.adj_pass) : 0;
+    const muR = needR ? teamYardsBase(tp, 'rush', n, points, margin, ctx.terms) * Math.exp(ctx.adj_rush) : 0;
+    const nodes = teamYardsNodes(yp, muP, muR, needP, needR);
+    let s = 0;
+    for (const { c, p } of keyDists[n].values()) {
+      let e = 0;
+      for (const [w, yP, yR] of nodes) {
+        let f = w;
+        for (let i = 0; i < kinds.length; i++) f *= interp(tables[i][c[i]], YARDS_TEAM_KIND[kinds[i]] === 'pass' ? yP : yR);
+        e += f;
+      }
+      s += p * e;
+    }
+    total += pn * s;
+  });
+  return total;
+}
+
+// Everything bin-independent for one team's legs: returns (bin, side) -> factor.
+// teamPicks use { kind, playerId, n } (n = TD count, or the yardage line).
+function sidePricer(yp, team, ctx, teamPicks, maxN) {
+  const yardIdx = teamPicks.map((p, i) => (YARDS_KINDS.has(p.kind) ? i : -1)).filter(i => i >= 0);
+  const mins = teamPicks.map((p, i) => (yardIdx.includes(i) ? yp.td_cap : p.n));
+  const states = pickStatesByN(buildAtoms(team, teamPicks), mins, maxN);
+  const byId = new Map(team.players.map(p => [p.id, p]));
+  const kinds = yardIdx.map(i => teamPicks[i].kind);
+  const tables = yardIdx.map(i => {
+    const pl = byId.get(teamPicks[i].playerId);
+    return yardsWeightTable(yp, teamPicks[i].kind, pl.pos, pickYardsShare(yp, teamPicks[i].kind, pl), teamPicks[i].n);
+  });
+  const keyDists = yardsKeyDists(states, teamPicks, yardIdx);
+  return (b, side) => {
+    const margin = side === 'home' ? b.m : -b.m;
+    return sideYardsFactor(yp, ctx, keyDists, b[side === 'home' ? 'h_td' : 'a_td'] || [1], tables, kinds,
+                           (b.t + margin) / 2, margin);
+  };
+}
+
+// Count-weighted price of one team's legs over a set of bins (mirrors
+// nfl_player_model.side_bin_probability).
+function sideBinProbability(yp, team, ctx, teamPicks, bins, side) {
+  const key = side === 'home' ? 'h_td' : 'a_td';
+  const maxN = Math.max(0, ...bins.map(b => (b[key] || [1]).length - 1));
+  const price = sidePricer(yp, team, ctx, teamPicks, maxN);
+  let num = 0, den = 0;
+  for (const b of bins) { num += b.c * price(b, side); den += b.c; }
+  return den ? num / den : 0;
+}
+
+const yardsReady = gs => !!(gs.playerData?.yards_params && gs.playerData.home?.yards && gs.playerData.away?.yards);
+
+// Whole-game price of one yards leg (no lines), cached per player data + bins.
+function singleYardsProb(gs, side, kind, pl, line) {
+  const bins = binsCache[gs.gameId];
+  if (!bins?.length || !yardsReady(gs) || !pl) return null;
+  const key = `${side}:${kind}:${pl.id}:${line}`;
+  if (gs.yardsCache.has(key)) return gs.yardsCache.get(key);
+  const team = gs.playerData[side];
+  const p = sideBinProbability(gs.playerData.yards_params, team, team.yards,
+                               [{ kind, playerId: pl.id, n: line }], bins, side);
+  gs.yardsCache.set(key, p);
+  return p;
+}
+
+// Expected yards if he plays: E[beta_share x share x Y + beta_td x credited TDs]
+function expectedYards(gs, side, kind, pl) {
+  const bins = binsCache[gs.gameId];
+  if (!bins?.length || !yardsReady(gs) || !pl) return null;
+  const key = `exp:${side}:${kind}:${pl.id}`;
+  if (gs.yardsCache.has(key)) return gs.yardsCache.get(key);
+  const yp = gs.playerData.yards_params, team = gs.playerData[side], ctx = team.yards;
+  const [a, b] = yardsPickSpec(yp, kind, pl.pos, pickYardsShare(yp, kind, pl));
+  const atom = kind === 'pass_yds' ? pl.pass_td_share
+    : (1 - team.dst_frac) * (kind === 'rush_yds' ? (1 - team.pass_frac) * pl.rush_share : team.pass_frac * pl.rec_share);
+  const tk = YARDS_TEAM_KIND[kind];
+  let num = 0, den = 0;
+  for (const bn of bins) {
+    const margin = side === 'home' ? bn.m : -bn.m, points = (bn.t + margin) / 2;
+    (bn[side === 'home' ? 'h_td' : 'a_td'] || [1]).forEach((pn, n) => {
+      if (!pn) return;
+      const mu = teamYardsBase(yp.team, tk, n, points, margin, ctx.terms) * Math.exp(tk === 'pass' ? ctx.adj_pass : ctx.adj_rush);
+      num += bn.c * pn * (a * mu + b * Math.min(n * atom, yp.td_cap));
+    });
+    den += bn.c;
+  }
+  const e = den ? num / den : null;
+  gs.yardsCache.set(key, e);
+  return e;
+}
+
+// Default line: the multiple of 5 whose price is closest to even money.
+function defaultYardsLine(gs, side, kind, pl) {
+  const e = expectedYards(gs, side, kind, pl);
+  if (e == null) return null;
+  const p = L => singleYardsProb(gs, side, kind, pl, L);
+  let lo = Math.max(5, Math.round(e / 5) * 5);
+  if (p(lo) < 0.5) { while (lo > 5 && p(lo) < 0.5) lo -= 5; }
+  else { while (p(lo + 5) >= 0.5) lo += 5; }
+  // lo now has P >= 0.5 (or is 5); lo + 5 has P < 0.5
+  return Math.abs(p(lo) - 0.5) <= Math.abs(p(lo + 5) - 0.5) ? lo : lo + 5;
+}
+
+// Median yards if he plays: the largest N with P(N+) >= 0.5. Yards are right-
+// skewed (mean above median), so this — not the mean — is the even-money line.
+// Bisects inside the 5-yard bracket defaultYardsLine already priced.
+function medianYards(gs, side, kind, pl) {
+  const d = defaultYardsLine(gs, side, kind, pl);
+  if (d == null) return null;
+  const p = L => singleYardsProb(gs, side, kind, pl, L);
+  let lo = p(d) >= 0.5 ? d : d - 5, hi = lo + 5;   // p(lo) >= 0.5 > p(hi), lo may be 0
+  if (lo <= 0) { lo = 0; hi = 5; }
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (p(mid) >= 0.5) lo = mid; else hi = mid;
+  }
+  return lo;
+}
+
 // Per-TD atom probability for a single leg (FG legs read the team FG dist instead).
 function legAtomP(team, kind, player) {
   if (kind === 'anytime') return player.td_share;
@@ -171,6 +483,7 @@ function legAtomP(team, kind, player) {
 
 // Unconditional single-leg probability (whole game, no lines) — the table prices.
 function singleLegProb(gs, side, kind, player, n) {
+  if (YARDS_KINDS.has(kind)) return singleYardsProb(gs, side, kind, player, n);
   if (!gs.teamDists || !gs.playerData) return null;
   const d = gs.teamDists[side];
   if (kind === 'fg') return atLeast(d.fg, n);
@@ -226,6 +539,9 @@ function legLabel(kind, name, n) {
     case 'pass_td': return `${name} ${n}+ Pass TD${n > 1 ? 's' : ''}`;
     case 'dst_td':  return `${name} D/ST ${n}+ TD${n > 1 ? 's' : ''}`;
     case 'fg':      return `${name} ${n}+ FG${n > 1 ? 's' : ''} Made`;
+    case 'pass_yds': return `${name} ${n}+ Passing Yds`;
+    case 'rush_yds': return `${name} ${n}+ Rushing Yds`;
+    case 'rec_yds':  return `${name} ${n}+ Receiving Yds`;
   }
   return name;
 }
@@ -243,19 +559,26 @@ function gameProbability(gid) {
     const sidePicks = [...gs.picks.values()].filter(p => p.side === side);
     const tdPicks = sidePicks.filter(p => p.kind !== 'fg');
     const fgMin = Math.max(0, ...sidePicks.filter(p => p.kind === 'fg').map(p => p.n));
-    let Sn = null;
+    let Sn = null, pricer = null;
     if (tdPicks.length && team) {
       const key = side === 'home' ? 'h_td' : 'a_td';
       const maxN = Math.max(0, ...filtered.map(b => (b[key] || [1]).length - 1));
-      Sn = pickSuccessByN(buildAtoms(team, tdPicks), tdPicks.map(p => p.n), maxN);
+      if (tdPicks.some(p => YARDS_KINDS.has(p.kind))) {
+        // Yards legs depend on each bin's points / margin, so they're priced per bin
+        if (!yardsReady(gs)) return null;
+        pricer = sidePricer(gs.playerData.yards_params, team, team.yards, tdPicks, maxN);
+      } else {
+        Sn = pickSuccessByN(buildAtoms(team, tdPicks), tdPicks.map(p => p.n), maxN);
+      }
     }
-    perSide[side] = { Sn, fgMin };
+    perSide[side] = { Sn, pricer, fgMin };
   }
   let num = 0;
   for (const b of filtered) {
     let f = b.c || 0;
     for (const side of ['home', 'away']) {
-      const { Sn, fgMin } = perSide[side];
+      const { Sn, pricer, fgMin } = perSide[side];
+      if (pricer) f *= pricer(b, side);
       if (Sn) {
         let s = 0;
         (b[side === 'home' ? 'h_td' : 'a_td'] || [1]).forEach((pn, n) => { s += pn * (Sn[n] || 0); });
@@ -305,6 +628,103 @@ function priceHtml(p, loading) {
   return `<div class="text-xs font-semibold text-gray-300">${pct(p)}</div><div class="text-xs text-gray-400">${odds(p)}</div>`;
 }
 
+// --- history under each row: per-game average (yards: median) over the last 10
+// games played, the previous season and his career (D/ST: since 2020); with a
+// pick, also how often he reached it. Values come as {window: [[value, games], ...]}.
+const logsCache = {};   // game_id -> /api/nfl/game_player_logs (undefined = loading, null = failed)
+const LOG_STAT = { anytime: 'td', dst_td: 'dst', pass_td: 'pass_td', fg: 'fg',
+                   pass_yds: 'pass_yds', rush_yds: 'rush_yds', rec_yds: 'rec_yds' };
+
+const histGames = h => h.reduce((s, [, n]) => s + n, 0);
+const histAvg = h => h.reduce((s, [v, n]) => s + v * n, 0) / histGames(h);
+const histHit = (h, line) => h.reduce((s, [v, n]) => s + (v >= line ? n : 0), 0) / histGames(h);
+// Largest N reached in at least half his games — the same definition as the
+// model's medianYards, so the two compare like for like.
+function histMedian(h) {
+  const half = histGames(h) / 2;
+  let seen = 0;
+  for (const [v, n] of [...h].sort((a, b) => b[0] - a[0])) {
+    seen += n;
+    if (seen >= half) return v;
+  }
+  return null;
+}
+
+// Model's per-game expectation for a scoring market if he plays — the
+// yardstick the history averages are coloured against (yards rows use the
+// model's median instead, see medianYards).
+function modelMean(gs, side, kind, pl) {
+  const team = gs.playerData?.[side];
+  if (!team) return null;
+  if (kind === 'fg') {
+    const arr = gs.teamDists?.[side]?.fg;
+    if (arr?.length) return arr.reduce((s, p, n) => s + n * p, 0);
+    return team.fg_dist ? Object.entries(team.fg_dist).reduce((s, [n, p]) => s + Number(n) * p, 0) : null;
+  }
+  const tds = expectedTds(gs, side);
+  return tds == null ? null : tds * legAtomP(team, kind, pl);
+}
+
+// Green / red: history above / below the model by more than a small neutral
+// band (HIST_BAND), compared at the shown precision.
+const HIST_BAND = { avg: 0.05, hit: 3 };   // averages / medians: ±5% of the model; hit rates: ±3 points
+function vsModel(shown, model, tol) {
+  if (model == null || Math.abs(shown - model) <= tol) return 'text-gray-200';
+  return shown > model ? 'text-green-400' : 'text-red-400';
+}
+
+// model: { avg, hit } — the model's per-game mean (yards: median) and its chance for the picked line
+function historyHtml(kind, id, line, model = {}) {
+  const gid = currentGame?.game_id;
+  const logs = logsCache[gid];
+  if (logs === undefined) return '<span class="bsm-skeleton h-3 w-full block"></span>';
+  const stat = LOG_STAT[kind];
+  const hist = kind === 'dst_td' ? logs?.dst?.[id]?.[stat] : logs?.players?.[id]?.[stat];
+  if (!hist) return '';
+  const yards = YARDS_KINDS.has(kind);
+  const wins = [
+    ['l10', g => `L${g}`, 'Last games played (up to 10)'],
+    ['prev', () => String(logs.prev_season), `${logs.prev_season} season, playoffs included`],
+    kind === 'dst_td'
+      ? ['car', () => `Since '${String(logs.dst_from).slice(2)}`, `Every game since ${logs.dst_from} (the start of our D/ST data)`]
+      : ['car', () => 'Career', 'Every NFL game of his career, playoffs included'],
+  ];
+  // value(h) -> number at display precision; text(v) -> label
+  const cell = (w, value, text, modelV, modelText, tol) => {
+    const h = hist[w[0]] || [], g = histGames(h);
+    const v = g ? value(h) : null;
+    const body = g ? `<span class="${vsModel(v, modelV, tol)} font-semibold">${text(v)}</span>` : '–';
+    const tip = `${w[2]}: ${g} game${g === 1 ? '' : 's'}${modelV != null ? ` · model ${modelText}` : ''}`;
+    return `<span class="whitespace-nowrap truncate" title="${esc(tip)}">${w[1](Math.min(g, 10))} ${body}</span>`;
+  };
+  // Yards are skewed, so their centre is the median (whole yards); counts use the mean
+  const centre = h => (yards ? histMedian(h) : Math.round(histAvg(h) * 100) / 100);
+  const roundAvg = x => (yards ? Math.round(x) : Math.round(x * 100) / 100);
+  const avgText = v => (yards ? String(v) : v.toFixed(2));
+  const mAvg = model.avg != null ? roundAvg(model.avg) : null;
+  const mHit = model.hit != null ? Math.round(model.hit * 100) : null;
+  const what = `${line}+${yards ? '' : { fg: ' FG', pass_td: ' pass TD' }[kind] || ' TD'}`;
+  return `
+    <div class="grid grid-cols-[5.75rem_repeat(3,minmax(0,1fr))] gap-x-1.5 gap-y-1 text-[11px] text-gray-400 leading-none">
+      <span>${yards ? 'Median yds' : 'Avg'}</span>${wins.map(w => cell(w, centre, avgText,
+                                                     mAvg, mAvg != null ? avgText(mAvg) : '', Math.abs(mAvg) * HIST_BAND.avg)).join('')}
+      ${line > 0 ? `<span class="text-green-300/90 whitespace-nowrap">${what} hit</span>${wins.map(w => cell(w,
+        h => Math.round(histHit(h, line) * 100), v => `${v}%`, mHit, `${mHit}%`, HIST_BAND.hit)).join('')}` : ''}
+    </div>`;
+}
+
+async function loadLogs(gid) {
+  if (gid in logsCache) return;
+  logsCache[gid] = undefined;
+  let data = null;
+  try {
+    const res = await fetch(apiUrl('nfl', `game_player_logs/${gid}`));
+    data = res.ok ? await res.json() : null;
+  } catch { /* leave null */ }
+  logsCache[gid] = data;
+  if (String(currentGame?.game_id) === String(gid)) renderTeams();
+}
+
 // One selectable row: name / price / stepper on top, a full-width stats line
 // underneath (full width so it never wraps, even on a phone). Clicking anywhere
 // but a button opens the stats window. kind: anytime | pass_td | fg | dst_td
@@ -323,6 +743,8 @@ function marketRow(gs, side, kind, { key, name, sub = '', subTitle = '', meta = 
       ${stepperHtml(key, val, MAX_N[kind])}
       ${meta ? `<div class="col-span-3 flex items-center gap-3 text-[11px] text-gray-400 leading-none">
         ${meta}${availBtn ? `<span class="ml-auto">${availBtn}</span>` : ''}</div>` : ''}
+      <div class="col-span-3">${historyHtml(kind, kind === 'dst_td' ? key.split(':')[2] : player?.id, val,
+        { avg: modelMean(gs, side, kind, player), hit: val > 0 ? p : null })}</div>
     </div>`;
 }
 
@@ -397,76 +819,7 @@ function renderTeamCard(game, side) {
   } else if (!team?.players?.length) {
     body = '<p class="py-4 text-sm text-gray-400 text-center">No player data for this team yet.</p>';
   } else {
-    const anyKey = pl => `${side}:anytime:${pl.id}`;
-    // Anytime options — skill players plus the D/ST — by chance to score. Prices
-    // are monotone in the per-TD share, so td_share / dst_frac rank them even
-    // before the sim bins load. Shares are conditional on playing, so the default
-    // top 10 is drawn from players expected to play, with the D/ST taking 10th if
-    // it isn't there on merit; picked options always stay visible.
-    const options = [
-      ...team.players.filter(pl => pl.pos !== 'K' && pl.active)
-        .map(pl => ({ pl, key: anyKey(pl), share: pl.td_share })),
-      { pl: null, key: `${side}:dst_td:${team.team_id}`, share: team.dst_frac },
-    ].sort((a, b) => b.share - a.share);
-    const eligible = options.filter(o => !o.pl || o.pl.expected);
-    let top = eligible.slice(0, TOP_N);
-    if (!top.some(o => !o.pl)) top = [...eligible.slice(0, TOP_N - 1), eligible.find(o => !o.pl)];
-    const shown  = options.filter(o => top.includes(o) || gs.picks.has(o.key));
-    const hidden = options.filter(o => !shown.includes(o));
-    const ruledOut = team.players.filter(pl => pl.pos !== 'K' && !pl.active);
-
-    const row = o => o.pl
-      ? marketRow(gs, side, 'anytime', {
-          key: o.key, name: o.pl.name, player: o.pl, meta: playerMeta(o.pl),
-          sub: `(${slotLabel(o.pl)})`, subTitle: slotTitle(o.pl),
-          badge: statusBadge(o.pl) + (o.pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
-            + (o.pl.expected ? '' : `<span class="shrink-0 text-[10px] text-gray-400" title="Plays in about ${Math.round((o.pl.p_play ?? 0) * 100)}% of games — price assumes they play">unlikely</span>`),
-          availBtn: availButton(o.pl),
-        })
-      : marketRow(gs, side, 'dst_td', { key: o.key, name: `${team.abbr} D/ST`, meta: dstMeta(team) });
-    const ruledOutRow = pl => `
-      <div class="flex items-center gap-1 py-2 px-1 opacity-60 cursor-pointer hover:bg-gray-700/25" data-detail="${anyKey(pl)}">
-        <span class="text-sm line-through truncate">${esc(pl.name)}</span>
-        <span class="text-xs text-gray-400 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}
-        <span class="ml-auto shrink-0">${availButton(pl)}</span>
-      </div>`;
-
-    const qb = team.players.find(pl => pl.id === team.starting_qb_id);
-    const k  = team.players.find(pl => pl.id === team.kicker_id);
-    const extra = [
-      qb ? marketRow(gs, side, 'pass_td', { key: `${side}:pass_td:${qb.id}`, name: qb.name, sub: '(Pass TDs)', player: qb,
-                                meta: metaLead('Passing') + formStrip(qb.stats?.recent_pass_tds, qb.stats?.recent_games, 'pass TD') }) : '',
-      k  ? marketRow(gs, side, 'fg', { key: `${side}:fg:${k.id}`, name: k.name, sub: '(FGs)', player: k,
-                           meta: metaLead('Kicking') + formStrip(k.stats?.recent_fg_made, k.stats?.recent_games, 'FG'),
-                           badge: statusBadge(k), availBtn: availButton(k) }) : '',
-    ].join('');
-
-    const showAll = gs.showAll[side];
-    const moreCount = hidden.length + ruledOut.length;
-    body = `
-      <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1 px-1">
-        <span class="flex-1">Player</span>
-        <span class="w-20 text-right">Anytime</span>
-        <span class="w-20 text-center">TDs</span>
-      </div>
-      <div class="flex flex-col divide-y divide-gray-700/50">${shown.map(row).join('')}</div>
-      ${moreCount ? `
-        <button type="button" data-showall="${side}"
-                class="w-full mt-1 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-300 text-left">
-          ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (lower chance, unlikely to play or ruled out)
-        </button>
-        ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">${hidden.map(row).join('')}${ruledOut.map(ruledOutRow).join('')}</div>` : ''}` : ''}
-      ${extra ? `
-      <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-4 mb-1 px-1">
-        <span class="flex-1">Passing · Kicking</span>
-        <span class="w-20 text-right">Price</span>
-        <span class="w-20 text-center">Count</span>
-      </div>
-      <div class="flex flex-col divide-y divide-gray-700/50">${extra}</div>` : ''}
-      <p class="mt-3 text-[11px] text-gray-400 leading-snug">
-        Prices assume the player plays (bets on players who sit out are void). Pass TD share
-        ${pct(team.pass_frac)} · D/ST share ${pct(team.dst_frac)} of team TDs. Tap a player for detailed stats.
-      </p>`;
+    body = MARKET_BODY[market](gs, side, team);
   }
 
   card.innerHTML = `
@@ -485,8 +838,291 @@ function renderTeamCard(game, side) {
   return card;
 }
 
+const colHead = (title, priceH, countH, { countW = 'w-20', first = true } = {}) => `
+  <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider ${first ? '' : 'mt-4 '}mb-1 px-1">
+    <span class="flex-1">${title}</span>
+    <span class="w-20 text-right">${priceH}</span>
+    <span class="${countW} text-center">${countH}</span>
+  </div>`;
+const rowList = html => `<div class="flex flex-col divide-y divide-gray-700/50">${html}</div>`;
+const cardNote = html => `<p class="mt-3 text-[11px] text-gray-400 leading-snug">${html} Tap a player for detailed stats.</p>`;
+const VOID_NOTE = 'Prices assume the player plays (bets on players who sit out are void).';
+
+// "Show N more" toggle + the extra rows (built only when expanded), kept per tab and side.
+function moreBlock(gs, side, count, what, rowsHtml) {
+  if (!count) return '';
+  const key = `${market}:${side}`;
+  const open = gs.showAll[key];
+  return `
+    <button type="button" data-showall="${key}"
+            class="w-full mt-1 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-300 text-left">
+      ${open ? '▾ Hide' : '▸ Show'} ${count} more (${what})
+    </button>
+    ${open ? rowList(rowsHtml()) : ''}`;
+}
+
+const MARKET_BODY = {
+  td: tdBody,
+  pass: passBody,
+  rush: (gs, side, team) => yardsBody(gs, side, team, 'rush_yds'),
+  rec: (gs, side, team) => yardsBody(gs, side, team, 'rec_yds'),
+  fg: fgBody,
+};
+
+function tdBody(gs, side, team) {
+  const anyKey = pl => `${side}:anytime:${pl.id}`;
+  // Anytime options — skill players plus the D/ST — by chance to score. Prices
+  // are monotone in the per-TD share, so td_share / dst_frac rank them even
+  // before the sim bins load. Shares are conditional on playing, so the default
+  // top 10 is drawn from players expected to play, with the D/ST taking 10th if
+  // it isn't there on merit; picked options always stay visible.
+  const options = [
+    ...team.players.filter(pl => pl.pos !== 'K' && pl.active)
+      .map(pl => ({ pl, key: anyKey(pl), share: pl.td_share })),
+    { pl: null, key: `${side}:dst_td:${team.team_id}`, share: team.dst_frac },
+  ].sort((a, b) => b.share - a.share);
+  const eligible = options.filter(o => !o.pl || o.pl.expected);
+  let top = eligible.slice(0, TOP_N);
+  if (!top.some(o => !o.pl)) top = [...eligible.slice(0, TOP_N - 1), eligible.find(o => !o.pl)];
+  const shown  = options.filter(o => top.includes(o) || gs.picks.has(o.key));
+  const hidden = options.filter(o => !shown.includes(o));
+  const ruledOut = team.players.filter(pl => pl.pos !== 'K' && !pl.active);
+
+  const row = o => o.pl
+    ? marketRow(gs, side, 'anytime', {
+        key: o.key, name: o.pl.name, player: o.pl, meta: playerMeta(o.pl),
+        sub: `(${slotLabel(o.pl)})`, subTitle: slotTitle(o.pl),
+        badge: statusBadge(o.pl) + (o.pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
+          + (o.pl.expected ? '' : `<span class="shrink-0 text-[10px] text-gray-400" title="Plays in about ${Math.round((o.pl.p_play ?? 0) * 100)}% of games — price assumes they play">unlikely</span>`),
+        availBtn: availButton(o.pl),
+      })
+    : marketRow(gs, side, 'dst_td', { key: o.key, name: `${team.abbr} D/ST`, meta: dstMeta(team) });
+  const ruledOutRow = pl => `
+    <div class="flex items-center gap-1 py-2 px-1 opacity-60 cursor-pointer hover:bg-gray-700/25" data-detail="${anyKey(pl)}">
+      <span class="text-sm line-through truncate">${esc(pl.name)}</span>
+      <span class="text-xs text-gray-400 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)})</span>${statusBadge(pl)}
+      <span class="ml-auto shrink-0">${availButton(pl)}</span>
+    </div>`;
+
+  return `
+    ${colHead('Player', 'Anytime', 'TDs')}
+    ${rowList(shown.map(row).join(''))}
+    ${moreBlock(gs, side, hidden.length + ruledOut.length, 'lower chance, unlikely to play or ruled out',
+                () => hidden.map(row).join('') + ruledOut.map(ruledOutRow).join(''))}
+    ${cardNote(`${VOID_NOTE} Pass TD share ${pct(team.pass_frac)} · D/ST share ${pct(team.dst_frac)} of team TDs.`)}`;
+}
+
+// Starting QB: passing TDs (count stepper) and passing yards (line).
+function passBody(gs, side, team) {
+  const qb = team.players.find(pl => pl.id === team.starting_qb_id);
+  if (!qb) return '<p class="py-4 text-sm text-gray-400 text-center">No projected starting QB.</p>';
+  let yards = '';
+  if (gs.playerData.yards_params && team.yards && qb.active) {
+    yards = yardsHead('Passing yards', false)
+      + (binsCache[gs.gameId] ? rowList(yardsRow(gs, side, 'pass_yds', qb)) : YARDS_LOADING);
+  }
+  return `
+    ${colHead('Passing TDs', 'Price', 'Count')}
+    ${rowList(marketRow(gs, side, 'pass_td', {
+      key: `${side}:pass_td:${qb.id}`, name: qb.name, sub: `(${slotLabel(qb)})`, subTitle: slotTitle(qb), player: qb,
+      badge: statusBadge(qb),
+      meta: metaLead('Passing') + formStrip(qb.stats?.recent_pass_tds, qb.stats?.recent_games, 'pass TD'),
+    }))}
+    ${yards}
+    ${cardNote(`${VOID_NOTE} ${pct(team.pass_frac)} of team TDs are passing TDs.`)}`;
+}
+
+function fgBody(gs, side, team) {
+  const k = team.players.find(pl => pl.id === team.kicker_id);
+  if (!k) return '<p class="py-4 text-sm text-gray-400 text-center">No projected kicker.</p>';
+  return `
+    ${colHead('Kicker', 'Price', 'FGs')}
+    ${rowList(marketRow(gs, side, 'fg', {
+      key: `${side}:fg:${k.id}`, name: k.name, sub: '(K)', player: k,
+      meta: metaLead('Kicking') + formStrip(k.stats?.recent_fg_made, k.stats?.recent_games, 'FG'),
+      badge: statusBadge(k), availBtn: availButton(k),
+    }))}
+    ${cardNote(VOID_NOTE)}`;
+}
+
+// --- yards rows: QB passing, rushers, receivers. Each row is an alt-line
+// ladder: YARDS_RUNGS lines in round steps around the even-money line, each
+// with its own price — tap one to add it, tap again to remove. The last cell
+// takes any other line (a bookie's 66.5 becomes 67+).
+const YARDS_ROWS = { rush_yds: 4, rec_yds: 7 };
+const YARDS_MIN_SHARE = { rush_yds: 0.05, rec_yds: 0.04 };
+const YARDS_RUNGS = 5;
+const YARDS_MAX_LINE = 999;
+const YARDS_LABEL = { pass_yds: 'Pass', rush_yds: 'Rush', rec_yds: 'Rec' };
+
+function yardsStrip(values = [], labels = [], unit) {
+  const base = 'inline-flex items-center justify-center w-7 h-4 rounded-sm text-[10px] font-semibold tabular-nums';
+  const boxes = [];
+  for (let i = 0; i < 5; i++) {
+    const v = values[i];
+    if (v == null) { boxes.push(`<span class="${base} border border-dashed border-gray-700"></span>`); continue; }
+    boxes.push(`<span class="${base} bg-gray-700/50 text-gray-300" title="${esc(`${labels[i] || 'Game'}: ${v} ${unit}`)}">${v}</span>`);
+  }
+  return `<span class="flex items-center gap-1 shrink-0"><span title="Last 5 games played, newest first">L5</span>
+    <span class="flex gap-0.5">${boxes.join('')}</span></span>`;
+}
+
+// Ladder lines: multiples of a step that suits the player's volume, centred on
+// the even-money line and never below one step.
+function yardsLadder(gs, side, kind, pl) {
+  const d = defaultYardsLine(gs, side, kind, pl);
+  if (d == null) return [];
+  const exp = expectedYards(gs, side, kind, pl) ?? d;
+  const step = kind === 'pass_yds' ? (exp >= 150 ? 25 : 10) : exp >= 40 ? 10 : 5;
+  const lo = Math.max(step, Math.round(d / step) * step - Math.floor(YARDS_RUNGS / 2) * step);
+  return Array.from({ length: YARDS_RUNGS }, (_, i) => lo + i * step);
+}
+
+const RUNG = 'flex flex-col items-center justify-center rounded-md border py-1 min-w-0 leading-tight transition-colors';
+const rungTone = on => (on ? 'bg-green-500/15 border-green-500 ring-1 ring-green-500/40'
+                           : 'bg-gray-900/40 border-gray-700 hover:border-green-400');
+
+function yardsRow(gs, side, kind, pl) {
+  const key = `${side}:${kind}:${pl.id}`;
+  const picked = gs.picks.get(key);
+  const ladder = yardsLadder(gs, side, kind, pl);
+  const custom = picked && !ladder.includes(picked.n) ? picked.n : null;
+  const med = medianYards(gs, side, kind, pl);
+  const s = pl.stats || {};
+  const recent = { pass_yds: s.recent_pass_yds, rush_yds: s.recent_rush_yds, rec_yds: s.recent_rec_yds }[kind];
+  const unit = `${YARDS_LABEL[kind].toLowerCase()} yds`;
+  const rungs = ladder.map(L => {
+    const p = singleYardsProb(gs, side, kind, pl, L);
+    const on = picked?.n === L;
+    return `
+      <button type="button" data-yline="${key}" data-line="${L}" aria-pressed="${on}"
+              title="${on ? 'Remove' : 'Add'} ${esc(pl.name)} ${L}+ ${unit}" class="${RUNG} ${rungTone(on)}">
+        <span class="text-xs font-bold tabular-nums ${on ? 'text-green-300' : 'text-white'}">${L}+</span>
+        <span class="text-[10px] font-semibold text-gray-300">${pct(p)}</span>
+        <span class="text-[10px] text-gray-400">${odds(p)}</span>
+      </button>`;
+  }).join('');
+  const pc = custom != null ? singleYardsProb(gs, side, kind, pl, custom) : null;
+  const other = `
+    <label class="${RUNG} ${rungTone(custom != null)} cursor-text" title="Any other line, e.g. a bookie's 66.5">
+      <input data-ycustom="${key}" type="number" inputmode="decimal" min="0.5" max="${YARDS_MAX_LINE}" step="0.5"
+             value="${custom ?? ''}" placeholder="Other" aria-label="Other ${unit} line"
+             class="w-full bg-transparent text-center text-xs font-bold tabular-nums text-white placeholder-gray-400 focus:outline-none
+                    [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none">
+      <span class="text-[10px] font-semibold text-gray-300">${custom != null ? pct(pc) : 'line'}</span>
+      <span class="text-[10px] text-gray-400">${custom != null ? odds(pc) : '&nbsp;'}</span>
+    </label>`;
+  return `
+    <div class="group py-2 px-1 player-row cursor-pointer hover:bg-gray-700/25${picked ? ' bg-gray-700/40' : ''}" data-detail="${key}">
+      <div class="flex items-center gap-1 min-w-0">
+        <span class="text-sm truncate group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2">${esc(pl.name)}</span>
+        <span class="text-xs text-gray-400 shrink-0" title="${esc(slotTitle(pl))}">(${slotLabel(pl)} · ${YARDS_LABEL[kind]})</span>
+        <span class="ml-auto shrink-0 pl-1 text-xs text-gray-400" title="Median ${unit} if he plays — a 50/50 line">Median
+          <span class="text-gray-200 font-semibold">${med ?? '–'}</span> yds</span>
+      </div>
+      <div class="grid grid-cols-6 gap-1 mt-1.5">${ladder.length ? rungs + other : '<span class="col-span-6 bsm-skeleton h-9 block"></span>'}</div>
+      <div class="flex items-center gap-3 mt-1.5 text-[11px] text-gray-400 leading-none">${yardsStrip(recent, s.recent_games, unit)}</div>
+      <div class="mt-1.5">${historyHtml(kind, pl.id, picked?.n || 0, {
+        avg: med, hit: picked ? singleYardsProb(gs, side, kind, pl, picked.n) : null })}</div>
+    </div>`;
+}
+
+// Section header for yards rows (no price / count columns — each rung carries its price)
+const yardsHead = (title, first = true) => `
+  <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider ${first ? '' : 'mt-4 '}mb-1 px-1">
+    <span class="flex-1">${title}</span>
+    <span class="text-[10px] normal-case tracking-normal">tap a line to add it</span>
+  </div>`;
+
+const YARDS_LOADING = '<div class="py-3 text-center"><span class="bsm-skeleton h-3 w-32 inline-block"></span></div>';
+
+// Rushing / receiving yards tab: players ranked by expected yards (yards shares
+// before the bins load). The default list is the top YARDS_ROWS expected to play
+// with a real share; the rest of the active skill players are under "Show more".
+function yardsCandidates(gs, side, team, kind) {
+  const shareKey = kind === 'rush_yds' ? 'rush_yds_share' : 'rec_yds_share';
+  const isPicked = pl => gs.picks.has(`${side}:${kind}:${pl.id}`);
+  const exp = new Map();
+  const cands = team.players.filter(pl => pl.active && pl.pos !== 'K' && (pl[shareKey] > 0 || isPicked(pl)));
+  for (const pl of cands) exp.set(pl, expectedYards(gs, side, kind, pl) ?? pl[shareKey]);
+  cands.sort((a, b) => exp.get(b) - exp.get(a));
+  const top = cands.filter(pl => pl.expected && pl[shareKey] >= YARDS_MIN_SHARE[kind]).slice(0, YARDS_ROWS[kind]);
+  const shown = cands.filter(pl => top.includes(pl) || isPicked(pl));
+  return { shown, hidden: cands.filter(pl => !shown.includes(pl)) };
+}
+
+// Each ladder rung is a bin-by-bin price (~100 per tab), so once a game's data
+// lands the listed rows are priced in short idle slices — opening a yards tab
+// then reads the cache instead of stalling.
+function warmYardsLadders(gid) {
+  const gs = S(gid), pd = gs.playerData;
+  if (!binsCache[gid]?.length || !yardsReady(gs)) return;
+  const jobs = [];
+  for (const side of ['home', 'away']) {
+    const team = pd[side];
+    const qb = team.players.find(pl => pl.id === team.starting_qb_id);
+    if (qb?.active) jobs.push([side, 'pass_yds', qb]);
+    for (const kind of ['rush_yds', 'rec_yds']) {
+      for (const pl of yardsCandidates(gs, side, team, kind).shown) jobs.push([side, kind, pl]);
+    }
+  }
+  const run = () => {
+    if (gs.playerData !== pd) return;   // reloaded (overrides): that load warms its own
+    const t = performance.now();
+    while (jobs.length && performance.now() - t < 12) {
+      const [side, kind, pl] = jobs.shift();
+      for (const L of yardsLadder(gs, side, kind, pl)) singleYardsProb(gs, side, kind, pl, L);
+      medianYards(gs, side, kind, pl);
+    }
+    if (jobs.length) setTimeout(run, 0);
+  };
+  setTimeout(run, 0);
+}
+
+function yardsBody(gs, side, team, kind) {
+  if (!gs.playerData.yards_params || !team.yards) {
+    return '<p class="py-4 text-sm text-gray-400 text-center">Yards prices aren\'t available for this game yet.</p>';
+  }
+  if (!binsCache[gs.gameId]) return YARDS_LOADING;
+  const { shown, hidden } = yardsCandidates(gs, side, team, kind);
+  const what = kind === 'rush_yds' ? 'Rushing' : 'Receiving';
+  return `
+    ${yardsHead(`${what} yards`)}
+    ${rowList(shown.map(pl => yardsRow(gs, side, kind, pl)).join(''))}
+    ${moreBlock(gs, side, hidden.length, 'smaller roles or unlikely to play',
+                () => hidden.map(pl => yardsRow(gs, side, kind, pl)).join(''))}
+    ${cardNote(`${VOID_NOTE} Median = the 50/50 line (yards are skewed, so the average sits higher). Lines step around it; type any other line (66.5 = 67+) in the last box.`)}`;
+}
+
+// Tab bar; each tab counts this game's picks in its market, since those rows
+// are hidden while another tab is open.
+function renderTabs() {
+  const gs = S();
+  const picks = [...gs.picks.values()];
+  const tabs = MARKETS.filter(m => !m.yards || !gs.playerData || gs.playerData.yards_params);
+  if (!tabs.some(m => m.id === market)) market = 'td';
+  marketTabs.innerHTML = tabs.map(m => {
+    const on = m.id === market;
+    const n = picks.filter(p => m.kinds.includes(p.kind)).length;
+    return `
+      <button type="button" role="tab" aria-selected="${on}" data-market="${m.id}"
+              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-semibold whitespace-nowrap transition-colors
+                     ${on ? 'bg-blue-500 border-blue-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-blue-400 hover:text-white'}">
+        ${m.tab}${n ? `<span class="min-w-[1.25rem] px-1 rounded-full text-[11px] leading-5 text-center ${on ? 'bg-white/25 text-white' : 'bg-green-500/20 text-green-300'}">${n}</span>` : ''}
+      </button>`;
+  }).join('');
+}
+
+marketTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-market]');
+  if (!tab || tab.dataset.market === market) return;
+  market = tab.dataset.market;
+  renderTeams();
+});
+
 function renderTeams() {
   if (!currentGame) return;
+  renderTabs();
   teamsContainer.innerHTML = '';
   teamsContainer.appendChild(renderTeamCard(currentGame, 'home'));
   teamsContainer.appendChild(renderTeamCard(currentGame, 'away'));
@@ -496,9 +1132,37 @@ function findPlayer(gs, side, id) {
   return gs.playerData?.[side]?.players.find(p => String(p.id) === String(id)) || null;
 }
 
+function setYardsPick(gs, key, n) {
+  const [side, kind, id] = key.split(':');
+  const pl = findPlayer(gs, side, id);
+  if (pl) gs.picks.set(key, { side, kind, n, playerId: pl.id, teamId: gs.playerData[side].team_id, name: pl.name });
+}
+
+// "Other" line box: a half-point line is the next whole yard (66.5 -> 67+); empty removes it
+teamsContainer.addEventListener('change', e => {
+  const input = e.target.closest('[data-ycustom]');
+  if (!input || !currentGame) return;
+  const gs = S(), key = input.dataset.ycustom;
+  const v = parseFloat(input.value);
+  if (!Number.isFinite(v) || v <= 0) gs.picks.delete(key);
+  else setYardsPick(gs, key, Math.min(YARDS_MAX_LINE, Math.ceil(v)));
+  renderTeams();
+  recalculate();
+});
+
 teamsContainer.addEventListener('click', e => {
   if (!currentGame) return;
   const gs = S();
+  const rung = e.target.closest('[data-yline]');
+  if (rung) {
+    const key = rung.dataset.yline;
+    const n = Number(rung.dataset.line);
+    if (gs.picks.get(key)?.n === n) gs.picks.delete(key);
+    else setYardsPick(gs, key, n);
+    renderTeams();
+    recalculate();
+    return;
+  }
   const step = e.target.closest('[data-step]');
   if (step) {
     const key = step.dataset.key;
@@ -530,7 +1194,7 @@ teamsContainer.addEventListener('click', e => {
   }
   const showAll = e.target.closest('[data-showall]');
   if (showAll) {
-    gs.showAll[showAll.dataset.showall] = !gs.showAll[showAll.dataset.showall];
+    gs.showAll[showAll.dataset.showall] = !gs.showAll[showAll.dataset.showall];   // key: `${market}:${side}`
     renderTeams();
     return;
   }
@@ -546,7 +1210,7 @@ teamsContainer.addEventListener('click', e => {
     return;
   }
   const detail = e.target.closest('[data-detail]');
-  if (detail && !e.target.closest('button')) {
+  if (detail && !e.target.closest('button, input, label')) {
     const [side, kind, id] = detail.dataset.detail.split(':');
     openDetail(side, kind, id);
   }
@@ -583,9 +1247,9 @@ document.addEventListener('keydown', e => {
 // Column groups for a player's game log / season lines. A group shows when it's
 // the position's job or the player has any of those numbers (a WR's carries).
 const STAT_GROUPS = [
-  { label: 'Rushing',   pos: ['QB', 'RB'], cols: [{ k: 'carries', h: 'Car' }, { k: 'rz_carries', h: 'RZ' }, { k: 'rush_tds', h: 'TD', td: true }] },
-  { label: 'Receiving', pos: ['RB', 'WR', 'TE'], cols: [{ k: 'targets', h: 'Tgt' }, { k: 'rz_targets', h: 'RZ' }, { k: 'receptions', h: 'Rec' }, { k: 'rec_tds', h: 'TD', td: true }] },
-  { label: 'Passing',   pos: ['QB'], cols: [{ k: 'pass_att', h: 'Att' }, { k: 'pass_tds', h: 'TD', td: true }] },
+  { label: 'Rushing',   pos: ['QB', 'RB'], cols: [{ k: 'carries', h: 'Car' }, { k: 'rz_carries', h: 'RZ' }, { k: 'rush_yds', h: 'Yds' }, { k: 'rush_tds', h: 'TD', td: true }] },
+  { label: 'Receiving', pos: ['RB', 'WR', 'TE'], cols: [{ k: 'targets', h: 'Tgt' }, { k: 'rz_targets', h: 'RZ' }, { k: 'receptions', h: 'Rec' }, { k: 'rec_yds', h: 'Yds' }, { k: 'rec_tds', h: 'TD', td: true }] },
+  { label: 'Passing',   pos: ['QB'], cols: [{ k: 'pass_att', h: 'Att' }, { k: 'pass_yds', h: 'Yds' }, { k: 'pass_tds', h: 'TD', td: true }] },
   { label: 'Kicking',   pos: ['K'], cols: [{ k: 'fg_made', h: 'Made', td: true }, { k: 'fg_att', h: 'Att' }] },
 ];
 const DST_GROUP = { label: 'Team touchdowns', cols: [
@@ -658,7 +1322,9 @@ function playerDetailBody(pl, data) {
       const rush = groups.some(g => g.label === 'Rushing'), recv = groups.some(g => g.label === 'Receiving');
       const shareCols = [
         rush && { k: 'carry_share', h: 'Carries', fmt: pctInt },
+        rush && { k: 'rush_yds_share', h: 'Rush yds', fmt: pctInt },
         recv && { k: 'target_share', h: 'Targets', fmt: pctInt },
+        recv && { k: 'rec_yds_share', h: 'Rec yds', fmt: pctInt },
         { k: 'rz_share', h: 'RZ opps', fmt: pctInt },
         { k: 'td_share', h: 'Rush + rec TDs', fmt: pctInt },
       ].filter(Boolean);
@@ -838,9 +1504,9 @@ resetMatchBtn.addEventListener('click', () => {
   if (!currentGame) return;
   const gs = S();
   const hadOverrides = gs.out.size || gs.in.size;
-  const keep = gs.playerData, dists = gs.teamDists;
-  gameState[currentGame.game_id] = newGameState();
-  Object.assign(S(), { playerData: keep, teamDists: dists });
+  const keep = gs.playerData, dists = gs.teamDists, ycache = gs.yardsCache;
+  gameState[currentGame.game_id] = newGameState(currentGame.game_id);
+  Object.assign(S(), { playerData: keep, teamDists: dists, yardsCache: ycache });
   syncLineUI();
   if (hadOverrides) loadPlayerData(currentGame.game_id);
   renderTeams();
@@ -848,10 +1514,10 @@ resetMatchBtn.addEventListener('click', () => {
 });
 resetAllBtn.addEventListener('click', () => {
   for (const gid of Object.keys(gameState)) {
-    const { playerData, teamDists, out, in: inn } = gameState[gid];
-    gameState[gid] = newGameState();
+    const { playerData, teamDists, yardsCache, out, in: inn, gameId } = gameState[gid];
+    gameState[gid] = newGameState(gameId);
     // keep loaded data unless overrides changed it
-    if (!out.size && !inn.size) Object.assign(gameState[gid], { playerData, teamDists });
+    if (!out.size && !inn.size) Object.assign(gameState[gid], { playerData, teamDists, yardsCache });
   }
   syncLineUI();
   if (currentGame) loadPlayerData(currentGame.game_id);
@@ -1223,15 +1889,19 @@ async function loadPlayerData(gid) {
   } catch { /* leave null */ }
   if (seq !== gs.loadSeq) return;
   gs.playerData = data;
-  // Drop legs that no longer apply: a player now ruled out, or a pass-TD / FG leg
-  // whose player is no longer the projected starting QB / kicker.
+  gs.yardsCache = new Map();
+  // Drop legs that no longer apply: a player now ruled out, a pass-TD / passing-
+  // yards / FG leg whose player is no longer the projected starting QB / kicker,
+  // or a yards leg when the yards model isn't available.
   for (const [k, p] of gs.picks) {
     if (p.playerId == null) continue;
     const pl = findPlayer(gs, p.side, p.playerId);
-    if (!pl || !pl.active || (p.kind === 'pass_td' && !pl.is_starting_qb) || (p.kind === 'fg' && !pl.is_kicker)) gs.picks.delete(k);
+    if (!pl || !pl.active || ((p.kind === 'pass_td' || p.kind === 'pass_yds') && !pl.is_starting_qb)
+        || (p.kind === 'fg' && !pl.is_kicker) || (YARDS_KINDS.has(p.kind) && !yardsReady(gs))) gs.picks.delete(k);
   }
   if (String(currentGame?.game_id) === String(gid)) renderTeams();
   recalculate();
+  warmYardsLadders(gid);
 }
 
 function updateOptionBadges() {
@@ -1262,6 +1932,7 @@ async function selectGame(gid) {
   renderCommunityBetslips(currentGame.game_id);
 
   const loadingId = currentGame.game_id;
+  loadLogs(loadingId);   // history lines fill in when it lands; prices don't wait for it
   const [bins] = await Promise.all([loadBinsForGame(loadingId), gs.playerData ? null : loadPlayerData(loadingId)]);
   if (bins.length && !gs.teamDists) {
     gs.teamDists = {
@@ -1272,6 +1943,7 @@ async function selectGame(gid) {
   if (currentGame?.game_id !== loadingId) return;
   renderTeams();
   recalculate();
+  warmYardsLadders(loadingId);
 }
 
 gameSelect.addEventListener('change', () => selectGame(gameSelect.value));

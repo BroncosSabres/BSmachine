@@ -70,7 +70,12 @@
 
       <!-- FLEX ROW: team lists left, lines + betslip right -->
       <div id="builder-section" class="hidden w-full flex flex-col md:flex-row gap-6 md:gap-8 justify-center items-start pb-24 md:pb-0">
-        <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8 flex-1 order-2 md:order-1"></div>
+        <div class="flex flex-col gap-3 flex-1 min-w-0 w-full md:w-auto order-2 md:order-1">
+          <!-- Market tabs: one market's rows at a time, for both teams -->
+          <div id="market-tabs" role="tablist" aria-label="Markets"
+               class="flex gap-1.5 overflow-x-auto pb-1" style="scrollbar-width:none;-webkit-overflow-scrolling:touch;"></div>
+          <div id="teams-container" class="flex flex-col md:flex-row gap-6 md:gap-8"></div>
+        </div>
 
         <div class="w-full md:w-72 shrink-0 order-1 md:order-2">
           <div id="sgm-extra-selectors" class="mb-4 flex flex-col gap-3">

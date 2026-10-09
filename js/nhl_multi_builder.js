@@ -26,6 +26,7 @@ const builderSection = $('builder-section');
 const builderMatchup = $('builder-matchup');
 const builderKickoff = $('builder-kickoff');
 const teamsContainer = $('teams-container');
+const marketTabs     = $('market-tabs');
 const resultDiv      = $('result');
 const resetMatchBtn  = $('reset-match-btn');
 const resetAllBtn    = $('reset-all-btn');
@@ -50,11 +51,20 @@ let bookieOdds     = null;
 // team scores in any bin (beyond that the model gives exactly 0); shots on goal
 // have an open-ended tail, so the stepper just stops at SOG_MAX.
 const SOG_MAX = 20;
-const KINDS = ['goal', 'assist', 'point', 'sog'];
 const SCORER_KINDS = new Set(['goal', 'point', 'sog']);
 const ASSISTER_KINDS = new Set(['assist', 'point']);
-const TOP_N = { F: 9, D: 4 };   // listed before "Show more" (all expected goalies always shown)
+const TOP_N = 13;   // skaters listed before "Show more" (all expected goalies always shown)
 const EXCLUDED = ['out', 'ir', 'ltir', 'suspended'];
+
+// Market tabs: the team cards show one market at a time, players ranked by its
+// 1+ price. Picks in the other tabs stay on the betslip.
+const MARKETS = [
+  { kind: 'goal',   tab: 'Goals',         head: 'Goals' },
+  { kind: 'assist', tab: 'Assists',       head: 'Assists' },
+  { kind: 'point',  tab: 'Points',        head: 'Points' },
+  { kind: 'sog',    tab: 'Shots on Goal', head: 'SOG' },
+];
+let market = 'goal';
 
 function newGameState() {
   return {
@@ -62,7 +72,7 @@ function newGameState() {
              homeTotalDir: null, homeTotalN: null, awayTotalDir: null, awayTotalN: null },
     picks: new Map(),          // key -> { side, kind, playerId, teamId, name, n }
     out: new Set(), in: new Set(),
-    showAll: { home: false, away: false },
+    showAll: {},               // `${market}:${side}` -> "Show more" expanded
     playerData: null,          // /api/nhl/game_player_data for this game's overrides
     teamDists: null,           // { home: [P(n player goals)], away: [...] } — from the bins
     loadSeq: 0,
@@ -419,28 +429,15 @@ function stepperHtml(key, val, max) {
     </div>`;
 }
 
-// One market (goals or assists) inside a player row: label, price, stepper.
-function marketCell(gs, side, kind, pl) {
-  const key = `${side}:${kind}:${pl.id}`;
-  const picked = gs.picks.get(key);
-  const val = picked ? picked.n : 0;
-  const n = Math.max(1, val);
-  const p = singleLegProb(gs, side, kind, pl, n);
-  const loading = binsCache[currentGame?.game_id] === undefined;
-  const noun = { goal: 'Goal', assist: 'Assist', point: 'Point', sog: 'SOG' }[kind];
-  const label = kind === 'sog' ? `${n}+ SOG` : `${n > 1 ? `${n}+ ` : ''}${noun}${n > 1 ? 's' : ''}`;
-  const price = p == null
-    ? (loading ? '<span class="bsm-skeleton h-3 w-12 block mt-0.5"></span>' : '<span class="text-gray-400">–</span>')
-    : `<span class="text-gray-200 font-semibold">${odds(p)}</span> <span class="text-gray-400">${pct(p)}</span>`;
-  return `
-    <div class="flex items-center justify-between gap-1 rounded-md px-1.5 py-1 min-w-0
-                ${val > 0 ? 'bg-green-500/10 ring-1 ring-green-500/40' : 'bg-gray-900/40'}">
-      <div class="leading-tight min-w-0">
-        <div class="text-[10px] uppercase tracking-wider text-gray-400">${label}</div>
-        <div class="text-xs whitespace-nowrap">${price}</div>
-      </div>
-      ${stepperHtml(key, val, maxLegN(gs, side, kind))}
-    </div>`;
+// Price column for the active market: the picked N+ (1+ when unpicked).
+function priceHtml(gs, side, kind, pl, val) {
+  const p = singleLegProb(gs, side, kind, pl, Math.max(1, val));
+  if (p == null) {
+    return binsCache[currentGame?.game_id] === undefined
+      ? '<span class="bsm-skeleton h-3 w-14 ml-auto block"></span>'
+      : '<div class="text-xs font-semibold text-gray-400">–</div>';
+  }
+  return `<div class="text-xs font-semibold text-gray-300">${pct(p)}</div><div class="text-xs text-gray-400">${odds(p)}</div>`;
 }
 
 function statusBadge(pl) {
@@ -469,8 +466,7 @@ const roleTitle = pl => {
 };
 
 // Last-5 form: one box per game played, newest first. Missing games (fewer than
-// 5 played) are dashed. Boxes stretch to fill a grid column (capped at 16px) so
-// G / A / S always fit on one line and line up from row to row.
+// 5 played) are dashed. Fixed width so the strips line up from row to row.
 function formStrip(counts = [], labels = [], unit = 'goal', tag = 'G') {
   const base = 'flex items-center justify-center h-4 rounded-sm text-[10px] font-semibold';
   const boxes = [];
@@ -480,14 +476,17 @@ function formStrip(counts = [], labels = [], unit = 'goal', tag = 'G') {
     const tip = `${labels?.[i] || 'Game'}: ${n} ${unit}${n === 1 ? '' : 's'}`;
     boxes.push(`<span class="${base} ${n > 0 ? 'bg-green-500/20 text-green-300' : 'bg-gray-700/50 text-gray-400'}" title="${esc(tip)}">${n}</span>`);
   }
-  return `<span class="flex items-center gap-[3px] min-w-0"><span class="w-2 shrink-0 text-center" title="${unit[0].toUpperCase() + unit.slice(1)}s in the last 5 games played, newest first">${tag}</span>
-    <span class="grid grid-cols-5 gap-px flex-1 max-w-[5.25rem]">${boxes.join('')}</span></span>`;
+  return `<span class="flex items-center gap-[3px] w-[5.75rem] shrink-0"><span class="w-2 shrink-0 text-center" title="${unit[0].toUpperCase() + unit.slice(1)}s in the last 5 games played, newest first">${tag}</span>
+    <span class="grid grid-cols-5 gap-px flex-1">${boxes.join('')}</span></span>`;
 }
 
-// Lead cell (TOI / start chance) sits in the meta grid's fixed first column
-const metaLead = html => `<span class="whitespace-nowrap overflow-hidden">${html}</span>`;
+// Fixed-width lead cell (TOI / start chance) so every row's strips start in the same place
+const metaLead = html => `<span class="w-[3.75rem] shrink-0 whitespace-nowrap overflow-hidden">${html}</span>`;
 
-function playerMeta(pl) {
+// Form strips relevant to each market tab
+const MARKET_STRIPS = { goal: ['G'], assist: ['A'], point: ['P'], sog: ['S'] };
+
+function playerMeta(pl, kind) {
   const s = pl.stats || {};
   let lead;
   if (pl.pos === 'G') {
@@ -498,10 +497,13 @@ function playerMeta(pl) {
       : 'Projected ice time';
     lead = `<span title="${esc(tip)}">TOI <span class="text-gray-300 font-semibold">${pl.active ? minFmt(pl.toi_proj) : '–'}</span></span>`;
   }
-  return metaLead(lead)
-    + formStrip(s.recent_goals, s.recent_games, 'goal', 'G')
-    + formStrip(s.recent_assists, s.recent_games, 'assist', 'A')
-    + (pl.pos !== 'G' ? formStrip(s.recent_sog, s.recent_games, 'shot', 'S') : '');
+  const strip = {
+    G: () => formStrip(s.recent_goals, s.recent_games, 'goal', 'G'),
+    A: () => formStrip(s.recent_assists, s.recent_games, 'assist', 'A'),
+    P: () => formStrip(s.recent_points, s.recent_games, 'point', 'P'),
+    S: () => (pl.pos !== 'G' ? formStrip(s.recent_sog, s.recent_games, 'shot', 'S') : ''),
+  };
+  return metaLead(lead) + MARKET_STRIPS[kind].map(t => strip[t]()).join('');
 }
 
 function availButton(pl, forcedStarter = false) {
@@ -519,26 +521,99 @@ function availButton(pl, forcedStarter = false) {
                class="text-[10px] text-blue-400 hover:text-blue-300">+ in</button>`;
 }
 
-const hasPick = (gs, side, pl) => KINDS.some(k => gs.picks.has(`${side}:${k}:${pl.id}`));
+// --- history under each row: per-game average over the last 10 games played,
+// the previous season and his career; with a pick, also how often he reached it. Values come as {window: [[value, games], ...]}.
+const logsCache = {};   // game_id -> /api/nhl/game_player_logs (undefined = loading, null = failed)
+const LOG_TAG = { goal: 'G', assist: 'A', point: 'P', sog: 'SOG' };
 
-function playerRow(gs, side, pl) {
-  const picked = hasPick(gs, side, pl);
+const histGames = h => h.reduce((s, [, n]) => s + n, 0);
+const histAvg = h => h.reduce((s, [v, n]) => s + v * n, 0) / histGames(h);
+const histHit = (h, line) => h.reduce((s, [v, n]) => s + (v >= line ? n : 0), 0) / histGames(h);
+const seasonName2 = y => `${String(y).slice(2)}-${String(y + 1).slice(2)}`;
+
+// Model's per-game expectation for a market if he plays — the yardstick the
+// history averages are coloured against: team player-goals × his share
+// (a point is a goal or an assist), or his projected shots on goal.
+function modelMean(gs, side, kind, pl) {
+  if (kind === 'sog') return pl.sog_mean ?? null;
+  const e = expectedGoals(gs, side);
+  return e == null ? null : e * legShare(kind, pl);
+}
+
+// Green / red: history above / below the model by more than a small neutral
+// band (HIST_BAND), compared at the shown precision.
+const HIST_BAND = { avg: 0.05, hit: 3 };   // averages / medians: ±5% of the model; hit rates: ±3 points
+function vsModel(shown, model, tol) {
+  if (model == null || Math.abs(shown - model) <= tol) return 'text-gray-200';
+  return shown > model ? 'text-green-400' : 'text-red-400';
+}
+
+// model: { avg, hit } — the model's per-game mean and its chance for the picked line
+function historyHtml(kind, id, line, model = {}) {
+  const logs = logsCache[currentGame?.game_id];
+  if (logs === undefined) return '<span class="bsm-skeleton h-3 w-full block"></span>';
+  const hist = logs?.players?.[id]?.[kind];
+  if (!hist) return '';
+  const wins = [
+    ['l10', g => `L${g}`, 'Last games played (up to 10)'],
+    ['prev', () => seasonName2(logs.prev_season), `${seasonName2(logs.prev_season)} season, playoffs included`],
+    ['car', () => 'Career', 'Every NHL game of his career, playoffs included'],
+  ];
+  // value(h) -> number at display precision; text(v) -> label
+  const cell = (w, value, text, modelV, modelText, tol) => {
+    const h = hist[w[0]] || [], g = histGames(h);
+    const v = g ? value(h) : null;
+    const body = g ? `<span class="${vsModel(v, modelV, tol)} font-semibold">${text(v)}</span>` : '–';
+    const tip = `${w[2]}: ${g} game${g === 1 ? '' : 's'}${modelV != null ? ` · model ${modelText}` : ''}`;
+    return `<span class="whitespace-nowrap truncate" title="${esc(tip)}">${w[1](Math.min(g, 10))} ${body}</span>`;
+  };
+  const round2 = x => Math.round(x * 100) / 100;
+  const mAvg = model.avg != null ? round2(model.avg) : null;
+  const mHit = model.hit != null ? Math.round(model.hit * 100) : null;
+  return `
+    <div class="grid grid-cols-[4.25rem_repeat(3,minmax(0,1fr))] gap-x-1.5 gap-y-1 text-[11px] text-gray-400 leading-none">
+      <span>Avg ${LOG_TAG[kind]}</span>${wins.map(w => cell(w, h => round2(histAvg(h)), v => v.toFixed(2),
+                                                   mAvg, mAvg?.toFixed(2), Math.abs(mAvg) * HIST_BAND.avg)).join('')}
+      ${line > 0 ? `<span class="text-green-300/90 whitespace-nowrap">${line}+ ${LOG_TAG[kind]} hit</span>${wins.map(w => cell(w,
+        h => Math.round(histHit(h, line) * 100), v => `${v}%`, mHit, `${mHit}%`, HIST_BAND.hit)).join('')}` : ''}
+    </div>`;
+}
+
+async function loadLogs(gid) {
+  if (gid in logsCache) return;
+  logsCache[gid] = undefined;
+  let data = null;
+  try {
+    const res = await fetch(apiUrl('nhl', `game_player_logs/${gid}`));
+    data = res.ok ? await res.json() : null;
+  } catch { /* leave null */ }
+  logsCache[gid] = data;
+  if (String(currentGame?.game_id) === String(gid)) renderTeams();
+}
+
+// One player in the active market: name / price / stepper, then a full-width
+// stats line (TOI or start chance, the market's last-5 form, availability).
+function playerRow(gs, side, pl, kind) {
+  const key = `${side}:${kind}:${pl.id}`;
+  const val = gs.picks.get(key)?.n || 0;
   const badges = statusBadge(pl)
     + (pl.overridden ? '<span class="shrink-0 text-[10px] text-blue-300">manual</span>' : '')
     + (pl.pos !== 'G' && !pl.expected
       ? `<span class="shrink-0 text-[10px] text-gray-400" title="Dresses in about ${Math.round((pl.p_play ?? 0) * 100)}% of games on recent form — price assumes he plays">unlikely</span>` : '');
   return `
-    <div class="group py-2 px-1 player-row cursor-pointer hover:bg-gray-700/25${picked ? ' bg-gray-700/40' : ''}" data-detail="${side}:${pl.id}">
-      <div class="flex items-center gap-1 min-w-0">
+    <div class="group grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-1.5 py-2 px-1 player-row cursor-pointer hover:bg-gray-700/25${val > 0 ? ' bg-gray-700/40' : ''}"
+         data-detail="${side}:${pl.id}">
+      <div class="min-w-0 flex items-center gap-1">
         <span class="text-sm truncate group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2">${esc(pl.name)}</span>
         <span class="text-xs text-gray-400 min-w-0 truncate shrink-[3]" title="${esc(roleTitle(pl))}">(${roleLabel(pl)})</span>${badges}
-        <span class="ml-auto shrink-0 pl-1">${availButton(pl, gs.in.has(pl.id))}</span>
       </div>
-      <div class="grid grid-cols-2 gap-1.5 mt-1.5">
-        ${marketCell(gs, side, 'goal', pl)}${marketCell(gs, side, 'assist', pl)}
-        ${marketCell(gs, side, 'point', pl)}${pl.pos !== 'G' ? marketCell(gs, side, 'sog', pl) : ''}
+      <div class="w-16 text-right">${priceHtml(gs, side, kind, pl, val)}</div>
+      ${stepperHtml(key, val, maxLegN(gs, side, kind))}
+      <div class="col-span-3 flex items-center gap-2 text-[11px] text-gray-400 leading-none">
+        ${playerMeta(pl, kind)}<span class="ml-auto shrink-0 pl-1">${availButton(pl, gs.in.has(pl.id))}</span>
       </div>
-      <div class="grid grid-cols-[3.75rem_repeat(3,minmax(0,1fr))] items-center gap-x-1.5 mt-1.5 text-[11px] text-gray-400 leading-none">${playerMeta(pl)}</div>
+      <div class="col-span-3">${historyHtml(kind, pl.id, val, {
+        avg: modelMean(gs, side, kind, pl), hit: val > 0 ? singleLegProb(gs, side, kind, pl, val) : null })}</div>
     </div>`;
 }
 
@@ -560,10 +635,19 @@ function expectedGoals(gs, side) {
   return null;
 }
 
-const sectionLabel = (title, right = true) => `
+const sectionLabel = (title, head) => `
   <div class="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mt-3 mb-0.5 px-1">
-    <span class="flex-1">${title}</span>${right ? '<span class="text-[10px] normal-case tracking-normal text-gray-400">tap a player for stats</span>' : ''}
+    <span class="flex-1">${title}</span>
+    <span class="w-16 text-right">Chance</span>
+    <span class="w-[4.5rem] text-center">${head}</span>
   </div>`;
+
+const MARKET_NOTE = {
+  goal: 'Team goals are split by projected ice time × goal rates per 60.',
+  assist: 'Assists on team goals are split by projected ice time × assist rates per 60.',
+  point: 'A point is a goal or an assist on a team goal.',
+  sog: 'Shots on goal = his goals plus saved shots around expected goals ÷ shooting %.',
+};
 
 function renderTeamCard(game, side) {
   const gs = S(game.game_id);
@@ -578,41 +662,50 @@ function renderTeamCard(game, side) {
   } else if (!team?.players?.length) {
     body = '<p class="py-4 text-sm text-gray-400 text-center">No player data for this team yet.</p>';
   } else {
-    const isPicked = pl => hasPick(gs, side, pl);
-    const shown = [], hidden = [];
-    for (const grp of ['F', 'D']) {
-      const list = team.players.filter(pl => pl.group === grp && pl.active)
-        .sort((a, b) => (b.goal_share + 0.5 * b.assist_share) - (a.goal_share + 0.5 * a.assist_share));
-      const top = list.filter(pl => pl.expected).slice(0, TOP_N[grp]);
-      shown.push(...list.filter(pl => top.includes(pl) || isPicked(pl)));
-      hidden.push(...list.filter(pl => !top.includes(pl) && !isPicked(pl)));
+    // Skaters ranked by the active market's 1+ chance (shares break ties before
+    // the bins load). The default list is drawn from players expected to dress;
+    // anyone picked in this market always stays visible.
+    const kind = market;
+    const mk = MARKETS.find(m => m.kind === kind);
+    const isPicked = pl => gs.picks.has(`${side}:${kind}:${pl.id}`);
+    const chance = new Map(team.players.map(pl => [pl, singleLegProb(gs, side, kind, pl, 1) ?? -1]));
+    const byChance = (a, b) => (chance.get(b) - chance.get(a))
+      || ((b.goal_share + 0.5 * b.assist_share) - (a.goal_share + 0.5 * a.assist_share));
+    const skaters = team.players.filter(pl => pl.group !== 'G' && pl.active).sort(byChance);
+    const top = skaters.filter(pl => pl.expected).slice(0, TOP_N);
+    const shown = skaters.filter(pl => top.includes(pl) || isPicked(pl));
+    const hidden = skaters.filter(pl => !shown.includes(pl));
+    // Goalies don't take shots on goal; elsewhere the expected starters are listed
+    // (with the start toggle) under the skaters.
+    let shownG = [];
+    if (kind !== 'sog') {
+      const goalies = team.players.filter(pl => pl.group === 'G' && pl.active)
+        .sort((a, b) => (b.start_prob ?? 0) - (a.start_prob ?? 0));
+      shownG = goalies.filter(pl => pl.expected || isPicked(pl));
+      hidden.push(...goalies.filter(pl => !shownG.includes(pl)));
     }
-    const goalies = team.players.filter(pl => pl.group === 'G' && pl.active)
-      .sort((a, b) => (b.start_prob ?? 0) - (a.start_prob ?? 0));
-    const shownG = goalies.filter(pl => pl.expected || isPicked(pl));
-    hidden.push(...goalies.filter(pl => !shownG.includes(pl)));
     const ruledOut = team.players.filter(pl => !pl.active);
 
-    const rows = list => `<div class="flex flex-col divide-y divide-gray-700/50">${list.map(pl => playerRow(gs, side, pl)).join('')}</div>`;
-    const showAll = gs.showAll[side];
+    const rows = list => `<div class="flex flex-col divide-y divide-gray-700/50">${list.map(pl => playerRow(gs, side, pl, kind)).join('')}</div>`;
+    const showKey = `${kind}:${side}`;
+    const showAll = gs.showAll[showKey];
     const moreCount = hidden.length + ruledOut.length;
     const ast = team.assist_dist || [];
     body = `
-      ${sectionLabel('Forwards')}${rows(shown.filter(pl => pl.group === 'F'))}
-      ${sectionLabel('Defence', false)}${rows(shown.filter(pl => pl.group === 'D'))}
-      ${shownG.length ? `${sectionLabel('Goalies', false)}${rows(shownG)}` : ''}
+      ${sectionLabel('Skaters', mk.head)}${rows(shown)}
+      ${shownG.length ? `${sectionLabel('Goalies', mk.head)}${rows(shownG)}` : ''}
       ${moreCount ? `
-        <button type="button" data-showall="${side}"
+        <button type="button" data-showall="${showKey}"
                 class="w-full mt-1 px-2 py-1.5 text-xs text-gray-400 hover:text-gray-300 text-left">
-          ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (depth players, unlikely to dress or ruled out)
+          ${showAll ? '▾ Hide' : '▸ Show'} ${moreCount} more (lower chance, unlikely to dress or ruled out)
         </button>
         ${showAll ? `<div class="flex flex-col divide-y divide-gray-700/50">
-          ${hidden.map(pl => playerRow(gs, side, pl)).join('')}${ruledOut.map(pl => ruledOutRow(side, pl)).join('')}</div>` : ''}` : ''}
+          ${hidden.map(pl => playerRow(gs, side, pl, kind)).join('')}${ruledOut.map(pl => ruledOutRow(side, pl)).join('')}</div>` : ''}` : ''}
       <p class="mt-3 text-[11px] text-gray-400 leading-snug">
         Prices assume the player dresses (goalies: starts) — bets on players who don't are void.
-        Team goals are split by projected ice time × goal / assist rates per 60; a point is a goal or an assist.
-        Shots on goal = his goals plus saved shots around expected goals ÷ shooting %.
-        ${ast.length ? `Assists per goal: ${pctInt(ast[2])} two, ${pctInt(ast[1])} one, ${pctInt(ast[0])} none.` : ''}
+        ${MARKET_NOTE[kind]}
+        ${kind === 'assist' || kind === 'point' ? (ast.length ? `Assists per goal: ${pctInt(ast[2])} two, ${pctInt(ast[1])} one, ${pctInt(ast[0])} none.` : '') : ''}
+        Tap a player for stats.
         ${team.played_yesterday ? ' <span class="text-amber-400/80">Played last night (back-to-back).</span>' : ''}
       </p>`;
   }
@@ -634,8 +727,32 @@ function renderTeamCard(game, side) {
   return card;
 }
 
+// Tab bar; each tab counts this game's picks in its market, since those rows
+// are hidden while another tab is open.
+function renderTabs() {
+  const picks = [...S().picks.values()];
+  marketTabs.innerHTML = MARKETS.map(m => {
+    const on = m.kind === market;
+    const n = picks.filter(p => p.kind === m.kind).length;
+    return `
+      <button type="button" role="tab" aria-selected="${on}" data-market="${m.kind}"
+              class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-semibold whitespace-nowrap transition-colors
+                     ${on ? 'bg-blue-500 border-blue-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-400 hover:border-blue-400 hover:text-white'}">
+        ${m.tab}${n ? `<span class="min-w-[1.25rem] px-1 rounded-full text-[11px] leading-5 text-center ${on ? 'bg-white/25 text-white' : 'bg-green-500/20 text-green-300'}">${n}</span>` : ''}
+      </button>`;
+  }).join('');
+}
+
+marketTabs.addEventListener('click', e => {
+  const tab = e.target.closest('[data-market]');
+  if (!tab || tab.dataset.market === market) return;
+  market = tab.dataset.market;
+  renderTeams();
+});
+
 function renderTeams() {
   if (!currentGame) return;
+  renderTabs();
   teamsContainer.innerHTML = '';
   teamsContainer.appendChild(renderTeamCard(currentGame, 'home'));
   teamsContainer.appendChild(renderTeamCard(currentGame, 'away'));
@@ -674,7 +791,7 @@ teamsContainer.addEventListener('click', e => {
   }
   const showAll = e.target.closest('[data-showall]');
   if (showAll) {
-    gs.showAll[showAll.dataset.showall] = !gs.showAll[showAll.dataset.showall];
+    gs.showAll[showAll.dataset.showall] = !gs.showAll[showAll.dataset.showall];   // key: `${market}:${side}`
     renderTeams();
     return;
   }
@@ -1224,6 +1341,7 @@ async function selectGame(gid) {
   renderTeams();
 
   const loadingId = currentGame.game_id;
+  loadLogs(loadingId);   // history lines fill in when it lands; prices don't wait for it
   const [bins] = await Promise.all([loadBinsForGame(loadingId), gs.playerData ? null : loadPlayerData(loadingId)]);
   if (bins.length && !gs.teamDists) gs.teamDists = playerGoalDists(bins);
   if (currentGame?.game_id !== loadingId) return;
