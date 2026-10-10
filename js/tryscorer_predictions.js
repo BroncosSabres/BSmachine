@@ -2823,6 +2823,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // --- BETSLIP SAVE ---
 
+  // Betslip labels and usernames are user-supplied — escape before innerHTML.
+  const _esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
   function _showBetslipToast(msg, linkHref, linkText) {
     let container = document.getElementById('_bs-toast-container');
     if (!container) {
@@ -2834,8 +2837,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const toast = document.createElement('div');
     toast.style.cssText = 'background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.5);pointer-events:auto;white-space:nowrap;opacity:1;transition:opacity 0.35s';
     toast.innerHTML = linkHref
-      ? `${msg} <a href="${linkHref}" style="color:#60a5fa;text-decoration:underline">${linkText || 'here'}</a>`
-      : msg;
+      ? `${_esc(msg)} <a href="${_esc(linkHref)}" style="color:#60a5fa;text-decoration:underline">${_esc(linkText || 'here')}</a>`
+      : _esc(msg);
     container.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 360); }, 3000);
   }
@@ -3078,13 +3081,15 @@ document.addEventListener("DOMContentLoaded", function () {
     const picksHtml = visibleItems.map(item =>
       `<span class="flex items-center gap-1 min-w-0">
          <span class="w-1.5 h-1.5 rounded-full ${item.dot} shrink-0"></span>
-         <span class="truncate">${item.text}</span>
+         <span class="truncate">${_esc(item.text)}</span>
        </span>`
     ).join('');
     const extraHtml = extraCount > 0 ? `<span class="text-gray-400 shrink-0">+${extraCount}</span>` : '';
 
-    const oddsText  = b.combined_odds ? `$${b.combined_odds}` : '–';
-    const probText  = b.calculated_prob ? `${(b.calculated_prob * 100).toFixed(1)}%` : '';
+    const id        = _esc(b.id);
+    const calcProb  = Number(b.calculated_prob) || 0;
+    const oddsText  = b.combined_odds ? `$${_esc(b.combined_odds)}` : '–';
+    const probText  = calcProb ? `${(calcProb * 100).toFixed(1)}%` : '';
 
     // Compact score indicator: just an icon, no background pill
     const scoreIcon = b.is_scored
@@ -3092,7 +3097,7 @@ document.addEventListener("DOMContentLoaded", function () {
                : '<span class="text-red-400 text-xs font-bold" title="Lost">✗</span>')
       : '<span class="text-gray-400 text-xs" title="Pending">·</span>';
 
-    const netVotes  = b.net_votes || 0;
+    const netVotes  = Number(b.net_votes) || 0;
     const voteColor = netVotes > 0 ? '#4ade80' : netVotes < 0 ? '#f87171' : '#6b7280';
 
     return `
@@ -3100,15 +3105,15 @@ document.addEventListener("DOMContentLoaded", function () {
            style="width:172px;scroll-snap-align:start;">
         <!-- Row 1: username + result + votes -->
         <div class="flex items-center justify-between gap-1">
-          <span class="text-xs font-semibold text-gray-200 truncate min-w-0">${b.username || 'Unknown'}</span>
+          <span class="text-xs font-semibold text-gray-200 truncate min-w-0">${_esc(b.username || 'Unknown')}</span>
           <div class="flex items-center gap-1.5 shrink-0">
             ${scoreIcon}
-            <button data-vote-betslip="${b.id}" data-v="1"
+            <button data-vote-betslip="${id}" data-v="1"
                     class="text-gray-400 hover:text-green-400 transition-colors font-bold leading-none"
                     style="font-size:10px;">▲</button>
             <span style="font-size:10px;font-weight:700;color:${voteColor};min-width:1rem;text-align:center;"
-                  data-community-votes="${b.id}">${netVotes}</span>
-            <button data-vote-betslip="${b.id}" data-v="-1"
+                  data-community-votes="${id}">${netVotes}</span>
+            <button data-vote-betslip="${id}" data-v="-1"
                     class="text-gray-400 hover:text-red-400 transition-colors font-bold leading-none"
                     style="font-size:10px;">▼</button>
           </div>

@@ -2,6 +2,10 @@
 document.addEventListener('DOMContentLoaded', function () {
   const API_BASE = 'https://bsmachine-backend.onrender.com/api';
 
+  // Betslip labels, match labels and usernames are user-supplied — escape before innerHTML.
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+
   // Mirrors getCompetition() in js/competition.js (classic script, can't import).
   const _compParams = new URLSearchParams(window.location.search);
   // NFL betslips live on /nfl/pages/betslips.html (rounds are weeks there).
@@ -203,22 +207,25 @@ document.addEventListener('DOMContentLoaded', function () {
     const picks = (b.picks || []).map(p =>
       `<span class="inline-flex items-center gap-1">
         <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 inline-block"></span>
-        ${p.label || `${p.name}${p.n > 1 ? ` <span class="text-gray-400">×${p.n}</span>` : ''}`}
+        ${p.label ? esc(p.label) : `${esc(p.name)}${num(p.n) > 1 ? ` <span class="text-gray-400">×${num(p.n)}</span>` : ''}`}
       </span>`
     ).join('<span class="text-gray-600 mx-1">·</span>');
 
     const legs = (b.line_legs || []).map(l =>
       `<span class="inline-flex items-center gap-1">
         <span class="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 inline-block"></span>
-        ${l.label || ''}
+        ${esc(l.label || '')}
       </span>`
     ).join('<span class="text-gray-600 mx-1">·</span>');
 
-    const oddsText = b.combined_odds ? `$${b.combined_odds}` : '–';
-    const probText = b.calculated_prob ? `${(b.calculated_prob * 100).toFixed(1)}%` : '';
-    const evText   = (b.bookie_odds && b.calculated_prob)
+    const id         = esc(b.id);
+    const bookieOdds = num(b.bookie_odds);
+    const calcProb   = num(b.calculated_prob);
+    const oddsText = b.combined_odds ? `$${esc(b.combined_odds)}` : '–';
+    const probText = calcProb ? `${(calcProb * 100).toFixed(1)}%` : '';
+    const evText   = (bookieOdds && calcProb)
       ? (() => {
-          const ev  = (b.bookie_odds * b.calculated_prob - 1) * 100;
+          const ev  = (bookieOdds * calcProb - 1) * 100;
           const col = ev >= 0 ? 'text-green-400' : 'text-red-400';
           return `<span class="${col} text-xs font-semibold">${ev >= 0 ? '+' : ''}${ev.toFixed(1)}% EV</span>`;
         })()
@@ -232,33 +239,33 @@ document.addEventListener('DOMContentLoaded', function () {
           : '<span class="text-xs font-bold text-red-400 bg-red-400/10 border border-red-400/30 rounded px-2 py-0.5">Lost ✗</span>')
       : '<span class="text-xs text-gray-500 bg-gray-700/50 border border-gray-600/40 rounded px-2 py-0.5">Pending</span>';
 
-    const netVotes  = b.net_votes || 0;
+    const netVotes  = num(b.net_votes);
     const voteColor = netVotes > 0 ? 'text-green-400' : netVotes < 0 ? 'text-red-400' : 'text-gray-500';
 
-    const matchLabel = b.match_label || '';
-    const roundLabel = b.round_number ? `Rd ${b.round_number}` : '';
+    const matchLabel = esc(b.match_label || '');
+    const roundLabel = b.round_number ? `Rd ${num(b.round_number)}` : '';
 
     const byLine = isMine
       ? `<span class="text-xs text-gray-500">${matchLabel}${matchLabel && roundLabel ? ' · ' : ''}${roundLabel}</span>`
       : `<div class="flex items-center gap-2 flex-wrap">
-           <span class="text-xs font-semibold text-gray-300">${b.username || 'Unknown'}</span>
+           <span class="text-xs font-semibold text-gray-300">${esc(b.username || 'Unknown')}</span>
            <span class="text-xs text-gray-500">${matchLabel}${matchLabel && roundLabel ? ' · ' : ''}${roundLabel}</span>
          </div>`;
 
     const ownerControls = isMine ? `
       <div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-700/40">
-        <button data-toggle-public="${b.id}" data-is-public="${b.is_public}"
+        <button data-toggle-public="${id}" data-is-public="${!!b.is_public}"
                 class="text-xs px-3 py-1 rounded border ${b.is_public ? 'border-blue-500/40 text-blue-400' : 'border-gray-600 text-gray-500'} hover:opacity-80 transition-colors font-semibold">
           ${b.is_public ? 'Public' : 'Private'}
         </button>
-        <button data-delete-betslip="${b.id}"
+        <button data-delete-betslip="${id}"
                 class="text-xs px-3 py-1 rounded border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors font-semibold">
           Delete
         </button>
       </div>` : '';
 
     return `
-      <div class="card py-3 px-4" data-betslip-id="${b.id}">
+      <div class="card py-3 px-4" data-betslip-id="${id}">
         <div class="flex items-start justify-between gap-2 mb-2">
           <div class="flex flex-col gap-0.5 min-w-0 flex-1">
             ${byLine}
@@ -267,10 +274,10 @@ document.addEventListener('DOMContentLoaded', function () {
             ${scoreTag}
             ${!isMine ? `
             <div class="flex items-center gap-1">
-              <button data-vote-betslip="${b.id}" data-v="1"
+              <button data-vote-betslip="${id}" data-v="1"
                       class="text-xs text-gray-500 hover:text-green-400 transition-colors font-bold px-1">▲</button>
-              <span class="text-xs font-bold ${voteColor} min-w-[1.5rem] text-center" data-net-votes="${b.id}">${netVotes}</span>
-              <button data-vote-betslip="${b.id}" data-v="-1"
+              <span class="text-xs font-bold ${voteColor} min-w-[1.5rem] text-center" data-net-votes="${id}">${netVotes}</span>
+              <button data-vote-betslip="${id}" data-v="-1"
                       class="text-xs text-gray-500 hover:text-red-400 transition-colors font-bold px-1">▼</button>
             </div>` : ''}
           </div>
@@ -287,7 +294,7 @@ document.addEventListener('DOMContentLoaded', function () {
               <span class="text-xl font-extrabold text-amber-400">${oddsText}</span>
               ${probText ? `<span class="text-xs text-gray-500 ml-1">${probText}</span>` : ''}
             </div>
-            ${b.bookie_odds ? `<div class="text-xs text-gray-400">Bookie <span class="font-bold text-white">$${b.bookie_odds}</span> ${evText}</div>` : ''}
+            ${bookieOdds ? `<div class="text-xs text-gray-400">Bookie <span class="font-bold text-white">$${bookieOdds}</span> ${evText}</div>` : ''}
           </div>
           <a href="/nrl/pages/tryscorer_predictions.html${compQuery}" class="text-xs text-blue-400 hover:underline">Build your own →</a>
         </div>

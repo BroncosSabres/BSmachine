@@ -128,6 +128,12 @@
     <script type="module">
       import { supabase, getSession } from '../js/supabase-client.js'
 
+      // Only allow same-origin redirects (prevent open redirect attacks)
+      function safeNext(fallback = '/nrl/pages/tipping.html') {
+        const next = new URLSearchParams(window.location.search).get('next') || ''
+        return (next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')) ? next : fallback
+      }
+
       // Must be logged in to reach this page
       const session = await getSession()
       if (!session) {
@@ -141,8 +147,7 @@
           .maybeSingle()
 
         if (existing?.onboarding_complete) {
-          const params = new URLSearchParams(window.location.search)
-          window.location.href = params.get('next') || '/nrl/pages/tipping.html'
+          window.location.href = safeNext()
         }
       }
 
@@ -212,8 +217,7 @@
           btn.disabled    = false
           btn.textContent = "Let's Go"
         } else {
-          const params = new URLSearchParams(window.location.search)
-          window.location.href = params.get('next') || '/nrl/pages/tipping.html'
+          window.location.href = safeNext()
         }
       })
 

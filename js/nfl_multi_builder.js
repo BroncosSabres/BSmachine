@@ -1677,7 +1677,7 @@ function showToast(msg, linkHref, linkText) {
   }
   const t = document.createElement('div');
   t.style.cssText = 'background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:10px 16px;border-radius:10px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.5);pointer-events:auto;white-space:nowrap;opacity:1;transition:opacity 0.35s';
-  t.innerHTML = linkHref ? `${msg} <a href="${linkHref}" style="color:#60a5fa;text-decoration:underline">${linkText || 'here'}</a>` : msg;
+  t.innerHTML = linkHref ? `${esc(msg)} <a href="${esc(linkHref)}" style="color:#60a5fa;text-decoration:underline">${esc(linkText || 'here')}</a>` : esc(msg);
   c.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 360); }, 3000);
 }

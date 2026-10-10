@@ -1,5 +1,5 @@
 // supabase-client.js — shared Supabase client for all tipping pages
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm'
 import { initAchievementToasts } from './achievements.js'
 
 const SUPABASE_URL     = 'https://xjqpyyhqzatzlmlojcxv.supabase.co'
@@ -78,7 +78,8 @@ export async function updateAuthNav() {
 
   if (session) {
     const profile = await getProfile(session.user.id)
-    const username = profile?.username || session.user.email?.split('@')[0] || 'User'
+    const username = String(profile?.username || session.user.email?.split('@')[0] || 'User')
+      .replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
     navEl.innerHTML = `
       <div class="flex items-center gap-2">
         <a href="/nrl/pages/tipping.html"
