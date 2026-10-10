@@ -55,6 +55,7 @@ export const SPORTS = {
       { label: 'Multi Builder',  href: 'tryscorer_predictions.html' },
       { label: 'Simulator',      href: 'simulator.html' },
       { label: 'Player Projections', href: 'player_projections.html' },
+      { label: 'Fantasy',        href: 'fantasy.html' },
       { label: 'Tipping',        href: 'tipping.html',               disabled: true },
       { label: 'Leaderboard',    href: 'leaderboard.html',           disabled: true },
       { label: 'Tracker',        href: 'tracker.html',               disabled: true },
