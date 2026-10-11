@@ -1,6 +1,7 @@
 // supabase-client.js — shared Supabase client for all tipping pages
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm'
 import { initAchievementToasts } from './achievements.js'
+import { BACKEND } from './api-config.js'
 
 const SUPABASE_URL     = 'https://xjqpyyhqzatzlmlojcxv.supabase.co'
 const SUPABASE_ANON_KEY = 'sb_publishable_5HgdhAE4ePEAF103sINpqQ_qL3a2E9W'
@@ -69,6 +70,45 @@ function waitForAuthNav() {
   })
 }
 
+// Best Bets is restricted to accounts that have been granted access, and its
+// link only shows for those. Asked once per browser session (the page itself
+// is enforced by the backend, so this only decides whether to show the link).
+const bestBetsKey = userId => `bsm_best_bets_${userId}`
+
+async function hasBestBetsAccess(session) {
+  const key = bestBetsKey(session.user.id)
+  try {
+    const cached = sessionStorage.getItem(key)
+    if (cached !== null) return cached === '1'
+  } catch { /* storage unavailable */ }
+  try {
+    const res = await fetch(`${BACKEND}/best_bets/access`, {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    })
+    if (!res.ok) return false
+    const access = (await res.json()).access === true
+    try { sessionStorage.setItem(key, access ? '1' : '0') } catch { /* storage unavailable */ }
+    return access
+  } catch {
+    return false
+  }
+}
+
+async function addBestBetsLink(navEl, session) {
+  if (!await hasBestBetsAccess(session)) return
+  const href = '/pages/best_bets.html'
+  const active = window.location.pathname === href ? ' is-active' : ''
+  if (!navEl.querySelector('#best-bets-link')) {
+    navEl.firstElementChild?.insertAdjacentHTML('afterbegin',
+      `<a id="best-bets-link" href="${href}" class="site-nav-link hidden md:inline-block${active}">Best Bets</a>`)
+  }
+  const mobileBtn = document.getElementById('mobile-my-teams-btn')
+  if (mobileBtn && !document.getElementById('mobile-best-bets-link')) {
+    mobileBtn.insertAdjacentHTML('afterend',
+      `<a id="mobile-best-bets-link" href="${href}" class="mobile-nav-link${active}">Best Bets</a>`)
+  }
+}
+
 // Populates the #auth-nav element in the header with sign-in or user info
 export async function updateAuthNav() {
   const navEl = await waitForAuthNav()
@@ -106,7 +146,9 @@ export async function updateAuthNav() {
 
     // Fire achievement toasts for newly earned badges (non-blocking)
     initAchievementToasts(session.user.id)
+    addBestBetsLink(navEl, session)   // non-blocking
     navEl.querySelector('#sign-out-btn').addEventListener('click', async () => {
+      try { sessionStorage.removeItem(bestBetsKey(session.user.id)) } catch { /* storage unavailable */ }
       await supabase.auth.signOut()
       window.location.href = '/index.html'
     })
