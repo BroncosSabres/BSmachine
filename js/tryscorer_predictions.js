@@ -681,6 +681,7 @@ document.addEventListener("DOMContentLoaded", function () {
       setControlsEnabled(false);
       recalculateAllOdds();
       renderCommunityBetslips(null);
+      announceMatch(null);
       return;
     }
     loadMatch(matchId);
@@ -730,6 +731,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function loadMatch(matchId) {
     currentMatchId = matchId;
+    announceMatch(matchId);
     currentBlendedDists = null;
     updateBlendInfo(matchId);
 
@@ -768,6 +770,76 @@ document.addEventListener("DOMContentLoaded", function () {
         renderCommunityBetslips(matchId);
       });
   }
+
+  // --- BEST BETS PANEL (match-best-bets.js) ---
+  // The panel is a module and this is a classic script, so they talk through
+  // the window: this announces the selected match, and offers the match's best
+  // bets (/api/best_bets rows) as legs.
+  function announceMatch(matchId) {
+    window.bsmSelectedMatch = { sport: competition, gameId: matchId || null };
+    window.dispatchEvent(new CustomEvent('bsm:match-selected', { detail: window.bsmSelectedMatch }));
+  }
+
+  // The leg a best bet becomes here: a tryscorer count or a margin / total
+  // line. null when there is no such leg: whole and quarter lines (the
+  // dropdowns are half-points), a line outside a dropdown, or a player who
+  // isn't in this match's team lists.
+  function bestBetLeg(r) {
+    const matchId = currentMatchId, data = teamListCache[matchId];
+    if (!matchId || !data || String(r.game_id) !== String(matchId)) return null;
+    const halfPoint = r.line != null && Math.abs(r.line * 2) % 2 === 1;
+    if (r.market_kind === 'anytime_scorer' || r.market_kind === 'multi_scorer') {
+      const side = ['home', 'away'].find(sd => (data[`${sd}_players`] || []).some(p => String(p.id) === String(r.player_id)));
+      const n = r.line || 1;
+      return side && n <= 5 ? { side, playerId: r.player_id, n } : null;
+    }
+    if (r.market_kind === 'match_odds' && !r.three_way && (r.side === 'home' || r.side === 'away')) return { team: r.side, L: -0.5 };
+    if (r.market_kind === 'handicap' && halfPoint && Math.abs(r.line) <= 36.5 && (r.side === 'home' || r.side === 'away')) return { team: r.side, L: r.line };
+    if (r.market_kind === 'total' && halfPoint && r.line > 0 && r.line + 0.5 <= 80 && (r.side === 'over' || r.side === 'under')) return { dir: r.side, N: r.line + 0.5 };
+    return null;
+  }
+
+  function hasBestBetLeg(r) {
+    const leg = bestBetLeg(r), matchId = currentMatchId;
+    if (!leg) return false;
+    if (leg.playerId != null) return (allPlayerInputs[matchId]?.[leg.side]?.[leg.playerId] || 0) === leg.n;
+    if (leg.team) return matchLineTeam1[matchId] === leg.team && matchLineL1[matchId] === leg.L && matchLineL2[matchId] == null;
+    return matchTotalDir[matchId] === leg.dir && matchTotalN[matchId] === leg.N && matchTotalCapN[matchId] == null;
+  }
+
+  window.bsmBuilder = {
+    canAdd: r => !!bestBetLeg(r),
+    has: hasBestBetLeg,
+    // Adds the leg, or takes it off if it is already on the betslip
+    toggle(r) {
+      const leg = bestBetLeg(r), matchId = currentMatchId;
+      if (!leg) return;
+      const on = hasBestBetLeg(r);
+      if (leg.playerId != null) {
+        const val = on ? 0 : leg.n;
+        if (!allPlayerInputs[matchId]) allPlayerInputs[matchId] = { home: {}, away: {} };
+        allPlayerInputs[matchId][leg.side][leg.playerId] = val;
+        const row = teamsContainer.querySelector(`.player-row[data-side="${leg.side}"][data-id="${leg.playerId}"]`);
+        if (row) {
+          row.classList.toggle('bg-gray-700/40', val > 0);
+          const countEl = row.querySelector(`#${leg.side}-${leg.playerId}`);
+          if (countEl) countEl.textContent = val;
+          setButtonStates(row, leg.side, leg.playerId, val);
+        }
+      } else if (leg.team) {
+        matchLineTeam1[matchId] = on ? null : leg.team;
+        matchLineL1[matchId]    = on ? null : leg.L;
+        matchLineL2[matchId]    = null;
+      } else {
+        matchTotalDir[matchId]  = on ? null : leg.dir;
+        matchTotalN[matchId]    = on ? null : leg.N;
+        matchTotalCapN[matchId] = null;
+      }
+      syncLineUI(matchId);
+      updateOptionBadges();
+      recalculateAllOdds();
+    },
+  };
 
   // --- LINE SELECTOR EVENT HANDLERS ---
 
@@ -1958,6 +2030,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function recalculateAllOdds() {
     updateResetAllState();
+    window.dispatchEvent(new Event('bsm:builder-updated'));
 
     // Gather active match IDs immediately to decide whether to show loading
     const allIds = allActiveMatchIds();

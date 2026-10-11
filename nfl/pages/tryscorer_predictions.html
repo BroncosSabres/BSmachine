@@ -44,6 +44,9 @@
         </div>
       </div>
 
+      <!-- BEST BETS for the selected game: filled by match-best-bets.js, only for accounts with access -->
+      <div id="match-best-bets" class="hidden mb-4"></div>
+
       <p id="no-games-msg" class="hidden text-center text-gray-400 my-8">No games with prediction data this week.</p>
 
       <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
@@ -173,6 +176,7 @@
     </main>
 
     <script type="module" src="/js/nfl_multi_builder.js"></script>
+    <script type="module" src="/js/match-best-bets.js"></script>
     <script type="module">
       import { updateAuthNav } from '/js/supabase-client.js'
       updateAuthNav()

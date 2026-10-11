@@ -15,6 +15,8 @@ import { BACKEND, apiUrl } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
+import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, odds, pct, signedPct, signCls, wonCount,
+         isNhlThreeWay, selectionText } from './best-bets-shared.js';
 
 const TABS = [
   { key: 'all',     label: 'All',         kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total'] },
@@ -23,28 +25,20 @@ const TABS = [
   { key: 'totals',  label: 'Totals',      kinds: ['total'] },
 ];
 const SCORER_KINDS = TABS.find(t => t.key === 'scorers').kinds;
-const SPORT_LABELS = { nrl: 'NRL', nrlw: 'NRLW', nfl: 'NFL', nhl: 'NHL' };
-const SPORT_COLORS = { nrl: '#fbbf24', nrlw: '#e879f9', nfl: '#60a5fa', nhl: '#818cf8' };
 // Edge (when first flagged) bands for the track-record sidebar.
 const EDGE_BANDS = [[0, 0.02, '0–2%'], [0.02, 0.05, '2–5%'], [0.05, 0.1, '5–10%'], [0.1, 0.15, '10–15%'],
                     [0.15, 0.2, '15–20%'], [0.2, 0.3, '20–30%'], [0.3, Infinity, '30%+']];
 
 const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-const odds = o => o == null ? '–' : o.toFixed(o >= 10 ? 1 : 2);
-const pct = (x, dp = 1) => x == null || !isFinite(x) ? '–' : `${(x * 100).toFixed(dp)}%`;
-const signedPct = (x, dp = 1) => x == null || !isFinite(x) ? '–' : `${x > 0 ? '+' : ''}${(x * 100).toFixed(dp)}%`;
-const signCls = x => x == null || !isFinite(x) || x === 0 ? 'text-gray-400' : x > 0 ? 'text-green-400' : 'text-red-400';
 
 let token = null;
 let bets = [];             // /api/best_bets rows
 let shown = [];            // the rows in the table, in order (data-row indexes it)
 let results = null;        // /api/best_bets/results, loaded on first open
-let tab = 'match';
+let tab = 'all';
 let sport = 'all';
 
 // Sort / My Teams / NHL 3-way choices are remembered between visits.
-const PREFS_KEY = 'bsm_best_bets_prefs';
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
@@ -59,11 +53,6 @@ function savePrefs() {
       sort: $('sort-by').value, myTeams: $('my-teams-only').checked, threeWay: $('nhl-three-way').checked }));
   } catch { /* storage unavailable */ }
 }
-
-// NHL head-to-head comes two ways: the moneyline (overtime and shootout
-// count) and the 60-minute market with a draw. The moneyline is the default.
-const isNhlThreeWay = r => r.sport === 'nhl' && r.market_kind === 'match_odds'
-  && (r.three_way ?? /3 way|60 min/i.test(r.market_name));
 
 // Sport / NHL 3-way / My Teams: shared by the table and the track record.
 function passes(r) {
@@ -132,16 +121,6 @@ function gameCell(r) {
        class="block font-semibold text-gray-100 hover:underline decoration-gray-500 underline-offset-2">${esc(r.home_team)} <span class="text-gray-500 font-normal">v</span> ${esc(r.away_team)}</a>
     <div class="text-[11px] text-gray-500">${sportTag(r.sport)} · ${esc(kickoffText(r.kickoff))}</div>
   </td>`;
-}
-
-// Betfair names the line in most runner names ("Roosters -4.5"); Asian-handicap
-// style runners are just the team / Over / Under, so add it.
-function selectionText(r) {
-  let name = r.selection_name;
-  if (r.line != null && (r.market_kind === 'handicap' || r.market_kind === 'total') && !/\d/.test(name)) {
-    name += ` ${r.market_kind === 'handicap' && r.line > 0 ? '+' : ''}${r.line}`;
-  }
-  return name;
 }
 
 // Scorers with a stats window (the multi builders' player_detail endpoints).
@@ -331,6 +310,7 @@ function summarise(picks) {
   const mean = f => n ? live.reduce((a, p) => a + f(p), 0) / n : null;
   return {
     n,
+    wins:     live.reduce((a, p) => a + p.win_frac, 0),   // a half-win counts as half
     roi:      mean(p => profit(p, p.flagged_back)),
     roiBest:  mean(p => profit(p, p.best_back)),
     roiClose: mean(p => profit(p, p.close_back)),
@@ -339,20 +319,20 @@ function summarise(picks) {
 }
 
 // One band: label, a bar growing left (loss) or right (profit) from a centre
-// zero line, then the ROI and the number of bets behind it.
+// zero line, then the ROI and how many of the bets behind it won.
 function roiBar(label, st, scale, dim) {
   const width = st.n ? Math.min(50, Math.abs(st.roi) / scale * 50) : 0;
   const up = st.roi >= 0;
   const bar = st.n ? `<span class="absolute top-0.5 bottom-0.5 ${up ? 'bg-green-500 rounded-r' : 'bg-red-500 rounded-l'}"
       style="${up ? 'left' : 'right'}:50%; width:${width.toFixed(1)}%; min-width:2px"></span>` : '';
-  const title = st.n ? `${label} edge: ${signedPct(st.roi)} ROI over ${st.n} settled bet${st.n === 1 ? '' : 's'}` : `${label} edge: no settled bets yet`;
+  const title = st.n ? `${label} edge: ${signedPct(st.roi)} ROI over ${st.n} settled bet${st.n === 1 ? '' : 's'}, ${wonCount(st.wins)} won` : `${label} edge: no settled bets yet`;
   return `<div class="flex items-center gap-2 text-xs ${dim ? 'opacity-40' : ''}" title="${esc(title)}">
     <span class="w-12 shrink-0 tabular-nums text-gray-400">${label}</span>
     <span class="relative flex-1 h-4">
       <span class="absolute inset-y-0 left-1/2 w-px bg-gray-600"></span>${bar}
     </span>
     <span class="w-14 shrink-0 text-right tabular-nums font-semibold text-gray-100">${st.n ? signedPct(st.roi, 0) : '–'}</span>
-    <span class="w-7 shrink-0 text-right tabular-nums text-gray-500">${st.n || ''}</span>
+    <span class="w-12 shrink-0 text-right tabular-nums text-gray-500">${st.n ? `${wonCount(st.wins)}/${st.n}` : ''}</span>
   </div>`;
 }
 
@@ -376,7 +356,7 @@ function renderTrackRecord() {
       <span class="text-2xl font-bold tabular-nums text-gray-100">${signedPct(sel.roi)}</span>
       <span class="text-xs font-semibold ${signCls(sel.roi)}">${sel.roi > 0 ? 'profit' : sel.roi < 0 ? 'loss' : ''}</span>
     </div>
-    <div class="text-[11px] text-gray-500">ROI ${which} · ${sel.n} bet${sel.n === 1 ? '' : 's'}</div>
+    <div class="text-[11px] text-gray-500">ROI ${which} · ${sel.n} bet${sel.n === 1 ? '' : 's'}, ${wonCount(sel.wins)} won</div>
     <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds captured; CLV compares flagged odds with closing odds">
       best odds ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>`
     : `<div class="text-xs text-gray-500">No settled bets ${which} yet.</div>`;
@@ -385,7 +365,7 @@ function renderTrackRecord() {
   $('roi-bars').innerHTML = `
     <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
       <span class="w-12 shrink-0">Edge</span><span class="flex-1 text-center">loss · profit</span>
-      <span class="w-14 shrink-0 text-right">ROI</span><span class="w-7 shrink-0 text-right">Bets</span>
+      <span class="w-14 shrink-0 text-right">ROI</span><span class="w-12 shrink-0 text-right" title="Bets won out of bets settled. A half-win counts as half.">Won</span>
     </div>` + bands.map(b => roiBar(b.label, b.st, scale, b.lo < minEdge && EDGE_BANDS.find(e => e[0] === b.lo)[1] <= minEdge)).join('');
   $('roi-note').textContent = `${results.pending.toLocaleString()} tracked bet${results.pending === 1 ? '' : 's'} awaiting a result. `
     + 'Bands below the minimum edge are dimmed. Settled from our own results data; voided bets excluded. Small samples swing a lot.';
@@ -463,7 +443,7 @@ async function init() {
   loadPrefs();
   loadMyTeams();   // profile teams may arrive later; MY_TEAMS_CHANGED re-renders
   const wanted = new URLSearchParams(location.search).get('tab');
-  tab = TABS.some(t => t.key === wanted) ? wanted : 'match';
+  tab = TABS.some(t => t.key === wanted) ? wanted : 'all';
   render();
   loadResults();   // the track record fills in when it arrives
 }

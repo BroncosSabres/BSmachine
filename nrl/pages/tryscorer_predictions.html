@@ -49,6 +49,9 @@
         </div>
       </div>
 
+      <!-- BEST BETS for the selected game: filled by match-best-bets.js, only for accounts with access -->
+      <div id="match-best-bets" class="hidden mb-4"></div>
+
       <!-- COMMUNITY BETSLIPS — horizontal scroll strip -->
       <div id="community-betslips-section" class="hidden mb-4">
         <div class="flex items-center justify-between mb-2 gap-3">
@@ -226,6 +229,7 @@
     </main>
 
     <script src="/js/tryscorer_predictions.js"></script>
+    <script type="module" src="/js/match-best-bets.js"></script>
     <script type="module">
       import { updateAuthNav, getSession } from '/js/supabase-client.js'
       window._getSupabaseSession = getSession

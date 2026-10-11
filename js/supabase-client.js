@@ -75,7 +75,7 @@ function waitForAuthNav() {
 // is enforced by the backend, so this only decides whether to show the link).
 const bestBetsKey = userId => `bsm_best_bets_${userId}`
 
-async function hasBestBetsAccess(session) {
+export async function hasBestBetsAccess(session) {
   const key = bestBetsKey(session.user.id)
   try {
     const cached = sessionStorage.getItem(key)

@@ -1175,6 +1175,7 @@ function recalculate() {
   resetAllBtn.disabled = !Object.keys(gameState).some(gameHasSelections);
   updateOptionBadges();
   renderBetslip(results);
+  window.dispatchEvent(new Event('bsm:builder-updated'));
 }
 
 function renderBetslip(results) {
@@ -1328,7 +1329,7 @@ function updateOptionBadges() {
 
 async function selectGame(gid) {
   currentGame = gameById(gid);
-  if (!currentGame) { builderSection.classList.add('hidden'); return; }
+  if (!currentGame) { builderSection.classList.add('hidden'); announceGame(null); return; }
   const gs = S();
   builderMatchup.textContent = `${currentGame.home_team} vs ${currentGame.away_team}`;
   builderKickoff.textContent = formatPuckDrop(currentGame);
@@ -1339,6 +1340,7 @@ async function selectGame(gid) {
   builderSection.classList.remove('hidden');
   syncLineUI();
   renderTeams();
+  announceGame();
 
   const loadingId = currentGame.game_id;
   loadLogs(loadingId);   // history lines fill in when it lands; prices don't wait for it
@@ -1351,6 +1353,63 @@ async function selectGame(gid) {
 
 gameSelect.addEventListener('change', () => selectGame(gameSelect.value));
 
+// =============================================================================
+// BEST BETS PANEL (match-best-bets.js): the selected game, and its best bets as legs
+// =============================================================================
+function announceGame(game = currentGame) {
+  window.bsmSelectedMatch = { sport: 'nhl', gameId: game?.game_id ?? null };
+  window.dispatchEvent(new CustomEvent('bsm:match-selected', { detail: window.bsmSelectedMatch }));
+}
+
+// The leg a best bet (an /api/best_bets row) becomes here: a scorer pick or a
+// margin / total line. null when this builder has no such leg: the 60-minute
+// three-way market, whole and quarter lines (the dropdowns are half-points),
+// a line outside a dropdown, or a player not in this game's player data.
+function bestBetLeg(r) {
+  if (!currentGame || String(r.game_id) !== String(currentGame.game_id)) return null;
+  const gs = S();
+  const halfPoint = r.line != null && Math.abs(r.line * 2) % 2 === 1;
+  if (r.market_kind === 'anytime_scorer' || r.market_kind === 'multi_scorer') {
+    const side = ['home', 'away'].find(sd => findPlayer(gs, sd, r.player_id));
+    const pl = side && findPlayer(gs, side, r.player_id);
+    const n = r.line || 1;
+    if (!pl || !pl.active || n > maxLegN(gs, side, 'goal')) return null;
+    return { key: `${side}:goal:${pl.id}`,
+             pick: { side, kind: 'goal', n, playerId: pl.id, teamId: gs.playerData[side].team_id, name: pl.name } };
+  }
+  if (r.side !== 'home' && r.side !== 'away' && r.side !== 'over' && r.side !== 'under') return null;
+  if (r.market_kind === 'match_odds' && !r.three_way) return { lines: { marginTeam: r.side, marginL: -0.5 } };
+  if (r.market_kind === 'handicap' && halfPoint && Math.abs(r.line) <= 10.5) return { lines: { marginTeam: r.side, marginL: r.line } };
+  if (r.market_kind === 'total' && halfPoint && r.line > 0 && r.line + 0.5 <= 15) return { lines: { totalDir: r.side, totalN: r.line + 0.5 } };
+  return null;
+}
+
+function hasBestBetLeg(r) {
+  const leg = bestBetLeg(r);
+  if (!leg) return false;
+  const gs = S();
+  return leg.pick ? gs.picks.get(leg.key)?.n === leg.pick.n : Object.entries(leg.lines).every(([k, v]) => gs.lines[k] === v);
+}
+
+window.bsmBuilder = {
+  canAdd: r => !!bestBetLeg(r),
+  has: hasBestBetLeg,
+  // Adds the leg, or takes it off if it is already on the betslip
+  toggle(r) {
+    const leg = bestBetLeg(r);
+    if (!leg) return;
+    const gs = S(), on = hasBestBetLeg(r);
+    if (leg.pick) {
+      if (on) gs.picks.delete(leg.key); else gs.picks.set(leg.key, leg.pick);
+    } else {
+      for (const [k, v] of Object.entries(leg.lines)) gs.lines[k] = on ? null : v;
+    }
+    syncLineUI();
+    renderTeams();
+    recalculate();
+  },
+};
+
 function renderCurrentDate(preferGameId = null) {
   const key = dateKeys[currentDateIdx];
   gameSelect.innerHTML = '';
@@ -1362,12 +1421,14 @@ function renderCurrentDate(preferGameId = null) {
   if (!key) {
     dateBadge.textContent = 'No games';
     noGamesMsg.classList.remove('hidden');
+    announceGame(null);
     return;
   }
   games = (gamesByDate[key] || []).filter(g => g.has_prediction);
   dateBadge.textContent = formatDay(gamesByDate[key]?.[0]?.date) || key;
   if (!games.length) {
     noGamesMsg.classList.remove('hidden');
+    announceGame(null);
     recalculate();
     return;
   }
