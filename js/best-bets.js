@@ -17,10 +17,12 @@ import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 
 const TABS = [
+  { key: 'all',     label: 'All',         kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total'] },
   { key: 'match',   label: 'Match Lines', kinds: ['match_odds', 'handicap'] },
   { key: 'scorers', label: 'Scorers',     kinds: ['anytime_scorer', 'multi_scorer'] },
   { key: 'totals',  label: 'Totals',      kinds: ['total'] },
 ];
+const SCORER_KINDS = TABS.find(t => t.key === 'scorers').kinds;
 const SPORT_LABELS = { nrl: 'NRL', nrlw: 'NRLW', nfl: 'NFL', nhl: 'NHL' };
 const SPORT_COLORS = { nrl: '#fbbf24', nrlw: '#e879f9', nfl: '#60a5fa', nhl: '#818cf8' };
 // Edge (when first flagged) bands for the track-record sidebar.
@@ -288,12 +290,16 @@ function renderBets() {
   }
   shown = rows;
   $('status').textContent = summary && `${summary} · sorted by ${byEdge ? 'edge' : 'start time'}`;
-  $('method-note').textContent = tab === 'scorers'
-    ? 'Bookie odds are the median price across US bookmakers, fetched once per game when the market first goes up — '
-      + 'they will have moved, and local bookmakers will differ, so use them as a guide to where the value is. '
-      + 'Scorer prices assume the player takes the field.'
-    : 'Bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
-      + 'they will have moved) — use them as a guide to where the value is. Edge allows for Betfair commission.';
+  // Scorer prices and match / total prices come from different places
+  const scorerNote = 'bookie odds are the median price across US bookmakers, fetched once per game when the market first goes up — '
+    + 'they will have moved, and local bookmakers will differ, so use them as a guide to where the value is. '
+    + 'Scorer prices assume the player takes the field.';
+  const exchangeNote = 'bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
+    + 'they will have moved) — use them as a guide to where the value is. Edge allows for Betfair commission.';
+  const cap = t => t[0].toUpperCase() + t.slice(1);
+  $('method-note').textContent = tab === 'scorers' ? cap(scorerNote)
+    : kinds.some(k => SCORER_KINDS.includes(k)) ? `Match lines and totals: ${exchangeNote} Scorers: ${scorerNote}`
+    : cap(exchangeNote);
 }
 
 function openStats(r) {
