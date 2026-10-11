@@ -86,7 +86,7 @@
                   <tr class="text-xs text-gray-500 uppercase tracking-wider">
                     <th class="px-2 py-2 text-left font-semibold">Game</th>
                     <th class="px-2 py-2 text-left font-semibold">Selection</th>
-                    <th class="px-2 py-2 text-right font-semibold" title="Best back price on the Betfair Exchange when last checked">Bookie odds</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Median price across bookmakers where the market names them (scorers, NFL head-to-head and line); otherwise the best back price on the Betfair Exchange when last checked">Bookie odds</th>
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="Model probability">Model</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Model fair odds">Fair</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked, after commission">Edge</th>
@@ -102,13 +102,17 @@
         </div>
 
         <!-- Track record: actual ROI of settled bets by the edge they were flagged at -->
-        <aside class="card" aria-labelledby="roi-title">
-          <h2 id="roi-title" class="text-sm font-bold text-gray-100">Actual ROI by edge</h2>
+        <!-- Above the bets on a phone, beside them on a wide screen -->
+        <aside class="card order-first lg:order-none" aria-labelledby="roi-title">
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 id="roi-title" class="text-sm font-bold text-gray-100">Actual ROI by edge</h2>
+            <a href="/pages/best_bets_analysis.html" class="shrink-0 text-xs text-blue-400 hover:underline font-medium">Detailed analysis →</a>
+          </div>
           <p id="roi-scope" class="text-[11px] text-gray-500 mb-3"></p>
           <div id="roi-headline" class="mb-3"></div>
           <div id="roi-bars" class="space-y-1.5"></div>
-          <p id="roi-note" class="mt-3 text-[11px] text-gray-600 leading-snug"></p>
-          <a href="/pages/best_bets_analysis.html" class="mt-2 inline-block text-xs text-blue-400 hover:underline font-medium">Detailed analysis →</a>
+          <!-- The small print is left off a phone, where this card sits above the bets -->
+          <p id="roi-note" class="hidden sm:block mt-3 text-[11px] text-gray-600 leading-snug"></p>
         </aside>
         </div>
       </div>

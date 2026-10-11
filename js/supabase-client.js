@@ -98,9 +98,12 @@ async function addBestBetsLink(navEl, session) {
   if (!await hasBestBetsAccess(session)) return
   const href = '/pages/best_bets.html'
   const active = window.location.pathname === href ? ' is-active' : ''
+  // Wide screens: a link with the others. Phones: a pill beside Sign Out, on
+  // show without opening the menu (css/style.css .best-bets-pill).
   if (!navEl.querySelector('#best-bets-link')) {
     navEl.firstElementChild?.insertAdjacentHTML('afterbegin',
-      `<a id="best-bets-link" href="${href}" class="site-nav-link hidden md:inline-block${active}">Best Bets</a>`)
+      `<a id="best-bets-link" href="${href}" class="site-nav-link hidden md:inline-block${active}">Best Bets</a>`
+      + `<a id="best-bets-pill" href="${href}" class="best-bets-pill md:hidden${active}">Best Bets</a>`)
   }
   const mobileBtn = document.getElementById('mobile-my-teams-btn')
   if (mobileBtn && !document.getElementById('mobile-best-bets-link')) {

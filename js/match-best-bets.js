@@ -15,7 +15,7 @@
 //                          the betslip, and adding / removing it
 import { BACKEND } from './api-config.js';
 import { getSession, hasBestBetsAccess } from './supabase-client.js';
-import { PREFS_KEY, esc, odds, pct, signedPct, isNhlThreeWay, selectionText } from './best-bets-shared.js';
+import { PREFS_KEY, esc, odds, pct, signedPct, isNhlThreeWay, selectionText, bestBookHtml } from './best-bets-shared.js';
 
 const panel = document.getElementById('match-best-bets');
 const TOP = 5;             // rows before "Show all"
@@ -100,6 +100,7 @@ function render() {
               <td class="pr-2 py-1.5">
                 <span class="font-semibold text-gray-100">${esc(selectionText(r))}</span>
                 <span class="block text-[11px] text-gray-500">${esc(r.market_name)}</span>
+                ${bestBookHtml(r)}
               </td>
               <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.back)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>

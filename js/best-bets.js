@@ -16,7 +16,7 @@ import { getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, odds, pct, signedPct, signCls, wonCount,
-         isNhlThreeWay, selectionText } from './best-bets-shared.js';
+         isNhlThreeWay, selectionText, bestBookHtml, edgeBands } from './best-bets-shared.js';
 
 const TABS = [
   { key: 'all',     label: 'All',         kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total'] },
@@ -24,10 +24,9 @@ const TABS = [
   { key: 'scorers', label: 'Scorers',     kinds: ['anytime_scorer', 'multi_scorer'] },
   { key: 'totals',  label: 'Totals',      kinds: ['total'] },
 ];
-const SCORER_KINDS = TABS.find(t => t.key === 'scorers').kinds;
-// Edge (when first flagged) bands for the track-record sidebar.
-const EDGE_BANDS = [[0, 0.02, '0–2%'], [0.02, 0.05, '2–5%'], [0.05, 0.1, '5–10%'], [0.1, 0.15, '10–15%'],
-                    [0.15, 0.2, '15–20%'], [0.2, 0.3, '20–30%'], [0.3, Infinity, '30%+']];
+// Track-record bands (edge when first flagged) are widened until each holds
+// this many settled bets: see edgeBands in best-bets-shared.js.
+const MIN_BAND_BETS = 10;
 
 const $ = id => document.getElementById(id);
 
@@ -217,6 +216,7 @@ function selectionCell(r) {
       ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
       : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
+    ${bestBookHtml(r)}
     ${historyHtml(r)}
   </td>`;
 }
@@ -270,15 +270,17 @@ function renderBets() {
   shown = rows;
   $('status').textContent = summary && `${summary} · sorted by ${byEdge ? 'edge' : 'start time'}`;
   // Scorer prices and match / total prices come from different places
-  const scorerNote = 'bookie odds are the median price across US bookmakers, fetched once per game when the market first goes up — '
-    + 'they will have moved, and local bookmakers will differ, so use them as a guide to where the value is. '
+  // Rows that count bookmakers in the market name ("6 AU books") are bookmaker
+  // prices; the rest are Betfair's
+  const bookNote = 'Where the market names bookmakers ("6 AU books"), bookie odds are the median price across them, with '
+    + 'the best price found and who had it underneath. Scorers are fetched once per game and NFL head-to-head and '
+    + 'line prices once a day, so they will have moved: check the price before betting. '
     + 'Scorer prices assume the player takes the field.';
-  const exchangeNote = 'bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
-    + 'they will have moved) — use them as a guide to where the value is. Edge allows for Betfair commission.';
-  const cap = t => t[0].toUpperCase() + t.slice(1);
-  $('method-note').textContent = tab === 'scorers' ? cap(scorerNote)
-    : kinds.some(k => SCORER_KINDS.includes(k)) ? `Match lines and totals: ${exchangeNote} Scorers: ${scorerNote}`
-    : cap(exchangeNote);
+  const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
+    + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
+  $('method-note').textContent = tab === 'scorers' ? bookNote
+    : tab === 'totals' ? exchangeNote.replace('Other bookie', 'Bookie').replace('Their edge', 'Edge')
+    : `${bookNote} ${exchangeNote}`;
 }
 
 function openStats(r) {
@@ -293,7 +295,9 @@ function openStats(r) {
       { label: 'Fair odds', value: odds(r.fair_odds) },
       { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge) },
     ],
-    note: `${selectionText(r)} — ${r.market_name}. Price assumes the player takes the field.`,
+    note: `${selectionText(r)} — ${r.market_name}. `
+      + (r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}. ` : '')
+      + 'Price assumes the player takes the field.',
   });
 }
 
@@ -327,7 +331,7 @@ function roiBar(label, st, scale, dim) {
       style="${up ? 'left' : 'right'}:50%; width:${width.toFixed(1)}%; min-width:2px"></span>` : '';
   const title = st.n ? `${label} edge: ${signedPct(st.roi)} ROI over ${st.n} settled bet${st.n === 1 ? '' : 's'}, ${wonCount(st.wins)} won` : `${label} edge: no settled bets yet`;
   return `<div class="flex items-center gap-2 text-xs ${dim ? 'opacity-40' : ''}" title="${esc(title)}">
-    <span class="w-12 shrink-0 tabular-nums text-gray-400">${label}</span>
+    <span class="w-14 shrink-0 tabular-nums text-gray-400">${label}</span>
     <span class="relative flex-1 h-4">
       <span class="absolute inset-y-0 left-1/2 w-px bg-gray-600"></span>${bar}
     </span>
@@ -342,12 +346,12 @@ function renderTrackRecord() {
   $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${maxOdds ? ` · odds under $${maxOdds}` : ''} · settled bets, 1 unit each at the odds when flagged`;
   if (!results) {
     $('roi-headline').innerHTML = '';
-    $('roi-bars').innerHTML = resultsFailed ? '' : Array.from({ length: 7 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
+    $('roi-bars').innerHTML = resultsFailed ? '' : Array.from({ length: 5 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
     $('roi-note').textContent = resultsFailed ? 'Could not load results. Try again in a moment.' : '';
     return;
   }
   const picks = results.picks.filter(p => t.kinds.includes(p.market_kind) && passes(p) && underMaxOdds(p.flagged_back));
-  const bands = EDGE_BANDS.map(([lo, hi, label]) => ({ lo, label, st: summarise(picks.filter(p => p.flagged_edge >= lo && p.flagged_edge < hi)) }));
+  const bands = edgeBands(picks, minEdge, MIN_BAND_BETS).map(b => ({ ...b, st: summarise(b.picks) }));
   const sel = summarise(picks.filter(p => p.flagged_edge >= minEdge));
   const which = minEdge ? `at ${Math.round(minEdge * 100)}%+ edge` : 'all edges';
 
@@ -357,17 +361,18 @@ function renderTrackRecord() {
       <span class="text-xs font-semibold ${signCls(sel.roi)}">${sel.roi > 0 ? 'profit' : sel.roi < 0 ? 'loss' : ''}</span>
     </div>
     <div class="text-[11px] text-gray-500">ROI ${which} · ${sel.n} bet${sel.n === 1 ? '' : 's'}, ${wonCount(sel.wins)} won</div>
-    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds captured; CLV compares flagged odds with closing odds">
+    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds captured; CLV compares flagged odds with closing odds. For NFL bookmaker head-to-head and line bets, closing odds are the last bookmaker price moved by Betfair's change since">
       best odds ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>`
     : `<div class="text-xs text-gray-500">No settled bets ${which} yet.</div>`;
 
   const scale = Math.max(0.1, ...bands.filter(b => b.st.n).map(b => Math.abs(b.st.roi)));
   $('roi-bars').innerHTML = `
     <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
-      <span class="w-12 shrink-0">Edge</span><span class="flex-1 text-center">loss · profit</span>
+      <span class="w-14 shrink-0">Edge</span><span class="flex-1 text-center">loss · profit</span>
       <span class="w-14 shrink-0 text-right">ROI</span><span class="w-12 shrink-0 text-right" title="Bets won out of bets settled. A half-win counts as half.">Won</span>
-    </div>` + bands.map(b => roiBar(b.label, b.st, scale, b.lo < minEdge && EDGE_BANDS.find(e => e[0] === b.lo)[1] <= minEdge)).join('');
+    </div>` + bands.map(b => roiBar(b.label, b.st, scale, b.hi <= minEdge)).join('');
   $('roi-note').textContent = `${results.pending.toLocaleString()} tracked bet${results.pending === 1 ? '' : 's'} awaiting a result. `
+    + `Each band is as narrow as it can be with ${MIN_BAND_BETS} settled bets in it, so there are more bands as results come in. `
     + 'Bands below the minimum edge are dimmed. Settled from our own results data; voided bets excluded. Small samples swing a lot.';
 }
 

@@ -23,6 +23,50 @@ export const signCls = x => x == null || !isFinite(x) || x === 0 ? 'text-gray-40
 export const isNhlThreeWay = r => r.sport === 'nhl' && r.market_kind === 'match_odds'
   && (r.three_way ?? /3 way|60 min/i.test(r.market_name));
 
+// Edge bands for the Best Bets page's track record. A fixed set of narrow
+// bands leaves most with a handful of bets, whose ROI is mostly noise, and
+// lumps every big edge into one. So the bands start narrow (EDGE_STEPS) and
+// neighbours are joined until each holds at least `minBets` settled bets: few
+// wide bands while the sample is small, more and finer ones as it grows.
+// Bands never straddle `minEdge` (the page's Min edge filter), so the ones
+// below it can be dimmed. picks: settled picks with flagged_edge and result.
+// -> [{ lo, hi, label, picks }] in edge order.
+export const EDGE_STEPS = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, Infinity];
+
+export function edgeBands(picks, minEdge = 0, minBets = 10) {
+  const live = p => p.result !== 'void';
+  const fine = EDGE_STEPS.slice(0, -1).map((lo, i) => {
+    const hi = EDGE_STEPS[i + 1];
+    const inBand = picks.filter(p => p.flagged_edge >= lo && p.flagged_edge < hi);
+    return { lo, hi, picks: inBand, n: inBand.filter(live).length };
+  });
+  const join = (a, b) => ({ lo: a.lo, hi: b.hi, picks: a.picks.concat(b.picks), n: a.n + b.n });
+  const bands = [];
+  for (const group of [fine.filter(b => b.hi <= minEdge), fine.filter(b => b.hi > minEdge)]) {
+    const start = bands.length;
+    let open = null;
+    for (const b of group) {
+      open = open ? join(open, b) : b;
+      if (open.n >= minBets) { bands.push(open); open = null; }
+    }
+    // What is left over at the top is too few to stand alone: it joins the band below
+    if (open && bands.length > start) bands.push(join(bands.pop(), open));
+    else if (open) bands.push(open);
+  }
+  const pc = x => Math.round(x * 100);
+  return bands.map(({ lo, hi, picks }) => ({ lo, hi, picks, label: isFinite(hi) ? `${pc(lo)}–${pc(hi)}%` : `${pc(lo)}%+` }));
+}
+
+// Bookmaker scorer rows: where the best price was and what it was. The row's
+// own odds / edge are at the median price across the bookmakers, so this is
+// the one to actually take. Empty for Betfair rows (and older checks).
+export function bestBookHtml(r) {
+  if (!r.best_book || r.best_book_back == null) return '';
+  const title = `Highest price found: ${odds(r.best_book_back)} at ${r.best_book}`
+    + (r.best_book_edge == null ? '' : ` (${signedPct(r.best_book_edge)} edge at that price)`);
+  return `<div class="text-[11px] text-gray-400" title="${esc(title)}">Best <span class="font-semibold tabular-nums text-amber-400">${odds(r.best_book_back)}</span> at <span class="font-semibold text-gray-200">${esc(r.best_book)}</span></div>`;
+}
+
 // Betfair names the line in most runner names ("Roosters -4.5"); Asian-handicap
 // style runners are just the team / Over / Under, so add it.
 export function selectionText(r) {
