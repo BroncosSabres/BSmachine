@@ -12,8 +12,8 @@
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, KIND_LABELS, esc, pct, signedPct, signCls, wonCount } from './best-bets-shared.js';
-import { summarise, binByEdge, calibration, fitBlend, profitableFrom,
-         FIT_MIN_BETS, FIT_MIN_GAMES } from './roi-stats.js';
+import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom,
+         FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS } from './roi-stats.js';
 
 const $ = id => document.getElementById(id);
 
@@ -24,7 +24,8 @@ const GRID = 'rgba(255,255,255,0.06)';
 
 let raw = [];        // decoded rows
 let pending = 0;
-let roiChart = null, calChart = null;
+let roiChart = null, calChart = null, leanChart = null, timeChart = null;
+let teamKey = null;  // 'sport|team' of the team charted over time, or null for all of them
 
 // --- access states (as best-bets.js) ------------------------------------------
 
@@ -61,12 +62,17 @@ function decode(data) {
   });
 }
 
-// The bets under the "odds taken" and max-odds choices. A selection priced
-// once has no closing price: it has no CLV and is left out of the closing view.
+// Bookmaker rows come from The Odds API ('oddsapi', 'oddsapi-lines'); the rest are Betfair's.
+const sourceKey = r => r.source.startsWith('oddsapi') ? 'book' : 'betfair';
+const SOURCE_LABELS = { book: 'bookmaker odds', betfair: 'Betfair odds' };
+
+// The bets under the "odds from", "odds taken" and max-odds choices. A selection
+// priced once has no closing price: it has no CLV and is left out of the closing view.
 function baseBets() {
-  const stage = $('f-stage').value, maxOdds = +$('f-max-odds').value;
+  const stage = $('f-stage').value, maxOdds = +$('f-max-odds').value, source = $('f-source').value;
   const out = [];
   for (const r of raw) {
+    if (source !== 'all' && sourceKey(r) !== source) continue;
     const repriced = r.n_checks > 1;
     if (stage === 'close' && !repriced) continue;
     const back = r[`${stage}_back`];
@@ -75,6 +81,7 @@ function baseBets() {
       game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
       edge: r[`${stage}_edge`], prob: r[`${stage}_prob`], back, commission: r.commission,
       win: r.win_frac, push: r.push_frac,
+      team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
       clv: repriced ? r.open_back / r.close_back - 1 : null,
     });
   }
@@ -95,6 +102,7 @@ const count = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
 function scopeText() {
   const s = $('f-sport').value, m = $('f-market').value, maxOdds = +$('f-max-odds').value;
   return [s === 'all' ? 'All sports' : SPORT_LABELS[s], m === 'all' ? 'all markets' : kindLabel(m),
+          SOURCE_LABELS[$('f-source').value],
           $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
           maxOdds ? `odds under $${maxOdds}` : null].filter(Boolean).join(' · ');
 }
@@ -240,26 +248,166 @@ function renderRoiChart(bets, fit, pooled) {
 }
 
 function renderCalChart(bets) {
-  const cal = bets.length >= 20 ? calibration(bets, { count: 10 }) : [];
-  $('cal-chart-note').textContent = cal.length
-    ? "The bookie's chance is 1 / odds, so it includes their margin and sits a little above the true rate. Where the actual rate follows the bookie's and not the model's, the model's edge is not real."
-    : 'Needs at least 20 settled selections.';
-  const actual = cal.map(c => ({ x: pc(c.prob), y: pc(c.actual), lo: c.actualCI && pc(c.actualCI[0]), hi: c.actualCI && pc(c.actualCI[1]),
+  // Grouped by the model's probability, the question is whether the model is
+  // right; grouped by the bookie odds, where along the price range it parts
+  // from the bookie (favourites or outsiders) and which of the two results follow.
+  const byBook = $('f-cal-by').value === 'implied';
+  const cal = bets.length >= 20 ? calibration(bets, { count: 10, by: byBook ? 'implied' : 'prob' }) : [];
+  $('cal-chart-sub').textContent = byBook
+    ? "Selections grouped by the bookie odds, shortest price on the right. On the dashed line, the rate matches the bookie's chance."
+    : "Selections grouped by the model's probability. On the dashed line, the rate matches the model.";
+  $('cal-chart-note').textContent = !cal.length ? 'Needs at least 20 settled selections.'
+    : byBook ? "The bookie's chance is 1 / odds, so it includes their margin: a fair result sits a little under the dashed line. Where the model's marks sit away from the actual rate, that is where its edges come from its own error."
+    : "The bookie's chance is 1 / odds, so it includes their margin and sits a little above the true rate. Where the actual rate follows the bookie's and not the model's, the model's edge is not real.";
+  const xOf = c => pc(byBook ? c.implied : c.prob);
+  const actual = cal.map(c => ({ x: xOf(c), y: pc(c.actual), lo: c.actualCI && pc(c.actualCI[0]), hi: c.actualCI && pc(c.actualCI[1]),
     tip: [`Model ${pct(c.prob)} · bookie ${pct(c.implied)}`,
           `Won ${pct(c.actual)}${c.actualCI ? ` (90% range ${pct(c.actualCI[0], 0)} to ${pct(c.actualCI[1], 0)})` : ''}`, `${count(c.n, 'selection')}, ${wonCount(c.wins)} won`] }));
-  const implied = cal.map(c => ({ x: pc(c.prob), y: pc(c.implied) }));
+  const other = cal.map(c => ({ x: xOf(c), y: pc(byBook ? c.prob : c.implied) }));
   const top = Math.min(100, Math.ceil(Math.max(10, ...cal.flatMap(c => [c.prob, c.actual, c.implied, c.actualCI?.[1] ?? 0]).map(pc)) / 10) * 10);
-  const options = chartOptions("Model's probability", 'Rate', p => p.tip);
+  const options = chartOptions(byBook ? "Bookie's implied chance" : "Model's probability", 'Rate', p => p.tip);
   Object.assign(options.scales.x, { min: 0, max: top });
   Object.assign(options.scales.y, { min: 0, max: top });
   calChart?.destroy();
   calChart = new Chart($('cal-chart'), { type: 'scatter', plugins: [rangeBars], options, data: { datasets: [
     { label: 'Actual win rate', data: actual, borderColor: C_ACTUAL, backgroundColor: C_ACTUAL, pointRadius: 5, pointHoverRadius: 7 },
-    { label: "Bookie's implied chance", data: implied, borderColor: C_SECOND, backgroundColor: C_SECOND, pointStyle: 'rectRot',
+    { label: byBook ? "Model's probability" : "Bookie's implied chance", data: other, borderColor: C_SECOND, backgroundColor: C_SECOND, pointStyle: 'rectRot',
       pointRadius: 5, pointHitRadius: 0 },
-    { label: 'Model exactly right', data: [{ x: 0, y: 0 }, { x: top, y: top }], borderColor: C_REF, borderDash: [5, 4], borderWidth: 1.5,
+    { label: byBook ? 'Bookie exactly right' : 'Model exactly right', data: [{ x: 0, y: 0 }, { x: top, y: top }], borderColor: C_REF, borderDash: [5, 4], borderWidth: 1.5,
       pointRadius: 0, pointHitRadius: 0, showLine: true, pointStyle: 'line' },
   ] } });
+}
+
+// --- by team ------------------------------------------------------------------
+
+const sumRows = rows => rows.reduce((a, g) => ({ ...a, n: a.n + g.n, model: a.model + g.model, bookie: a.bookie + g.bookie, actual: a.actual + g.actual }),
+  { sport: rows[0]?.sport, n: 0, model: 0, bookie: 0, actual: 0 });
+
+// Weeks run Wednesday to Tuesday (UTC), which keeps an NFL round, Thursday
+// night to Monday night US time, in one week.
+function weekOf(date) {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 4) % 7);
+  return d.toISOString().slice(0, 10);
+}
+const dayText = date => new Date(`${date}T00:00:00Z`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+function renderLeanChart(tgs, levels) {
+  const points = tgs.filter(g => g.n).map(g => ({ g, ...leanOf(g, levels) })).filter(p => p.lean != null && p.outcome != null);
+  const fit = leanFit(points.map(p => ({ x: p.lean, y: p.outcome, w: p.g.bookie, game: p.g.game })));
+  $('lean-chart-note').textContent = !points.length ? 'No team has settled scorer prices under these filters.'
+    : fit ? `Fitted slope ${fit.slope.toFixed(2)}${fit.slopeCI ? ` (90% range ${fit.slopeCI[0].toFixed(2)} to ${fit.slopeCI[1].toFixed(2)})` : ''} over ${count(fit.n, 'team game')}. `
+            + "A slope of 1 says the model's view of a team is the truth; 0 says the bookies' is, and the lean is model error."
+          : `A fitted line appears at ${LEAN_MIN_POINTS} team games.`;
+  const data = points.map(p => ({ x: pc(p.lean), y: pc(p.outcome), key: p.g.key,
+    tip: [`${p.g.team} v ${p.g.opponent}, ${dayText(p.g.date)}`, `Model lean ${signedPct(p.lean, 0)} · outcome ${signedPct(p.outcome, 0)}`,
+          `${wonCount(p.g.actual)} of ${p.g.n} listed scored · model ${p.g.model.toFixed(1)} · bookie ${p.g.bookie.toFixed(1)}`] }));
+  const xs = data.map(p => p.x), x0 = Math.min(-10, ...xs), x1 = Math.max(10, ...xs);
+  const datasets = [
+    { label: 'Team in a game', data, borderColor: 'transparent', backgroundColor: data.map(p => teamKey && p.key !== teamKey ? 'rgba(217,119,6,0.25)' : C_ACTUAL),
+      pointRadius: data.map(p => p.key === teamKey ? 7 : 4), pointHoverRadius: 7, showLine: false, clip: false },
+    { label: 'If the model were exactly right', data: [{ x: x0, y: x0 }, { x: x1, y: x1 }], borderColor: C_REF, borderDash: [5, 4],
+      borderWidth: 1.5, pointRadius: 0, pointHitRadius: 0, showLine: true, pointStyle: 'line' },
+  ];
+  if (fit) datasets.splice(1, 0, { label: 'Fitted', data: [x0, x1].map(x => ({ x, y: pc(fit.intercept + fit.slope * x / 100) })),
+    borderColor: C_SECOND, backgroundColor: C_SECOND, borderWidth: 2, pointRadius: 0, pointHitRadius: 0, showLine: true, pointStyle: 'line' });
+  const options = chartOptions("Model lean: its scorers for the team against the bookies'", "Outcome: actual scorers against the bookies'", p => p.tip);
+  options.plugins.legend.labels.generateLabels = chart => Chart.defaults.plugins.legend.labels.generateLabels(chart)
+    .map((l, i) => i ? l : { ...l, fillStyle: C_ACTUAL, strokeStyle: C_ACTUAL });
+  const ys = data.map(p => p.y);
+  options.scales.y.min = Math.floor(Math.min(-20, ...ys) / 20) * 20;
+  options.scales.y.max = Math.min(300, Math.ceil(Math.max(20, ...ys) / 20) * 20);
+  leanChart?.destroy();
+  leanChart = new Chart($('lean-chart'), { type: 'scatter', data: { datasets }, options });
+}
+
+// One team: its games in order. All teams: weeks, per team game.
+function renderTimeChart(tgs) {
+  const scored = tgs.filter(g => g.n);
+  const mine = teamKey && scored.filter(g => g.key === teamKey);
+  let labels, rows, tips;
+  if (mine) {
+    labels = mine.map(g => dayText(g.date));
+    rows = mine;
+    tips = mine.map(g => `v ${g.opponent} · ${wonCount(g.actual)} of ${g.n} listed scored`);
+    $('time-chart-title').textContent = `${mine[0]?.team ?? ''}: scorers by game`;
+    $('time-chart-sub').textContent = 'Listed players expected to score, by the model and by the bookies, and how many did.';
+  } else {
+    const weeks = [...new Set(scored.map(g => weekOf(g.date)))].sort();
+    labels = weeks.map(w => `Week of ${dayText(w)}`);
+    rows = weeks.map(w => {
+      const part = scored.filter(g => weekOf(g.date) === w), s = sumRows(part);
+      return { model: s.model / part.length, bookie: s.bookie / part.length, actual: s.actual / part.length, games: part.length };
+    });
+    tips = rows.map(r => count(r.games, 'team game'));
+    $('time-chart-title').textContent = 'All teams: scorers per team game, by week';
+    $('time-chart-sub').textContent = 'Select a team in the table to follow it game by game.';
+  }
+  $('time-chart-note').textContent = !rows.length ? '' : "The bookies' count is the sum of 1 / odds, so it includes their margin and runs a little high."
+    + (rows.length < 3 ? ' A trend needs more than a couple of points.' : '');
+  const series = (label, key, color, extra = {}) => ({ label, data: rows.map(r => r[key]), borderColor: color, backgroundColor: color,
+    borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, tension: 0, ...extra });
+  timeChart?.destroy();
+  timeChart = new Chart($('time-chart'), { type: 'line',
+    data: { labels, datasets: [series('Actual', 'actual', C_ACTUAL), series('Model expected', 'model', C_SECOND, { pointStyle: 'rectRot' }),
+                               series('Bookies expected', 'bookie', C_REF, { borderDash: [5, 4], pointStyle: 'triangle' })] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: C_INK }, grid: { color: GRID }, border: { color: 'rgba(255,255,255,0.1)' }, offset: true },
+        y: { beginAtZero: true, title: { display: true, text: 'Scorers', color: C_INK, font: { size: 11 } }, ticks: { color: C_INK },
+             grid: { color: GRID }, border: { color: 'rgba(255,255,255,0.1)' } },
+      },
+      plugins: {
+        legend: { labels: { color: C_INK, boxWidth: 12, boxHeight: 12, usePointStyle: true, font: { size: 11 } } },
+        tooltip: { callbacks: { label: item => `${item.dataset.label}: ${item.parsed.y.toFixed(1)}`, footer: items => tips[items[0].dataIndex] } },
+      },
+    } });
+}
+
+function renderTeamTable(tgs, levels) {
+  const teams = [...new Set(tgs.map(g => g.key))].map(key => {
+    const games = tgs.filter(g => g.key === key), h2h = games.filter(g => g.h2h).map(g => g.h2h);
+    const s = sumRows(games.filter(g => g.n));
+    const avg = f => h2h.reduce((a, h) => a + f(h), 0) / h2h.length;
+    return { key, sport: games[0].sport, team: games[0].team, games: new Set(games.map(g => g.game)).size, s, ...leanOf({ ...s, sport: games[0].sport }, levels),
+             h2h: h2h.length ? { model: avg(h => h.model), bookie: avg(h => h.bookie), won: h2h.reduce((a, h) => a + h.won, 0), n: h2h.length } : null };
+  }).sort((a, b) => (b.lean ?? -Infinity) - (a.lean ?? -Infinity) || a.team.localeCompare(b.team));
+  const manySports = new Set(teams.map(t => t.sport)).size > 1;
+  const cell = (x, cls = '') => `<td class="px-2 py-1.5 text-right ${cls}">${x}</td>`;
+  const allRow = `<tr data-team="" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 ${teamKey ? '' : 'bg-gray-700/30'}">
+    <td class="px-2 py-1.5 text-left font-semibold text-gray-100" colspan="7">All teams</td></tr>`;
+  $('team-table').innerHTML = allRow + teams.map(t => `<tr data-team="${esc(t.key)}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums text-gray-300 ${t.key === teamKey ? 'bg-gray-700/30' : ''}">
+    <td class="px-2 py-1.5 text-left font-semibold text-gray-100">${esc(t.team)}${manySports ? ` <span class="text-[10px] font-normal text-gray-500">${esc(SPORT_LABELS[t.sport] || t.sport)}</span>` : ''}</td>
+    ${cell(t.games)}
+    ${cell(signedPct(t.lean, 0), 'font-semibold text-gray-100')}
+    ${cell(signedPct(t.outcome, 0), t.lean != null && t.outcome != null ? signCls(t.lean * t.outcome) : '')}
+    ${cell(t.s.n ? `<span class="font-semibold text-gray-100">${wonCount(t.s.actual)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">model ${t.s.model.toFixed(1)} · bookie ${t.s.bookie.toFixed(1)}</span>` : '–')}
+    ${cell(t.h2h ? `<span class="font-semibold text-gray-100">${pct(t.h2h.model, 0)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">bookie ${pct(t.h2h.bookie, 0)}</span>` : '–')}
+    ${cell(t.h2h ? `${wonCount(t.h2h.won)} of ${t.h2h.n}` : '–')}
+  </tr>`).join('');
+}
+
+// The team view reads scorer and head-to-head prices together, so it follows
+// every filter but Market.
+function renderTeams(base) {
+  const sport = $('f-sport').value;
+  const tgs = teamGames(base.filter(b => sport === 'all' || b.sport === sport));
+  if (teamKey && !tgs.some(g => g.key === teamKey && g.n)) teamKey = null;
+  $('team-sub').textContent = [sport === 'all' ? 'All sports' : SPORT_LABELS[sport], SOURCE_LABELS[$('f-source').value],
+    $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
+    +$('f-max-odds').value ? `odds under $${$('f-max-odds').value}` : null, 'not narrowed by Market'].filter(Boolean).join(' · ');
+  const none = !tgs.length;
+  $('team-empty').classList.toggle('hidden', !none);
+  $('team-body').classList.toggle('hidden', none);
+  if (none) {
+    $('team-empty').textContent = raw.length && !raw.some(r => r.team) ? 'Team data is not being returned yet.' : 'No settled selections with a team match these filters yet.';
+    return;
+  }
+  const levels = sportLevels(tgs);
+  renderLeanChart(tgs, levels);
+  renderTimeChart(tgs);
+  renderTeamTable(tgs, levels);
 }
 
 // --- breakdown ----------------------------------------------------------------
@@ -267,6 +415,7 @@ function renderCalChart(bets) {
 function breakdownRow(label, bets, key, active) {
   const all = summarise(bets), posBets = bets.filter(b => b.edge > 0), pos = summarise(posBets);
   const fit = fitBlend(bets);
+  const exp = expectedWins(bets);
   const from = profitableFrom(bets);
   const fromText = from ? (from.minEdge ? `${signedPct(from.minEdge, 0)} edge and over` : 'any edge above 0%') : posBets.length < 50 ? 'not enough bets' : 'not shown yet';
   const fromTitle = from ? `Edge ${signedPct(from.minEdge, 0)} and over: ${signedPct(from.roi)} over ${from.n} bets, 90% range ${range(from.roiCI)}`
@@ -275,6 +424,7 @@ function breakdownRow(label, bets, key, active) {
     <td class="px-2 py-2 text-left font-semibold text-gray-100">${esc(label)}</td>
     <td class="px-2 py-2 text-right text-gray-300">${all.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${all.games.toLocaleString()}</td>
+    <td class="px-2 py-2 text-right text-gray-300 whitespace-nowrap" title="${exp.n ? `${wonCount(exp.wins)} of ${exp.n.toLocaleString()} won. The model expected ${exp.model.toFixed(1)}, the bookie odds ${exp.bookie.toFixed(1)} (margin included).` : ''}"><span class="font-semibold text-gray-100">${exp.n ? wonCount(exp.wins) : '–'}</span>${exp.n ? `<span class="block text-[10px] text-gray-500">model ${exp.model.toFixed(1)} · bookie ${exp.bookie.toFixed(1)}</span>` : ''}</td>
     <td class="px-2 py-2 text-right text-gray-300" title="${fit ? `logit(win) = ${fit.a.toFixed(2)} + ${fit.bModel.toFixed(2)} × model + ${fit.bMarket.toFixed(2)} × bookie` : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`}"><span class="font-semibold text-gray-100">${fit?.weight != null ? pct(fit.weight, 0) : '–'}</span>${fit?.weightCI ? `<span class="block text-[10px] text-gray-500">${pct(fit.weightCI[0], 0)} to ${pct(fit.weightCI[1], 0)}</span>` : ''}</td>
     <td class="px-2 py-2 text-right text-gray-300">${pos.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${pos.n ? wonCount(pos.wins) : '–'}</td>
@@ -290,9 +440,10 @@ function renderBreakdown(base) {
   const current = $('f-sport').value === 'all' || $('f-market').value === 'all'
     ? ($('f-sport').value === 'all' && $('f-market').value === 'all' ? 'all' : null)
     : `${$('f-sport').value}|${$('f-market').value}`;
-  $('breakdown-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${+$('f-max-odds').value ? ` · odds under $${$('f-max-odds').value}` : ''} · select a row to chart it`;
+  const source = SOURCE_LABELS[$('f-source').value];
+  $('breakdown-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''}${+$('f-max-odds').value ? ` · odds under $${$('f-max-odds').value}` : ''} · select a row to chart it`;
   $('breakdown-body').innerHTML = !base.length
-    ? '<tr><td colspan="10" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
+    ? '<tr><td colspan="11" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
     : breakdownRow('All sports and markets', base, 'all', current === 'all')
       + groups.map(g => breakdownRow(groupLabel(g), base.filter(b => b.group === g), g, current === g)).join('');
   $('method-note').textContent = 'Returns are per unit staked at the bookie odds, after commission where it applies. Ranges are 90%, from resampling whole games, '
@@ -310,6 +461,7 @@ function render() {
   renderTiles(bets, fit, pooled);
   renderRoiChart(bets, fit, pooled);
   renderCalChart(bets);
+  renderTeams(base);
   renderBreakdown(base);
 }
 
@@ -317,7 +469,7 @@ function fillSelect(id, options) {
   $(id).innerHTML = options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
 }
 
-['f-sport', 'f-market', 'f-stage', 'f-max-odds', 'f-bins', 'f-min-bets'].forEach(id => $(id).addEventListener('change', render));
+['f-sport', 'f-market', 'f-source', 'f-stage', 'f-max-odds', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
 $('breakdown-body').addEventListener('click', e => {
   const key = e.target.closest('tr[data-group]')?.dataset.group;
   if (!key) return;
@@ -325,6 +477,13 @@ $('breakdown-body').addEventListener('click', e => {
   $('f-sport').value = s;
   $('f-market').value = k;
   render();
+});
+
+$('team-table').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-team]');
+  if (!row) return;
+  teamKey = row.dataset.team || null;
+  renderTeams(baseBets());
 });
 
 async function init() {

@@ -101,13 +101,29 @@ export function binByEdge(bets, { mode = 'width', width = 0.02, cap = 0.3, count
   }));
 }
 
-// Bins by model probability, up to `count` equal-count bins of 25 or more, for the calibration chart.
+// Winners against what each price expected, over every bet that wasn't a full
+// push: { n, wins, model, bookie }. `bookie` sums 1 / odds, so it carries the
+// margin and sits a little above a fair count. A count, not a return, so it
+// settles down on far fewer bets than RoI does.
+export function expectedWins(bets) {
+  const decided = bets.filter(b => b.push < 1);
+  return {
+    n: decided.length,
+    wins: decided.reduce((a, b) => a + b.win, 0),
+    model: decided.reduce((a, b) => a + b.prob, 0),
+    bookie: decided.reduce((a, b) => a + 1 / b.back, 0),
+  };
+}
+
+// Bins for the calibration chart, up to `count` equal-count bins of 25 or
+// more, by model probability or (by: 'implied') by the bookie's implied chance.
 // -> [{ prob, implied, actual, actualCI, n, wins }]: mean model probability, mean
 // chance the bookie odds imply (1 / odds, margin included), and how often the
 // selection actually won (pushes left out).
-export function calibration(bets, { count = 10, ...opts } = {}) {
+export function calibration(bets, { count = 10, by = 'prob', ...opts } = {}) {
   const decided = bets.filter(b => b.push < 1);
-  const sorted = [...decided].sort((a, b) => a.prob - b.prob);
+  const key = by === 'implied' ? b => 1 / b.back : b => b.prob;
+  const sorted = [...decided].sort((a, b) => key(a) - key(b));
   const k = Math.max(1, Math.min(count, Math.floor(sorted.length / 25) || 1));
   const won = b => b.win / (1 - b.push);
   const out = [];
@@ -189,6 +205,95 @@ function solve3(A, b) {
     }
   }
   return m.map((row, i) => row[3] / row[i]);
+}
+
+// --- by team ----------------------------------------------------------------
+// One record per team per game, from bets that also carry { sport, team,
+// opponent, date, kind, source }: how many of the team's listed players the
+// model and the bookie each expected to score and how many did, and the team's
+// head-to-head price. Where a game's scorers were priced from two sources, the
+// one with more players listed is used, so nobody is counted twice.
+// -> [{ key, sport, team, opponent, game, date, n, model, bookie, actual, h2h }]
+//    h2h: { model, bookie, won } or null; n = 0 when no scorers were priced.
+export function teamGames(bets) {
+  const games = new Map();
+  const at = b => {
+    const id = `${b.game}|${b.team}`;
+    if (!games.has(id)) games.set(id, { key: `${b.sport}|${b.team}`, sport: b.sport, team: b.team, opponent: b.opponent,
+                                       game: b.game, date: b.date, bySource: new Map(), h2h: null });
+    return games.get(id);
+  };
+  for (const b of bets) {
+    if (!b.team || b.push >= 1) continue;
+    if (b.kind === 'anytime_scorer') {
+      const g = at(b), s = g.bySource.get(b.source) || { n: 0, model: 0, bookie: 0, actual: 0 };
+      s.n += 1; s.model += b.prob; s.bookie += 1 / b.back; s.actual += b.win;
+      g.bySource.set(b.source, s);
+    } else if (b.kind === 'match_odds') {
+      const g = at(b);
+      if (!g.h2h || b.source === 'book') g.h2h = { model: b.prob, bookie: 1 / b.back, won: b.win / (1 - b.push) };
+    }
+  }
+  return [...games.values()].map(({ bySource, ...g }) => {
+    const best = [...bySource.values()].sort((a, b) => b.n - a.n)[0] || { n: 0, model: 0, bookie: 0, actual: 0 };
+    return { ...g, ...best };
+  }).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+// The bookie's count carries a margin and the model sits at its own level
+// against it, so a team is compared with what is usual in its sport:
+//   lean    = (model / bookie) over the sport's own model / bookie, less 1
+//   outcome = (actual / bookie) over the sport's own actual / bookie, less 1
+// If the model's view of a team is right, outcome follows lean one for one;
+// if the bookie's is, outcome ignores it. Rows are team-games or sums of them.
+export function sportLevels(rows) {
+  const levels = new Map();
+  for (const g of rows) {
+    if (!g.n) continue;
+    const l = levels.get(g.sport) || { model: 0, bookie: 0, actual: 0 };
+    l.model += g.model; l.bookie += g.bookie; l.actual += g.actual;
+    levels.set(g.sport, l);
+  }
+  return levels;
+}
+
+export function leanOf(row, levels) {
+  const l = levels.get(row.sport);
+  if (!row.n || !l || !(l.model > 0) || !(row.bookie > 0)) return { lean: null, outcome: null };
+  return { lean: (row.model / row.bookie) / (l.model / l.bookie) - 1,
+           outcome: l.actual > 0 ? (row.actual / row.bookie) / (l.actual / l.bookie) - 1 : null };
+}
+
+// Line through points { x: lean, y: outcome, w: weight, game }, weighted, with
+// a 90% range for the slope from resampling whole games (the two teams in a
+// game share its scoring). slope 1: the model's lean is the truth; 0: the
+// bookie's price is. null with fewer than LEAN_MIN_POINTS points.
+export const LEAN_MIN_POINTS = 12;
+
+export function leanFit(points, { reps = 400, seed = 11 } = {}) {
+  const line = pts => {
+    let w = 0, x = 0, y = 0;
+    for (const p of pts) { w += p.w; x += p.w * p.x; y += p.w * p.y; }
+    if (!(w > 0)) return null;
+    x /= w; y /= w;
+    let sxx = 0, sxy = 0;
+    for (const p of pts) { sxx += p.w * (p.x - x) ** 2; sxy += p.w * (p.x - x) * (p.y - y); }
+    return sxx > 1e-9 ? { slope: sxy / sxx, intercept: y - sxy / sxx * x } : null;
+  };
+  const fit = points.length >= LEAN_MIN_POINTS ? line(points) : null;
+  if (!fit) return null;
+  const byGame = new Map();
+  for (const p of points) byGame.set(p.game, [...(byGame.get(p.game) || []), p]);
+  const games = [...byGame.values()], rand = rng(seed + games.length), slopes = [];
+  for (let r = 0; r < reps; r++) {
+    const sample = [];
+    for (let i = 0; i < games.length; i++) sample.push(...games[(rand() * games.length) | 0]);
+    const f = line(sample);
+    if (f) slopes.push(f.slope);
+  }
+  slopes.sort((a, b) => a - b);
+  return { ...fit, n: points.length, games: games.length,
+           slopeCI: slopes.length >= reps / 2 ? [slopes[Math.floor(slopes.length * 0.05)], slopes[Math.ceil(slopes.length * 0.95) - 1]] : null };
 }
 
 // The lowest minimum edge (from `thresholds`) at which betting everything at
