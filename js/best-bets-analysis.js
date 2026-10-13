@@ -14,7 +14,7 @@
 // Bets page.
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
-import { SPORT_LABELS, KIND_LABELS, esc, pct, signedPct, signCls, wonCount } from './best-bets-shared.js';
+import { SPORT_LABELS, KIND_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
@@ -25,6 +25,8 @@ const $ = id => document.getElementById(id);
 // colour-blind separation. Reference lines stay grey.
 const C_ACTUAL = '#d97706', C_SECOND = '#3b82f6', C_REF = '#6b7280', C_INK = '#9ca3af';
 const GRID = 'rgba(255,255,255,0.06)';
+// A profit and a loss, wherever a chart tells the two apart
+const C_UP = '#22c55e', C_DOWN = '#ef4444';
 
 let raw = [];        // decoded rows
 let pending = 0;
@@ -32,6 +34,8 @@ let roiChart = null, calChart = null, leanChart = null, timeChart = null, ruleCh
 let teamKey = null;  // 'sport|team' of the team charted over time, or null for all of them
 let gridMode = 'rule';   // 'rule' / 'band': rows of the rule table take an edge and over, or up to the next
 let selEdge = 0;         // the low edge of the row in the detail panel
+let listed = null;       // { title, bets } of that row, for the window that lists its bets
+let betsShow = 'all';    // 'all' / 'won' / 'lost': which of them that window shows
 let bestCache = { key: null, rows: [] };
 
 // --- access states (as best-bets.js) ------------------------------------------
@@ -129,6 +133,7 @@ function scopes() {
       team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
       clv: repriced ? r.open_back / r.close_back - 1 : null,
       market: marketKey(r), prop: propKey(r), checks: r.n_checks,
+      row: r,   // for naming the bet when a rule's bets are listed
     });
   }
   const { kept, dropped } = dropEmptyMarkets(out);
@@ -226,6 +231,42 @@ const rangeBars = {
   },
 };
 
+// The line between a loss and a profit on the return axis: a bold one along
+// zero. Given `from` (a value on the x axis), also a dashed upright there with
+// `label` beside it, for where the profit starts.
+const profitLine = {
+  id: 'profitLine',
+  beforeDatasetsDraw(chart, _args, { from, label }) {
+    const { ctx, scales: { x, y }, chartArea: a } = chart;
+    const zero = y.getPixelForValue(0);
+    ctx.save();
+    if (zero >= a.top && zero <= a.bottom) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(a.left, zero); ctx.lineTo(a.right, zero);
+      ctx.stroke();
+    }
+    const px = from == null ? null : x.getPixelForValue(from);
+    if (px != null && px >= a.left && px <= a.right) {
+      ctx.strokeStyle = C_UP;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(px, a.top); ctx.lineTo(px, a.bottom);
+      ctx.stroke();
+      ctx.font = `600 11px ${Chart.defaults.font.family}`;
+      ctx.fillStyle = '#4ade80';
+      ctx.textBaseline = 'top';
+      // Beside the line on whichever side has the room
+      const right = px + 6 + ctx.measureText(label).width <= a.right;
+      ctx.textAlign = right ? 'left' : 'right';
+      ctx.fillText(label, px + (right ? 6 : -6), a.top + 4);
+    }
+    ctx.restore();
+  },
+};
+
 const axis = title => ({
   type: 'linear',
   title: { display: true, text: title, color: C_INK, font: { size: 11 } },
@@ -265,11 +306,19 @@ function renderRoiChart(bets, fit, pooled) {
     .map(b => ({ ...b, st: summarise(b.bets), fitted: fit ? b.bets.reduce((a, x) => a + fit.expected(x), 0) / b.bets.length : null }));
   const shown = bins.filter(b => b.st.n >= minBets);
 
+  // Where the profit starts: the lowest bin with a profit in it and in every
+  // bin above it. None when the top bin lost.
+  let from = null;
+  for (let i = shown.length - 1; i >= 0 && shown[i].st.roi > 0; i--) from = shown[i];
+  const fromText = !from ? 'The top bin lost, so there is no edge yet above which every bin is in profit. '
+    : from === shown[0] ? 'Every bin has returned a profit. '
+    : `Every bin from a model edge of ${signedPct(from.lo, 0)} up has returned a profit: the dashed line. `;
+
   $('roi-chart-sub').textContent = `${scopeText()} · 1 unit on every selection in the bin`;
   const hidden = bins.length - shown.length;
   $('roi-chart-note').textContent = !bets.length ? 'No settled selections match these filters yet.'
     : !shown.length ? `No bin has ${minBets} bets yet: lower "Min bets per bin" or use wider bins.`
-    : `Bars are the 90% range, from resampling whole games. ${hidden ? `${count(hidden, 'bin')} under ${minBets} bets left off. ` : ''}`
+    : `${fromText}Bars are the 90% range, from resampling whole games. ${hidden ? `${count(hidden, 'bin')} under ${minBets} bets left off. ` : ''}`
       + (fit ? `The fitted line is what each bin should return once the bookie's price is weighed in${pooled ? ' (fitted on all sports and markets: too few bets here)' : ''}.`
              : `A fitted line appears at ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games.`);
 
@@ -279,12 +328,15 @@ function renderRoiChart(bets, fit, pooled) {
           `${count(b.st.n, 'bet')}, ${wonCount(b.st.wins)} won, over ${count(b.st.games, 'game')}`] }));
   const xs = points.map(p => p.x);
   const x0 = Math.min(0, ...xs), x1 = Math.max(0, ...xs);
+  // Two series for the one measure, so a bin's colour says which side of zero it is on
+  const dots = (label, color, data) => ({ label, data, borderColor: color, backgroundColor: color, pointRadius: 5, pointHoverRadius: 7, showLine: false });
   const datasets = [
-    { label: 'Actual return', data: points, borderColor: C_ACTUAL, backgroundColor: C_ACTUAL, pointRadius: 5, pointHoverRadius: 7, showLine: false },
+    dots('Actual return: profit', C_UP, points.filter(p => p.y > 0)),
+    dots('Actual return: loss', C_DOWN, points.filter(p => p.y <= 0)),
     { label: 'If the model were exactly right', data: [{ x: x0, y: x0 }, { x: x1, y: x1 }], borderColor: C_REF, borderDash: [5, 4],
       borderWidth: 1.5, pointRadius: 0, pointHitRadius: 0, showLine: true, pointStyle: 'line' },
   ];
-  if (fit) datasets.splice(1, 0, { label: 'Fitted: model and bookie price together',
+  if (fit) datasets.splice(2, 0, { label: 'Fitted: model and bookie price together',
     data: shown.map(b => ({ x: pc(b.st.edge), y: pc(b.fitted) })), borderColor: C_SECOND, backgroundColor: C_SECOND,
     borderWidth: 2, pointRadius: 0, pointHitRadius: 0, showLine: true, pointStyle: 'line' });
 
@@ -293,8 +345,9 @@ function renderRoiChart(bets, fit, pooled) {
   const ys = points.flatMap(p => [p.y, p.lo ?? p.y, p.hi ?? p.y]).concat(x0, x1);
   options.scales.y.min = Math.max(-100, Math.floor(Math.min(...ys) / 10) * 10);
   options.scales.y.max = Math.min(150, Math.ceil(Math.max(...ys) / 10) * 10);
+  options.plugins.profitLine = from && from !== shown[0] ? { from: pc(from.lo), label: `Profit from ${signedPct(from.lo, 0)} edge` } : {};
   roiChart?.destroy();
-  roiChart = new Chart($('roi-chart'), { type: 'scatter', data: { datasets }, options, plugins: [rangeBars] });
+  roiChart = new Chart($('roi-chart'), { type: 'scatter', data: { datasets }, options, plugins: [profitLine, rangeBars] });
 
   const head = ['Model edge', 'Bets', 'Won', 'Games', 'Expected', 'Actual', '90% range', 'Fitted', 'CLV'];
   $('bins-table').innerHTML = `<thead><tr class="text-gray-500">${head.map((h, i) => `<th class="px-2 py-1 font-semibold ${i ? 'text-right' : 'text-left'}">${h}</th>`).join('')}</tr></thead>
@@ -409,6 +462,9 @@ function renderRuleDetail(cell, fit) {
   ruleChart = null;
   $('rule-chart-wrap').classList.toggle('hidden', !cell?.n);
   const title = cell && `${marketText()}: ${ruleText(cell.rule)}, ${oddsText() ?? 'any odds'}`;
+  listed = cell?.n ? { title, bets: cell.bets } : null;
+  // The bets can only be named once the backend sends their names
+  $('rule-bets').classList.toggle('hidden', !raw.some(r => r.selection_name != null));
   if (!cell?.n) {
     $('rule-title').textContent = title || 'Nothing to show';
     $('rule-verdict').textContent = 'No settled bets here yet.';
@@ -440,9 +496,22 @@ function renderRuleDetail(cell, fit) {
 
   let run = 0;
   const data = cell.bets.map((b, k) => { run += profit(b); return { x: k + 1, y: run, date: b.date }; });
-  const color = run >= 0 ? '#22c55e' : '#ef4444';
+  // Green above zero and red below, split exactly at the zero line (a step
+  // that crosses it changes colour part way), so the swings in and out of
+  // profit show: a gradient down the chart with one hard stop at zero.
+  const UP = C_UP, DOWN = C_DOWN;
+  const bySign = ({ chart }) => {
+    const { chartArea: area, scales } = chart;
+    if (!area) return UP;
+    const zero = Math.max(0, Math.min(1, (scales.y.getPixelForValue(0) - area.top) / (area.bottom - area.top)));
+    const g = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+    g.addColorStop(0, UP); g.addColorStop(zero, UP); g.addColorStop(zero, DOWN); g.addColorStop(1, DOWN);
+    return g;
+  };
+  const pointColor = ctx => (ctx.raw?.y ?? 0) >= 0 ? UP : DOWN;
   ruleChart = new Chart($('rule-chart'), { type: 'line',
-    data: { datasets: [{ data: [{ x: 0, y: 0 }, ...data], borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, stepped: true }] },
+    data: { datasets: [{ data: [{ x: 0, y: 0 }, ...data], borderColor: bySign, pointBackgroundColor: pointColor, pointBorderColor: pointColor,
+                         borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, stepped: true }] },
     options: {
       responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
@@ -452,10 +521,107 @@ function renderRuleDetail(cell, fit) {
              grid: { color: ctx => ctx.tick.value === 0 ? 'rgba(255,255,255,0.35)' : GRID }, border: { color: 'rgba(255,255,255,0.1)' } },
       },
       plugins: { legend: { display: false },
-        tooltip: { filter: item => item.raw.date != null,
+        tooltip: { filter: item => item.raw.date != null, displayColors: false,
           callbacks: { title: () => '', label: item => `${units(item.raw.y)} after ${count(item.raw.x, 'bet')} · ${dayText(item.raw.date)}` } } },
     } });
 }
+
+// --- the bets behind a rule ------------------------------------------------------
+// A window over the page listing the bets of the row in the detail panel,
+// newest first: what each was, at what price and edge, and how it went. Built
+// as player-stats-modal.js builds its window.
+
+const BETS_MAX = 100;
+const betsModal = document.createElement('div');
+betsModal.className = 'fixed inset-0 hidden items-end sm:items-center justify-center bg-black/60 sm:p-4';
+betsModal.style.zIndex = '1200';   // above the site header (1100)
+betsModal.innerHTML = `
+  <div role="dialog" aria-modal="true" aria-labelledby="bets-title"
+       class="bg-gray-800 border border-gray-700 w-full sm:max-w-3xl max-h-[88vh] flex flex-col rounded-t-2xl sm:rounded-2xl shadow-2xl p-4">
+    <div class="flex items-start gap-3">
+      <div class="min-w-0 flex-1">
+        <h2 id="bets-title" class="text-base font-bold leading-tight"></h2>
+        <p id="bets-sub" class="text-xs text-gray-400 mt-0.5"></p>
+      </div>
+      <button type="button" data-close-bets aria-label="Close"
+              class="shrink-0 w-8 h-8 -mr-1 -mt-1 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 text-lg leading-none">✕</button>
+    </div>
+    <div id="bets-show" class="mt-3 inline-flex shrink-0 self-start rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="Which bets to list"></div>
+    <div class="mt-3 overflow-auto -mx-1 min-h-0">
+      <table class="w-full text-xs sm:min-w-[40rem]">
+        <thead class="sticky top-0 bg-gray-800">
+          <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+            <th class="px-2 py-1.5 text-left font-semibold">Date</th>
+            <th class="px-2 py-1.5 text-left font-semibold">Game</th>
+            <th class="px-2 py-1.5 text-left font-semibold">Bet</th>
+            <th class="px-2 py-1.5 text-right font-semibold">Odds</th>
+            <th class="px-2 py-1.5 text-right font-semibold" title="The return the model expected at these odds, and its chance of the bet winning">Edge</th>
+            <th class="px-2 py-1.5 text-right font-semibold" title="How it went, and the profit on 1 unit">Result</th>
+          </tr>
+        </thead>
+        <tbody id="bets-rows"></tbody>
+      </table>
+    </div>
+    <p id="bets-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
+  </div>`;
+document.body.appendChild(betsModal);
+let betsOpener = null;   // what had the focus, to hand it back on closing
+
+const outcome = b => b.push >= 1 ? 'Push' : b.win >= 1 ? 'Won' : b.win + b.push <= 0 ? 'Lost' : b.win > 0 ? 'Half won' : 'Half lost';
+
+function renderBets() {
+  const all = [...listed.bets].reverse();   // they come oldest first
+  const parts = { all, won: all.filter(b => profit(b) > 0), lost: all.filter(b => profit(b) < 0) };
+  const bets = parts[betsShow], shown = bets.slice(0, BETS_MAX);
+  const total = bets.reduce((a, b) => a + profit(b), 0);
+  const manySports = new Set(all.map(b => b.sport)).size > 1;
+  $('bets-title').textContent = listed.title;
+  $('bets-sub').textContent = `${count(bets.length, 'bet')}${bets.length ? ` · ${units(total)} at 1 unit a bet` : ''} · newest first`;
+  $('bets-show').innerHTML = [['all', 'All'], ['won', 'Won'], ['lost', 'Lost']].map(([key, label], i) =>
+    `<button type="button" data-show="${key}" aria-pressed="${key === betsShow}" class="px-2.5 py-1 ${i ? 'border-l border-gray-600 ' : ''}${
+      key === betsShow ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}">${label} <span class="tabular-nums opacity-70">${parts[key].length}</span></button>`).join('');
+  $('bets-rows').innerHTML = shown.map(b => {
+    const r = b.row, p = profit(b);
+    return `<tr class="border-t border-gray-700/60 tabular-nums text-gray-300 align-top">
+      <td class="px-2 py-1.5 whitespace-nowrap">${dayText(b.date)}</td>
+      <td class="px-2 py-1.5">${esc(r.home_team)} v ${esc(r.away_team)}${manySports ? `<span class="block text-[10px] text-gray-500">${esc(SPORT_LABELS[b.sport] || b.sport)}</span>` : ''}</td>
+      <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.source === 'book' ? 'bookmakers' : 'Betfair'}</span></td>
+      <td class="px-2 py-1.5 text-right">${odds(b.back)}</td>
+      <td class="px-2 py-1.5 text-right">${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span></td>
+      <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">None of these.</td></tr>';
+  $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}Odds and edge are as ${
+    $('f-stage').value === 'close' ? 'at the close' : 'when first priced'}. Profit is on 1 unit, after commission where it applies.`;
+}
+
+function openBets() {
+  if (!listed) return;
+  betsOpener = document.activeElement;
+  betsShow = 'all';
+  renderBets();
+  betsModal.classList.remove('hidden');
+  betsModal.classList.add('flex');
+  document.body.style.overflow = 'hidden';
+  betsModal.querySelector('.overflow-auto').scrollTop = 0;
+  betsModal.querySelector('[data-close-bets]').focus();
+}
+
+function closeBets() {
+  betsModal.classList.add('hidden');
+  betsModal.classList.remove('flex');
+  document.body.style.overflow = '';
+  betsOpener?.focus?.();
+}
+
+betsModal.addEventListener('click', e => {
+  if (e.target === betsModal || e.target.closest('[data-close-bets]')) { closeBets(); return; }
+  const show = e.target.closest('button[data-show]')?.dataset.show;
+  if (show && show !== betsShow) { betsShow = show; renderBets(); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !betsModal.classList.contains('hidden')) closeBets();
+});
 
 // One row per sport and market: its best-supported rule, whatever Sport and
 // Market are set to. Only the odds source, stage, count and odds range change it.
@@ -742,6 +908,8 @@ $('rules-rows').addEventListener('click', e => {
   selEdge = Number(row.dataset.edge);
   renderRules(scopes().base);
 });
+
+$('rule-bets').addEventListener('click', openBets);
 
 // A row of the best-rules table: that sport and market, with its rule's row open
 $('best-rules').addEventListener('click', e => {
