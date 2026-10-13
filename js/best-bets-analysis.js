@@ -6,14 +6,18 @@
 // per bin with a range that allows for bets in one game moving together, a
 // fit of results on the model's and the bookie's probabilities (how much
 // weight the model deserves, per sport and market), and closing line value
-// where a closing price exists. The maths is in roi-stats.js; everything is
-// recomputed in the browser so the filters apply to all of it. Same access
-// rules as the Best Bets page.
+// where a closing price exists. A table of betting rules (edge at least X,
+// at cuts fitted to the bets, within the odds range on the slider) shows where
+// a return is holding up and where it is too early to say. The maths is in
+// roi-stats.js; everything is recomputed in the
+// browser so the filters apply to all of it. Same access rules as the Best
+// Bets page.
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, KIND_LABELS, esc, pct, signedPct, signCls, wonCount } from './best-bets-shared.js';
-import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom,
-         FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS } from './roi-stats.js';
+import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
+         FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
+         dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 
 const $ = id => document.getElementById(id);
 
@@ -24,8 +28,11 @@ const GRID = 'rgba(255,255,255,0.06)';
 
 let raw = [];        // decoded rows
 let pending = 0;
-let roiChart = null, calChart = null, leanChart = null, timeChart = null;
+let roiChart = null, calChart = null, leanChart = null, timeChart = null, ruleChart = null;
 let teamKey = null;  // 'sport|team' of the team charted over time, or null for all of them
+let gridMode = 'rule';   // 'rule' / 'band': rows of the rule table take an edge and over, or up to the next
+let selEdge = 0;         // the low edge of the row in the detail panel
+let bestCache = { key: null, rows: [] };
 
 // --- access states (as best-bets.js) ------------------------------------------
 
@@ -66,26 +73,70 @@ function decode(data) {
 const sourceKey = r => r.source.startsWith('oddsapi') ? 'book' : 'betfair';
 const SOURCE_LABELS = { book: 'bookmaker odds', betfair: 'Betfair odds' };
 
-// The bets under the "odds from", "odds taken" and max-odds choices. A selection
-// priced once has no closing price: it has no CLV and is left out of the closing view.
-function baseBets() {
-  const stage = $('f-stage').value, maxOdds = +$('f-max-odds').value, source = $('f-source').value;
+// A market at one line, whichever side: away +3.5 is the same line as home -3.5.
+// Scorers are priced one side only, so they have none.
+const isScorer = r => r.market_kind.endsWith('scorer');
+const marketKey = r => r.market_id == null || isScorer(r) ? null
+  : `${r.market_id}|${r.market_kind === 'handicap' && r.side === 'away' ? -r.line : r.line ?? ''}`;
+// What is being decided: one head-to-head, line and total a game, one bet a
+// scorer. Null when the data doesn't say (an older backend), so nothing is merged.
+const propKey = r => r.market_id == null ? null
+  : !isScorer(r) ? `${r.sport}:${r.game_id}|${r.kind}`
+  : r.player_id == null ? null : `${r.sport}:${r.game_id}|${r.kind}|${r.player_id}|${r.line ?? ''}`;
+
+// Stops of the odds slider: close together where most prices are, wide apart
+// up the long end. The last is "any price".
+const ODDS_STOPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity];
+const ODDS_DEFAULT = [1, 10];
+const oddsRange = () => [ODDS_STOPS[+$('f-odds-min').value], ODDS_STOPS[+$('f-odds-max').value]];
+// "odds under $10", "odds $2 to $10", "odds $2 and over"; null when every price is in
+function oddsText() {
+  const [lo, hi] = oddsRange();
+  return lo <= 1 ? (isFinite(hi) ? `odds under $${hi}` : null) : isFinite(hi) ? `odds $${lo} to $${hi}` : `odds $${lo} and over`;
+}
+
+// Keeps the two ends apart (the one being dragged gives way) and redraws the
+// bar between them and the readout.
+function syncOdds(moved) {
+  const lo = $('f-odds-min'), hi = $('f-odds-max'), last = ODDS_STOPS.length - 1;
+  if (+lo.value >= +hi.value) {
+    if (moved === hi) hi.value = +lo.value + 1;
+    else lo.value = +hi.value - 1;
+  }
+  // A thumb's centre travels the track less half a thumb at each end
+  Object.assign($('odds-fill').style, { left: `calc(8px + (100% - 16px) * ${+lo.value / last})`, width: `calc((100% - 16px) * ${(hi.value - lo.value) / last})` });
+  const [a, b] = oddsRange();
+  $('odds-readout').textContent = `$${a} – ${isFinite(b) ? `$${b}` : 'any'}`;
+}
+
+// The bets under the "odds from", "odds taken", "count" and odds choices. A
+// selection priced once has no closing price: it has no CLV and is left out of
+// the closing view. Markets with no real prices are always left out.
+//   base   what the tiles, rules, charts and breakdown read
+//   every  each selection whatever "count" says: the team view pairs up the
+//          two sides of a head-to-head itself
+function scopes() {
+  const stage = $('f-stage').value, source = $('f-source').value, [oddsLo, oddsHi] = oddsRange();
   const out = [];
   for (const r of raw) {
     if (source !== 'all' && sourceKey(r) !== source) continue;
     const repriced = r.n_checks > 1;
     if (stage === 'close' && !repriced) continue;
-    const back = r[`${stage}_back`];
-    if (maxOdds && back >= maxOdds) continue;
     out.push({
       game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-      edge: r[`${stage}_edge`], prob: r[`${stage}_prob`], back, commission: r.commission,
+      edge: r[`${stage}_edge`], prob: r[`${stage}_prob`], back: r[`${stage}_back`], commission: r.commission,
       win: r.win_frac, push: r.push_frac,
       team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
       clv: repriced ? r.open_back / r.close_back - 1 : null,
+      market: marketKey(r), prop: propKey(r), checks: r.n_checks,
     });
   }
-  return out;
+  const { kept, dropped } = dropEmptyMarkets(out);
+  // The bet that stands for a market is picked before the odds cut, so moving
+  // the slider never changes which line or side that is
+  const counted = $('f-count').value === 'one' ? onePerMarket(kept) : kept;
+  const inOdds = b => b.back >= oddsLo && b.back < oddsHi;
+  return { base: counted.filter(inOdds), every: kept.filter(inOdds), empty: dropped, repeats: kept.length - counted.length };
 }
 
 const selected = bets => bets.filter(b => ($('f-sport').value === 'all' || b.sport === $('f-sport').value)
@@ -98,13 +149,24 @@ const binLabel = b => !isFinite(b.lo) ? `under ${signedPct(b.hi, 0)}` : !isFinit
   : `${signedPct(b.lo, 0)} to ${signedPct(b.hi, 0)}`;
 const clvText = st => st.clvN ? signedPct(st.clv) : 'n/a';
 const count = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const capital = s => s[0].toUpperCase() + s.slice(1);
+
+const marketText = () => {
+  const s = $('f-sport').value, m = $('f-market').value;
+  return `${s === 'all' ? 'All sports' : SPORT_LABELS[s]} · ${m === 'all' ? 'all markets' : kindLabel(m)}`;
+};
 
 function scopeText() {
-  const s = $('f-sport').value, m = $('f-market').value, maxOdds = +$('f-max-odds').value;
-  return [s === 'all' ? 'All sports' : SPORT_LABELS[s], m === 'all' ? 'all markets' : kindLabel(m),
-          SOURCE_LABELS[$('f-source').value],
-          $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
-          maxOdds ? `odds under $${maxOdds}` : null].filter(Boolean).join(' · ');
+  return [marketText(), SOURCE_LABELS[$('f-source').value],
+          $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced', oddsText()].filter(Boolean).join(' · ');
+}
+
+function renderCountNote(s) {
+  const parts = [];
+  if (s.repeats) parts.push(`${count(s.repeats, 'selection')} left out as the other side, another line or a second source of a bet already counted`);
+  if (s.empty) parts.push(`${s.empty.toLocaleString()} left out from markets with no real prices (the prices on offer add up to over ${Math.round(MAX_BOOK * 100)}%)`);
+  $('count-note').textContent = !raw.some(r => r.market_id != null) ? 'Counting every selection: the data to tell repeats apart is not being returned yet.'
+    : parts.length ? `${capital(parts.join('; '))}.` : '';
 }
 
 // --- tiles --------------------------------------------------------------------
@@ -278,6 +340,177 @@ function renderCalChart(bets) {
   ] } });
 }
 
+// --- betting rules --------------------------------------------------------------
+
+const wholePct = x => `${Math.round(x * 100)}%`;
+const edgeLabel = r => !isFinite(r.edgeLo) ? `under ${wholePct(r.edgeHi)}` : !isFinite(r.edgeHi) ? `${wholePct(r.edgeLo)}+`
+  : `${Math.round(r.edgeLo * 100)}–${wholePct(r.edgeHi)}`;
+const ruleText = r => `edge ${edgeLabel(r)}`;
+const fittedOf = (bets, fit) => fit && bets.length ? bets.reduce((a, b) => a + fit.expected(b), 0) / bets.length : null;
+const units = x => `${x > 0 ? '+' : ''}${x.toFixed(1)} unit${Math.abs(x).toFixed(1) === '1.0' ? '' : 's'}`;
+
+const VERDICT_CHIPS = {
+  thin:   ['Too few to call', 'bg-gray-700 text-gray-300'],
+  open:   ['Could still be zero', 'bg-amber-900/50 text-amber-300'],
+  ahead:  ['Profit, clear of zero', 'bg-green-900/60 text-green-300'],
+  behind: ['Loss, clear of zero', 'bg-red-900/60 text-red-300'],
+};
+
+// One row's return as a bar out from zero, its 90% range as a whisker and
+// what the model expected as a tick: where the model is right the bar ends at
+// the tick. The fill says how sure, a strong one only where the whole range is
+// one side of zero and an outline on a thin row. `max` is the scale's end;
+// anything past it is cut off there.
+function returnBar(row, max) {
+  const at = x => 50 + Math.max(-1, Math.min(1, x / max)) * 50;
+  const rgb = row.roi >= 0 ? '34,197,94' : '239,68,68';
+  const fill = row.verdict === 'thin' ? `border:1px solid rgba(${rgb},0.6);` : `background:rgba(${rgb},${row.verdict === 'open' ? 0.3 : 0.8});`;
+  const span = (a, b) => `left:${Math.min(at(a), at(b))}%;width:${Math.abs(at(b) - at(a))}%;`;
+  return `<div class="relative h-6" aria-hidden="true">
+    <div class="absolute inset-y-0" style="left:50%;width:1px;background:rgba(255,255,255,0.2);"></div>
+    <div class="absolute rounded-sm" style="top:6px;bottom:6px;${span(0, row.roi)}${fill}"></div>
+    ${row.roiCI ? `<div class="absolute" style="top:50%;height:1px;${span(row.roiCI[0], row.roiCI[1])}background:rgba(255,255,255,0.7);"></div>` : ''}
+    <div class="absolute" style="top:3px;bottom:3px;left:${at(row.edge)}%;width:2px;margin-left:-1px;background:#d97706;"></div>
+  </div>`;
+}
+
+// The row in the detail panel: the one at the chosen edge, or failing that
+// (the cuts moved with the bets) the one starting at zero.
+const rowAt = rows => rows.find(r => r.rule.edgeLo === selEdge) || rows.find(r => r.rule.edgeLo === 0) || rows[0] || null;
+
+// -> the selected row, or null
+function renderRuleTable(rows, fit) {
+  const sel = rowAt(rows);
+  // The scale takes in every return and every model edge, not the ranges: one wild range would flatten the rest
+  const reach = Math.max(0.2, ...rows.filter(r => r.n).flatMap(r => [Math.abs(r.roi), Math.abs(r.edge)]));
+  const max = [0.2, 0.3, 0.5, 0.75, 1, 1.5].find(m => m >= reach) ?? 1.5;
+  $('rules-scale').innerHTML = [-max, 0, max].map(x => `<span>${x ? signedPct(x, 0) : '0'}</span>`).join('');
+  const cell = (x, cls = 'text-gray-300') => `<td class="px-2 py-1 text-right ${cls}">${x}</td>`;
+  $('rules-rows').innerHTML = rows.map(r => {
+    const on = r === sel, fitted = fittedOf(r.bets, fit);
+    const open = `<tr data-edge="${r.rule.edgeLo}" aria-selected="${on}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${on ? 'bg-gray-700/40' : ''}"
+      title="${r.n ? esc(`${capital(ruleText(r.rule))}: ${signedPct(r.roi)} on ${count(r.n, 'bet')} over ${count(r.games, 'game')}${r.roiCI ? `, 90% range ${range(r.roiCI)}` : ''}. ${VERDICT_CHIPS[r.verdict][0]}.`) : ''}">
+      <th scope="row" class="px-2 py-1 text-left font-semibold text-gray-100 whitespace-nowrap" style="${on ? 'box-shadow:inset 3px 0 0 #d97706;' : ''}">${edgeLabel(r.rule)}</th>`;
+    if (!r.n) return `${open}<td class="px-2 py-1 text-gray-600" colspan="5">No bets</td></tr>`;
+    return `${open}
+      <td class="px-2 py-1 text-right text-gray-300 leading-tight">${r.n.toLocaleString()}<span class="block text-[10px] text-gray-500">${count(r.games, 'game')}</span></td>
+      ${cell(signedPct(r.edge, 0))}
+      ${cell(signedPct(r.roi, 0), `font-bold ${r.verdict === 'thin' ? (r.roi >= 0 ? 'text-green-400/60' : 'text-red-400/60') : signCls(r.roi)}`)}
+      <td class="px-2 py-1">${returnBar(r, max)}</td>
+      ${cell(fitted != null ? signedPct(fitted, 0) : '–')}</tr>`;
+  }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections match these filters yet.</td></tr>';
+  return sel;
+}
+
+function renderRuleDetail(cell, fit) {
+  const stat = (label, value, sub = '', title = '') => `<div title="${esc(title)}"><dt class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">${label}</dt>
+    <dd class="text-sm font-semibold tabular-nums text-gray-100">${value}</dd>${sub ? `<dd class="text-[10px] text-gray-500 leading-snug">${sub}</dd>` : ''}</div>`;
+  ruleChart?.destroy();
+  ruleChart = null;
+  $('rule-chart-wrap').classList.toggle('hidden', !cell?.n);
+  const title = cell && `${marketText()}: ${ruleText(cell.rule)}, ${oddsText() ?? 'any odds'}`;
+  if (!cell?.n) {
+    $('rule-title').textContent = title || 'Nothing to show';
+    $('rule-verdict').textContent = 'No settled bets here yet.';
+    $('rule-stats').innerHTML = '';
+    return;
+  }
+  const st = cell;
+  const exp = expectedWins(cell.bets);
+  const fitted = fittedOf(cell.bets, fit);
+  const [chip, chipCls] = VERDICT_CHIPS[st.verdict];
+  $('rule-title').textContent = title;
+  $('rule-verdict').innerHTML = `<span class="inline-block rounded px-1.5 py-0.5 mr-1.5 text-[10px] font-semibold ${chipCls}">${chip}</span>`
+    + (st.verdict === 'thin' ? `${count(st.n, 'bet')} over ${count(st.games, 'game')}. A rule is called once it has ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games.`
+      : st.verdict === 'open' ? `The 90% range runs from ${signedPct(st.roiCI[0], 0)} to ${signedPct(st.roiCI[1], 0)}, so the result so far could be luck either way.`
+      : st.verdict === 'ahead' ? 'Even the low end of the 90% range is a profit. It is one of several rules looked at, so check the rows around it agree.'
+      : 'Even the high end of the 90% range is a loss.');
+  $('rule-stats').innerHTML = [
+    stat('Returned', `<span class="${signCls(st.roi)}">${signedPct(st.roi)}</span>`, st.roiCI ? `90% range ${range(st.roiCI)}` : 'too few games for a range'),
+    stat('Profit', `<span class="${signCls(st.units)}">${units(st.units)}</span>`, `${count(st.n, 'bet')} over ${count(st.games, 'game')}`),
+    stat('Won', `${wonCount(st.wins)} of ${st.n}`, exp.n ? `model expected ${exp.model.toFixed(1)} · bookie ${exp.bookie.toFixed(1)}` : ''),
+    stat('Model expected', signedPct(st.edge), fitted != null ? `${signedPct(fitted)} with the bookie's price weighed in` : '',
+      "The return the model's own prices say these bets should make, and what the fit of results on the model's and the bookie's prices says"),
+    stat('Without best game', st.restRoi != null ? `<span class="${signCls(st.restRoi)}">${signedPct(st.restRoi)}</span>` : '–', 'the return with its most profitable game taken out',
+      'A rule that lives off one game falls over here'),
+    stat('Closing line value', st.clvN ? `<span class="${signCls(st.clv)}">${signedPct(st.clv)}</span>` : 'n/a',
+      st.clvN ? `${count(st.clvN, 'bet')} priced more than once` : 'no closing prices here',
+      'Odds when first priced against the closing odds. Above zero means the market moved toward the model: the earliest sign an edge is real.'),
+  ].join('');
+
+  let run = 0;
+  const data = cell.bets.map((b, k) => { run += profit(b); return { x: k + 1, y: run, date: b.date }; });
+  const color = run >= 0 ? '#22c55e' : '#ef4444';
+  ruleChart = new Chart($('rule-chart'), { type: 'line',
+    data: { datasets: [{ data: [{ x: 0, y: 0 }, ...data], borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, stepped: true }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
+      scales: {
+        x: { type: 'linear', min: 0, max: Math.max(1, data.length), title: { display: true, text: 'Bets, in date order', color: C_INK, font: { size: 10 } },
+             ticks: { color: C_INK, precision: 0, font: { size: 10 } }, grid: { display: false }, border: { color: 'rgba(255,255,255,0.1)' } },
+        y: { title: { display: true, text: 'Units', color: C_INK, font: { size: 10 } }, ticks: { color: C_INK, font: { size: 10 } },
+             grid: { color: ctx => ctx.tick.value === 0 ? 'rgba(255,255,255,0.35)' : GRID }, border: { color: 'rgba(255,255,255,0.1)' } },
+      },
+      plugins: { legend: { display: false },
+        tooltip: { filter: item => item.raw.date != null,
+          callbacks: { title: () => '', label: item => `${units(item.raw.y)} after ${count(item.raw.x, 'bet')} · ${dayText(item.raw.date)}` } } },
+    } });
+}
+
+// One row per sport and market: its best-supported rule, whatever Sport and
+// Market are set to. Only the odds source, stage, count and odds range change it.
+function renderBestRules(base) {
+  const key = [$('f-source').value, $('f-stage').value, $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, raw.length].join('|');
+  if (bestCache.key !== key) {
+    const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
+      const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0);
+      return { g, best: bestRule(bets), pos: pos.length, games: new Set(pos.map(b => b.game)).size,
+               roi: pos.length ? pos.reduce((a, b) => a + profit(b), 0) / pos.length : null };
+    });
+    rows.sort((a, b) => (b.best ? b.best.roiCI[0] : -Infinity) - (a.best ? a.best.roiCI[0] : -Infinity) || b.pos - a.pos);
+    bestCache = { key, rows };
+  }
+  const { rows } = bestCache;
+  const cell = (x, cls = 'text-gray-300') => `<td class="px-2 py-2 text-right ${cls}">${x}</td>`;
+  $('best-rules').innerHTML = !rows.length ? '<tr><td colspan="7" class="px-2 py-6 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
+    : rows.map(({ g, best, pos, games, roi }) => {
+      const open = `<tr data-group="${esc(g)}" ${best ? `data-edge="${best.rule.edgeLo}"` : ''} class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums">
+        <td class="px-2 py-2 text-left font-semibold text-gray-100">${esc(groupLabel(g))}</td>`;
+      if (!best) return `${open}<td class="px-2 py-2 text-left text-gray-500" colspan="6">Not enough yet: ${count(pos, 'bet')} at an edge of 0% or more over ${count(games, 'game')}${
+        roi != null ? `, <span class="${roi >= 0 ? 'text-green-400/60' : 'text-red-400/60'}">${signedPct(roi, 0)}</span> so far` : ''}</td></tr>`;
+      const [chip, chipCls] = VERDICT_CHIPS[best.verdict];
+      return `${open}<td class="px-2 py-2 text-left text-gray-200 whitespace-nowrap">${capital(ruleText(best.rule))}
+          <span class="inline-block rounded px-1.5 py-0.5 ml-1 text-[10px] font-semibold ${chipCls}">${chip}</span></td>
+        ${cell(best.n.toLocaleString())}${cell(best.games.toLocaleString())}
+        <td class="px-2 py-2 text-right"><span class="font-bold ${signCls(best.roi)}">${signedPct(best.roi)}</span><span class="block text-[10px] text-gray-500">${range(best.roiCI)}</span></td>
+        ${cell(signedPct(best.restRoi), signCls(best.restRoi))}
+        <td class="px-2 py-2 text-right text-gray-300" title="${best.clvN} of ${best.n} with a closing price">${clvText(best)}</td></tr>`;
+    }).join('');
+  const source = SOURCE_LABELS[$('f-source').value];
+  $('best-rules-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
+  $('best-rules-note').textContent = 'Each row is the best of several rules, one for each edge its bets are cut at, and the best of several always flatters. Trust one more when the rows around it agree, '
+    + 'when it holds up without its best game, and when the closing price moved its way.';
+}
+
+function renderRules(base) {
+  const bets = selected(base);
+  const fit = fitBlend(bets) || fitBlend(base);
+  $('rules-sub').textContent = [marketText(), SOURCE_LABELS[$('f-source').value],
+    $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced', oddsText() ?? 'any odds', '1 unit on every bet in the row'].filter(Boolean).join(' · ');
+  for (const b of $('rules-mode').children) {
+    const on = b.dataset.mode === gridMode;
+    b.className = `px-2.5 py-1 ${b.dataset.mode === 'band' ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
+    b.setAttribute('aria-pressed', on);
+  }
+  $('rules-note').textContent = 'The edges the rows are cut at are fitted to the bets in view: a cut is added, and they reach higher, once there are enough bets to fill a row. '
+    + (gridMode === 'rule' ? 'A row takes every bet with at least its edge, so rows overlap: a good rule shows as a run of rows that agree, not one that stands out.'
+                           : "A row takes the bets from its edge up to the next row's, so no bet is in two rows.")
+    + ' Narrow the odds with the slider above.';
+  // The range is worked out for thin rows too: the whisker shows how little they say
+  renderRuleDetail(renderRuleTable(ruleRows(bets, { mode: gridMode, thinRange: true }), fit), fit);
+  renderBestRules(base);
+}
+
 // --- by team ------------------------------------------------------------------
 
 const sumRows = rows => rows.reduce((a, g) => ({ ...a, n: a.n + g.n, model: a.model + g.model, bookie: a.bookie + g.bookie, actual: a.actual + g.actual }),
@@ -396,7 +629,7 @@ function renderTeams(base) {
   if (teamKey && !tgs.some(g => g.key === teamKey && g.n)) teamKey = null;
   $('team-sub').textContent = [sport === 'all' ? 'All sports' : SPORT_LABELS[sport], SOURCE_LABELS[$('f-source').value],
     $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
-    +$('f-max-odds').value ? `odds under $${$('f-max-odds').value}` : null, 'not narrowed by Market'].filter(Boolean).join(' · ');
+    oddsText(), 'not narrowed by Market'].filter(Boolean).join(' · ');
   const none = !tgs.length;
   $('team-empty').classList.toggle('hidden', !none);
   $('team-body').classList.toggle('hidden', none);
@@ -441,27 +674,30 @@ function renderBreakdown(base) {
     ? ($('f-sport').value === 'all' && $('f-market').value === 'all' ? 'all' : null)
     : `${$('f-sport').value}|${$('f-market').value}`;
   const source = SOURCE_LABELS[$('f-source').value];
-  $('breakdown-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''}${+$('f-max-odds').value ? ` · odds under $${$('f-max-odds').value}` : ''} · select a row to chart it`;
+  $('breakdown-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''}${oddsText() ? ` · ${oddsText()}` : ''} · select a row to chart it`;
   $('breakdown-body').innerHTML = !base.length
     ? '<tr><td colspan="11" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
     : breakdownRow('All sports and markets', base, 'all', current === 'all')
       + groups.map(g => breakdownRow(groupLabel(g), base.filter(b => b.group === g), g, current === g)).join('');
   $('method-note').textContent = 'Returns are per unit staked at the bookie odds, after commission where it applies. Ranges are 90%, from resampling whole games, '
-    + 'because selections in one game win and lose together. Scorer odds are the median of US bookmakers, fetched once per game, so those markets have no closing line value. '
+    + "because selections in one game win and lose together. Counted one bet per market, a game's head-to-head, line and total each give one bet: the main line, on the side the model likes best. "
+    + 'Scorer odds are the median of US bookmakers, fetched once per game, so those markets have no closing line value. '
     + 'Small samples swing a lot: read the range, not the point.';
 }
 
 // --- wiring -------------------------------------------------------------------
 
 function render() {
-  const base = baseBets();
+  const s = scopes(), base = s.base;
   const bets = selected(base);
   let fit = fitBlend(bets), pooled = false;
   if (!fit && bets.length !== base.length) { fit = fitBlend(base); pooled = !!fit; }
+  renderCountNote(s);
   renderTiles(bets, fit, pooled);
+  renderRules(base);
   renderRoiChart(bets, fit, pooled);
   renderCalChart(bets);
-  renderTeams(base);
+  renderTeams(s.every);
   renderBreakdown(base);
 }
 
@@ -469,13 +705,51 @@ function fillSelect(id, options) {
   $(id).innerHTML = options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
 }
 
-['f-sport', 'f-market', 'f-source', 'f-stage', 'f-max-odds', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
-$('breakdown-body').addEventListener('click', e => {
-  const key = e.target.closest('tr[data-group]')?.dataset.group;
-  if (!key) return;
+['f-sport', 'f-market', 'f-source', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+
+// The odds slider: the readout follows the drag, the page redraws on release
+for (const [id, start] of [['f-odds-min', ODDS_DEFAULT[0]], ['f-odds-max', ODDS_DEFAULT[1]]]) {
+  const el = $(id);
+  Object.assign(el, { min: 0, max: ODDS_STOPS.length - 1, value: ODDS_STOPS.indexOf(start) });
+  el.addEventListener('input', () => syncOdds(el));
+  el.addEventListener('change', render);
+}
+syncOdds();
+
+function showGroup(key) {
   const [s, k] = key === 'all' ? ['all', 'all'] : key.split('|');
   $('f-sport').value = s;
   $('f-market').value = k;
+}
+
+$('breakdown-body').addEventListener('click', e => {
+  const key = e.target.closest('tr[data-group]')?.dataset.group;
+  if (!key) return;
+  showGroup(key);
+  render();
+});
+
+$('rules-mode').addEventListener('click', e => {
+  const mode = e.target.closest('button[data-mode]')?.dataset.mode;
+  if (!mode || mode === gridMode) return;
+  gridMode = mode;
+  renderRules(scopes().base);
+});
+
+$('rules-rows').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-edge]');
+  if (!row) return;
+  selEdge = Number(row.dataset.edge);
+  renderRules(scopes().base);
+});
+
+// A row of the best-rules table: that sport and market, with its rule's row open
+$('best-rules').addEventListener('click', e => {
+  const row = e.target.closest('tr[data-group]');
+  if (!row) return;
+  showGroup(row.dataset.group);
+  gridMode = 'rule';
+  selEdge = Number(row.dataset.edge ?? 0);
   render();
 });
 
@@ -483,7 +757,7 @@ $('team-table').addEventListener('click', e => {
   const row = e.target.closest('tr[data-team]');
   if (!row) return;
   teamKey = row.dataset.team || null;
-  renderTeams(baseBets());
+  renderTeams(scopes().every);
 });
 
 async function init() {
@@ -501,6 +775,8 @@ async function init() {
   pending = data.pending;
   fillSelect('f-sport', [['all', 'All'], ...Object.keys(SPORT_LABELS).filter(s => raw.some(r => r.sport === s)).map(s => [s, SPORT_LABELS[s]])]);
   fillSelect('f-market', [['all', 'All'], ...[...new Set(raw.map(r => r.kind))].sort().map(k => [k, kindLabel(k)])]);
+  // Repeats can only be told apart once the backend says which market a selection is in
+  if (!raw.some(r => r.market_id != null)) { $('f-count').value = 'all'; $('f-count').disabled = true; }
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   render();

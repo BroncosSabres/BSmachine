@@ -23,6 +23,24 @@
     <link rel="stylesheet" href="/css/style.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <style>
+      /* Two range inputs laid over one track: only their thumbs take the pointer */
+      .dual-range { position: relative; height: 1.5rem; }
+      .dual-range-track, .dual-range-fill { position: absolute; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
+      .dual-range-track { left: 0; right: 0; background: #374151; }
+      .dual-range-fill { background: #d97706; }
+      .dual-range input[type=range] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
+        background: none; pointer-events: none; -webkit-appearance: none; appearance: none; }
+      .dual-range input[type=range]::-webkit-slider-runnable-track { background: none; }
+      .dual-range input[type=range]::-moz-range-track { background: none; }
+      .dual-range input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto; cursor: pointer;
+        width: 16px; height: 16px; border-radius: 50%; background: #f59e0b; border: 2px solid #111827; }
+      .dual-range input[type=range]::-moz-range-thumb { pointer-events: auto; cursor: pointer;
+        width: 12px; height: 12px; border-radius: 50%; background: #f59e0b; border: 2px solid #111827; }
+      .dual-range input[type=range]:focus-visible { outline: none; }
+      .dual-range input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px #fff; }
+      .dual-range input[type=range]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 2px #fff; }
+    </style>
   </head>
   <body class="bg-gray-900 text-white">
     <div id="site-header"></div>
@@ -61,17 +79,21 @@
                 <option value="close">Closing</option>
               </select>
             </label>
-            <label class="flex items-center gap-1.5" title="Only selections with bookie odds under this price">Max odds
-              <select id="f-max-odds" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                <option value="0">Any</option>
-                <option value="2">&lt; $2</option>
-                <option value="3">&lt; $3</option>
-                <option value="5">&lt; $5</option>
-                <option value="10" selected>&lt; $10</option>
-                <option value="20">&lt; $20</option>
-                <option value="50">&lt; $50</option>
+            <label class="flex items-center gap-1.5" title="One bet per market: of a game's head-to-head, line and total, only the main line and the side the model likes best, and a scorer priced by both Betfair and the bookmakers once. Every selection counts both sides of a market, each alternate line and each source, so one result shows up several times.">Count
+              <select id="f-count" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                <option value="one" selected>One bet per market</option>
+                <option value="all">Every selection</option>
               </select>
             </label>
+            <div class="flex items-center gap-2" title="Only selections with bookie odds in this range, from the lower price up to but not including the higher. Drag either end.">Odds
+              <div class="dual-range w-44">
+                <div class="dual-range-track"></div>
+                <div id="odds-fill" class="dual-range-fill"></div>
+                <input type="range" id="f-odds-min" step="1" aria-label="Lowest odds">
+                <input type="range" id="f-odds-max" step="1" aria-label="Highest odds">
+              </div>
+              <output id="odds-readout" for="f-odds-min f-odds-max" class="text-sm text-white tabular-nums whitespace-nowrap w-20"></output>
+            </div>
             <label class="flex items-center gap-1.5" title="How the model edge is cut into bins. Auto uses equal-size bins of about 40 bets until there are 2,000 bets, then 2-point bins.">Bins
               <select id="f-bins" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="a:" selected>Auto</option>
@@ -92,9 +114,81 @@
               </select>
             </label>
           </div>
+          <p id="count-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
         </div>
 
         <div id="tiles" class="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-4"></div>
+
+        <section class="card mb-4" aria-labelledby="rules-title">
+          <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+            <div class="min-w-0">
+              <h2 id="rules-title" class="text-sm font-bold text-gray-100">Where is the edge?</h2>
+              <p id="rules-sub" class="text-[11px] text-gray-500"></p>
+            </div>
+            <div id="rules-mode" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="How the grid is cut">
+              <button type="button" data-mode="rule" class="px-2.5 py-1" title="Every bet with at least the row's edge: how you would set a betting rule. Rows overlap.">Rules</button>
+              <button type="button" data-mode="band" class="px-2.5 py-1 border-l border-gray-600" title="The bets between one edge and the next: where inside a rule the return comes from. Rows don't overlap.">Bands</button>
+            </div>
+          </div>
+
+          <div class="grid gap-4 lg:grid-cols-5">
+            <div class="lg:col-span-3 min-w-0">
+              <div class="overflow-x-auto">
+                <table class="w-full text-xs sm:min-w-[34rem]">
+                  <thead>
+                    <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+                      <th class="px-2 py-1.5 text-left font-semibold">Model edge</th>
+                      <th class="px-2 py-1.5 text-right font-semibold">Bets</th>
+                      <th class="px-2 py-1.5 text-right font-semibold" title="What the model's own prices say these bets should return">Model expected</th>
+                      <th class="px-2 py-1.5 text-right font-semibold" title="What they returned, at 1 unit a bet">Returned</th>
+                      <th class="px-2 py-1.5 font-normal w-2/5"><div id="rules-scale" class="flex justify-between tabular-nums normal-case tracking-normal"></div></th>
+                      <th class="px-2 py-1.5 text-right font-semibold" title="What these bets should return going by the fit of results on the model's and the bookie's prices together. Only as steady as the Model weight above: while its range is wide, read this loosely.">Fitted</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rules-rows"></tbody>
+                </table>
+              </div>
+              <div class="mt-2 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-400">
+                <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.8);"></span>Returned, clear of zero</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.3);"></span>Could still be zero</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="border:1px solid rgba(34,197,94,0.6);"></span>Too few bets to say</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block w-4" style="height:1px;background:rgba(255,255,255,0.7);"></span>90% range</span>
+                <span class="flex items-center gap-1.5"><span class="inline-block h-3" style="width:2px;background:#d97706;"></span>Model expected</span>
+              </div>
+              <p id="rules-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
+            </div>
+
+            <div class="lg:col-span-2 min-w-0 rounded-lg border border-gray-700/70 p-3">
+              <h3 id="rule-title" class="text-xs font-semibold text-gray-100"></h3>
+              <p id="rule-verdict" class="mt-1.5 text-[11px] text-gray-400 leading-snug"></p>
+              <dl id="rule-stats" class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5"></dl>
+              <div id="rule-chart-wrap">
+                <div class="mt-3 text-[11px] text-gray-500">Running profit, 1 unit a bet</div>
+                <div class="relative h-36"><canvas id="rule-chart" role="img" aria-label="Running profit in units over the rule's bets, in date order"></canvas></div>
+              </div>
+            </div>
+          </div>
+
+          <h3 class="mt-5 text-xs font-semibold text-gray-300">Best-supported rule in each sport and market</h3>
+          <p id="best-rules-sub" class="text-[11px] text-gray-500 mb-2"></p>
+          <div class="overflow-x-auto -mx-1">
+            <table class="w-full text-sm sm:min-w-[46rem]">
+              <thead>
+                <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                  <th class="px-2 py-2 text-left font-semibold">Sport · market</th>
+                  <th class="px-2 py-2 text-left font-semibold" title="Of the rules with enough bets, the one whose 90% range has the highest low end">Rule</th>
+                  <th class="px-2 py-2 text-right font-semibold">Bets</th>
+                  <th class="px-2 py-2 text-right font-semibold">Games</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Return on 1 unit a bet, with the 90% range">Returned</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="The return with the rule's most profitable game taken out. A rule that lives off one game falls over here.">Without best game</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds when first priced against the closing odds, for the rule's bets priced more than once">CLV</th>
+                </tr>
+              </thead>
+              <tbody id="best-rules"></tbody>
+            </table>
+          </div>
+          <p id="best-rules-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
 
         <div class="grid gap-4 lg:grid-cols-2 mb-4">
           <section class="card min-w-0" aria-labelledby="roi-chart-title">
