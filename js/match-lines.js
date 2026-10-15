@@ -1,12 +1,13 @@
 // match-lines.js
 // Shared "Custom Line" feature for the NRL and NFL predictions pages. Every
-// match tile gets an inline slider (home team spread), defaulted to the line
-// the BS Machine's margin distribution says is closest to a 50/50 cover, with
-// a live cover-probability bar underneath. Manual overrides are personal to
+// match tile gets an inline slider (home team spread), defaulted to the market
+// line when the page has one (e.g. the bookmakers' NFL line), otherwise to the
+// line the BS Machine's margin distribution says is closest to a 50/50 cover,
+// with a live cover-probability bar underneath. Manual overrides are personal to
 // this browser (localStorage only) — there is no server-side persistence.
 // Pages can also read each match's current cover-probability discrepancy from
 // 50/50 to offer a "sort by most discrepant" view once lines have been moved.
-console.info('[match-lines] loaded rev5 (half-point defaults, no push by default)');
+console.info('[match-lines] loaded rev6 (market line defaults)');
 
 function loadLines(storageKey) {
   try {
@@ -114,13 +115,16 @@ function fmtLine(v) {
 
 const LINE_STEP = 0.5;
 
-function controlHtml({ homeTeam, awayTeam, min, max, value }) {
+function controlHtml({ homeTeam, awayTeam, min, max, value, market, homeShort }) {
   const btnStyle = 'background:transparent;border:1px solid #4b5563;color:#9ca3af;cursor:pointer;';
+  const marketNote = market
+    ? ` <span class="normal-case tracking-normal font-normal text-gray-600"${market.title ? ` title="${escapeHtml(market.title)}"` : ''}>&middot; ${escapeHtml(market.label)}: ${escapeHtml(homeShort || homeTeam)} ${fmtLine(market.line)}</span>`
+    : '';
   return `
     <div class="mt-3 pt-3 border-t border-gray-700/50">
       <div class="flex items-center justify-between text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1.5">
-        <span>Custom Line</span>
-        <button type="button" class="js-line-reset" title="Reset to BS Machine line"
+        <span>Custom Line${marketNote}</span>
+        <button type="button" class="js-line-reset" title="Reset to ${market ? `${escapeHtml(market.label)} line` : 'BS Machine line'}"
                 style="background:none;border:none;cursor:pointer;color:#6b7280;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;">&#8634; Reset</button>
       </div>
       <div class="flex justify-between items-end text-sm font-bold mb-1.5">
@@ -209,11 +213,14 @@ export function createMatchLinesController({ storageKey, fetchDistribution }) {
   }
 
   // Mounts a slider + live cover-probability bar into `slot` for one match.
+  // market: optional { line, label, title? } — a market's home spread (e.g. the bookmakers'
+  // consensus line), used as-is as the default and shown beside the header for reference.
   // expectedMargin: the BS Machine's predicted home-minus-away score (same number as the
-  // tile's "Predicted" score), used to seed the default line — see suggestedHomeLine().
+  // tile's "Predicted" score), seeds the default when there's no market line — see
+  // suggestedHomeLine(). homeShort: optional short home team name for the market note.
   // onChange(id) fires after the line settles (initial mount, slider release/±, reset) —
   // not on every drag tick — so callers can re-sort without the list jumping mid-drag.
-  async function mountControl(slot, { id, homeTeam, awayTeam, homeColor, awayColor, expectedMargin, onChange }) {
+  async function mountControl(slot, { id, homeTeam, awayTeam, homeShort, homeColor, awayColor, expectedMargin, market, onChange }) {
     if (!slot) return;
     slot.innerHTML = `<div class="mt-3 pt-3 border-t border-gray-700/50 text-xs text-gray-600">Loading line…</div>`;
 
@@ -232,11 +239,15 @@ export function createMatchLinesController({ storageKey, fetchDistribution }) {
       return;
     }
 
-    const defaultLine = suggestedHomeLine(bins, expectedMargin);
+    // A market line can sit on a whole number (a push is possible there), unlike the
+    // model's own suggestion; quarter lines aren't supported by the half-point slider.
+    const marketLine = Number.isFinite(market?.line) ? Math.round(market.line * 2) / 2 : null;
+    market = marketLine === null ? null : { ...market, line: marketLine };
+    const defaultLine = marketLine ?? suggestedHomeLine(bins, expectedMargin);
     const { min, max } = sliderRange(bins, defaultLine);
     const startLine = Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : defaultLine;
 
-    slot.innerHTML = controlHtml({ homeTeam, awayTeam, min, max, value: startLine });
+    slot.innerHTML = controlHtml({ homeTeam, awayTeam, min, max, value: startLine, market, homeShort });
     const slider  = slot.querySelector('.js-line-slider');
     const resetBtn = slot.querySelector('.js-line-reset');
     const decBtn  = slot.querySelector('.js-line-dec');

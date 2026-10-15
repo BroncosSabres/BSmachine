@@ -104,6 +104,17 @@
                 <option value="c:15">15 equal-size</option>
               </select>
             </label>
+            <label class="flex items-center gap-1.5" title="How cautious the safe stakes are. Low: 99% sure of the edge, under 1% chance of ever losing a quarter of the bank. Medium: 95% sure, under 1% chance of ever losing half. High: 80% sure, under 5% chance of ever losing half. Shared with the Best Bets page.">Risk
+              <select id="f-risk" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-1.5" title="Your betting bank, to show stakes in dollars. Kept in this browser only.">Bank $
+              <input id="f-balance" type="number" min="0" step="any" inputmode="decimal" placeholder="optional"
+                     class="w-24 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+            </label>
             <label class="flex items-center gap-1.5" title="Bins with fewer bets than this are left off the chart">Min bets per bin
               <select id="f-min-bets" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="1">1</option>
@@ -183,12 +194,40 @@
                   <th class="px-2 py-2 text-right font-semibold" title="Return on 1 unit a bet, with the 90% range">Returned</th>
                   <th class="px-2 py-2 text-right font-semibold" title="The return with the rule's most profitable game taken out. A rule that lives off one game falls over here.">Without best game</th>
                   <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds when first priced against the closing odds, for the rule's bets priced more than once">CLV</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="A share of the bank per bet at the Risk level chosen, off the low end of the rule's return, at its median odds. Nothing until that low end is a profit.">Safe stake</th>
                 </tr>
               </thead>
               <tbody id="best-rules"></tbody>
             </table>
           </div>
           <p id="best-rules-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
+
+        <section class="card mb-4" aria-labelledby="grid-title">
+          <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
+            <div class="min-w-0">
+              <h2 id="grid-title" class="text-sm font-bold text-gray-100">Where to bet: edge by odds</h2>
+              <p id="grid-sub" class="text-[11px] text-gray-500"></p>
+            </div>
+            <div id="grid-detail" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="How finely the bins are cut"
+                 title="How finely edge and odds are cut. The Best Bets page stakes from the same bins.">
+              <button type="button" data-detail="coarse">Coarse</button>
+              <button type="button" data-detail="medium">Medium</button>
+              <button type="button" data-detail="fine">Fine</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto -mx-1">
+            <table id="grid-table" class="w-full text-xs border-separate" style="border-spacing:2px;"></table>
+          </div>
+          <div class="mt-2 flex items-center gap-x-4 gap-y-1 flex-wrap text-[11px] text-gray-400">
+            <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.55);"></span>Proven profit: <span class="text-green-300 font-semibold">safe stake</span> under the return</span>
+            <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="background:rgba(34,197,94,0.15);"></span>Unproven: bet count under the return</span>
+            <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="box-shadow:inset 0 0 0 1px rgba(34,197,94,0.35);"></span>Too few bets to call</span>
+            <span class="flex items-center gap-1.5"><span class="inline-block w-4 h-2.5 rounded-sm" style="background:rgba(239,68,68,0.55);"></span>Proven loss</span>
+            <span class="flex items-center gap-1.5"><span class="inline-block w-4" style="border-top:2px dashed rgba(239,68,68,0.8);"></span>Outliers from here</span>
+          </div>
+          <p id="grid-ceilings" class="mt-2 text-[11px] text-gray-400 leading-snug"></p>
+          <p id="grid-note" class="mt-1 text-[11px] text-gray-500 leading-snug"></p>
         </section>
 
         <div class="grid gap-4 lg:grid-cols-2 mb-4">

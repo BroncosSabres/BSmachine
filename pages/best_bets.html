@@ -63,6 +63,17 @@
                   <option value="50">&lt; $50</option>
                 </select>
               </label>
+              <label class="flex items-center gap-1.5" title="How cautious the Stake column is. Low: 99% sure of the edge, under 1% chance of ever losing a quarter of the bank. Medium: 95% sure, under 1% chance of ever losing half. High: 80% sure, under 5% chance of ever losing half.">Risk
+                <select id="stake-risk" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              <label class="flex items-center gap-1.5" title="Your betting bank, to show stakes in dollars. Kept in this browser only.">Bank $
+                <input id="stake-balance" type="number" min="0" step="any" inputmode="decimal" placeholder="optional"
+                       class="w-24 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+              </label>
               <label id="sort-wrap"class="flex items-center gap-1.5">Sort
                 <select id="sort-by" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                   <option value="edge">Edge</option>
@@ -90,6 +101,7 @@
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="Model probability">Model</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Model fair odds">Fair</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked, after commission">Edge</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="How much of the bank to stake, from how settled bets like it have done: the same market (or all markets), an edge no higher, odds from half its own to the next step up. Nothing until those bets have proven a profit at the Risk level chosen. Hover a stake for where it comes from.">Stake</th>
                   </tr>
                 </thead>
                 <tbody id="bets-body"></tbody>

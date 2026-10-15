@@ -8,16 +8,19 @@
 // weight the model deserves, per sport and market), and closing line value
 // where a closing price exists. A table of betting rules (edge at least X,
 // at cuts fitted to the bets, within the odds range on the slider) shows where
-// a return is holding up and where it is too early to say. The maths is in
-// roi-stats.js; everything is recomputed in the
-// browser so the filters apply to all of it. Same access rules as the Best
-// Bets page.
+// a return is holding up and where it is too early to say. A grid of edge by
+// odds shows which bins have proven a profit and what stake each earns at the
+// Risk level chosen, and where bets turn to losing again (safe-stake.js). The
+// maths is in roi-stats.js; everything is recomputed in the browser so the
+// filters apply to all of it. Same access rules as the Best Bets page.
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
-import { SPORT_LABELS, KIND_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText } from './best-bets-shared.js';
+import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
+         edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
 const $ = id => document.getElementById(id);
 
@@ -37,6 +40,9 @@ let selEdge = 0;         // the low edge of the row in the detail panel
 let listed = null;       // { title, bets } of that row, for the window that lists its bets
 let betsShow = 'all';    // 'all' / 'won' / 'lost': which of them that window shows
 let bestCache = { key: null, rows: [] };
+let betsOpen = null;     // { title, bets } in the window that lists bets
+const stakePrefs = loadStakePrefs();
+const riskOf = () => RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
 
 // --- access states (as best-bets.js) ------------------------------------------
 
@@ -59,34 +65,7 @@ function showSignIn() {
 
 // --- data ---------------------------------------------------------------------
 
-const kindKey = r => r.market_kind + (r.market_kind === 'match_odds' && r.three_way ? ':3' : '');
-const kindLabel = k => k === 'match_odds:3' ? 'Match odds (3-way)' : KIND_LABELS[k] || k;
-const groupLabel = g => { const [s, k] = g.split('|'); return `${SPORT_LABELS[s] || s} · ${kindLabel(k)}`; };
-
-function decode(data) {
-  const cols = data.columns;
-  return data.rows.map(row => {
-    const r = Object.fromEntries(cols.map((c, i) => [c, row[i]]));
-    r.kind = kindKey(r);
-    r.group = `${r.sport}|${r.kind}`;
-    return r;
-  });
-}
-
-// Bookmaker rows come from The Odds API ('oddsapi', 'oddsapi-lines'); the rest are Betfair's.
-const sourceKey = r => r.source.startsWith('oddsapi') ? 'book' : 'betfair';
 const SOURCE_LABELS = { book: 'bookmaker odds', betfair: 'Betfair odds' };
-
-// A market at one line, whichever side: away +3.5 is the same line as home -3.5.
-// Scorers are priced one side only, so they have none.
-const isScorer = r => r.market_kind.endsWith('scorer');
-const marketKey = r => r.market_id == null || isScorer(r) ? null
-  : `${r.market_id}|${r.market_kind === 'handicap' && r.side === 'away' ? -r.line : r.line ?? ''}`;
-// What is being decided: one head-to-head, line and total a game, one bet a
-// scorer. Null when the data doesn't say (an older backend), so nothing is merged.
-const propKey = r => r.market_id == null ? null
-  : !isScorer(r) ? `${r.sport}:${r.game_id}|${r.kind}`
-  : r.player_id == null ? null : `${r.sport}:${r.game_id}|${r.kind}|${r.player_id}|${r.line ?? ''}`;
 
 // Stops of the odds slider: close together where most prices are, wide apart
 // up the long end. The last is "any price".
@@ -119,29 +98,21 @@ function syncOdds(moved) {
 //   base   what the tiles, rules, charts and breakdown read
 //   every  each selection whatever "count" says: the team view pairs up the
 //          two sides of a head-to-head itself
+//   anyOdds as base at every price: the grid's columns are the odds
 function scopes() {
   const stage = $('f-stage').value, source = $('f-source').value, [oddsLo, oddsHi] = oddsRange();
   const out = [];
   for (const r of raw) {
     if (source !== 'all' && sourceKey(r) !== source) continue;
-    const repriced = r.n_checks > 1;
-    if (stage === 'close' && !repriced) continue;
-    out.push({
-      game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-      edge: r[`${stage}_edge`], prob: r[`${stage}_prob`], back: r[`${stage}_back`], commission: r.commission,
-      win: r.win_frac, push: r.push_frac,
-      team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
-      clv: repriced ? r.open_back / r.close_back - 1 : null,
-      market: marketKey(r), prop: propKey(r), checks: r.n_checks,
-      row: r,   // for naming the bet when a rule's bets are listed
-    });
+    if (stage === 'close' && !(r.n_checks > 1)) continue;
+    out.push(toBet(r, stage));
   }
   const { kept, dropped } = dropEmptyMarkets(out);
   // The bet that stands for a market is picked before the odds cut, so moving
   // the slider never changes which line or side that is
   const counted = $('f-count').value === 'one' ? onePerMarket(kept) : kept;
   const inOdds = b => b.back >= oddsLo && b.back < oddsHi;
-  return { base: counted.filter(inOdds), every: kept.filter(inOdds), empty: dropped, repeats: kept.length - counted.length };
+  return { base: counted.filter(inOdds), every: kept.filter(inOdds), anyOdds: counted, empty: dropped, repeats: kept.length - counted.length };
 }
 
 const selected = bets => bets.filter(b => ($('f-sport').value === 'all' || b.sport === $('f-sport').value)
@@ -455,6 +426,22 @@ function renderRuleTable(rows, fit) {
   return sel;
 }
 
+// --- stakes -------------------------------------------------------------------
+// What a group of bets earns at the Risk level: Kelly scaled down, off the
+// low end of its return at that level, at its median odds. Only once that low
+// end is above zero. -> { st (binStats), stake (kellyStake) or null }
+function stakeOfBets(bets) {
+  const st = binStats(bets, riskOf(), { callThin: true });   // called on few bets too, with a warning
+  return { st, stake: st.verdict === 'ahead' ? kellyStake(st.low, st.odds, st.commission, riskOf()) : null };
+}
+const share = f => pct(f, f < 0.01 ? 2 : 1);
+const thinMark = s => s.stake && s.st.thin ? '<span class="text-amber-400 mr-1" aria-label="not proven yet">⚠</span>' : '';
+const stakeText = s => !s.stake ? '–' : thinMark(s) + (stakePrefs.balance ? `${money(stakePrefs.balance * s.stake.frac)} <span class="text-gray-500 font-normal">${share(s.stake.frac)}</span>` : share(s.stake.frac));
+const lowText = st => `${Math.round(riskOf().conf * 100)}% low end ${signedPct(st.low)}`;
+const stakeSub = s => s.stake ? `at ${odds(s.st.odds)} · about ${s.stake.betsToSure.toLocaleString()} bets to be 99% sure of a profit`
+    + (s.st.thin ? ` · ⚠ not proven yet: under ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games, so less sure than it looks` : '')
+  : !s.st.n ? 'no bets' : s.st.verdict === 'behind' ? 'a loss, clear of zero' : `no profit clear of zero: ${lowText(s.st)}`;
+
 function renderRuleDetail(cell, fit) {
   const stat = (label, value, sub = '', title = '') => `<div title="${esc(title)}"><dt class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">${label}</dt>
     <dd class="text-sm font-semibold tabular-nums text-gray-100">${value}</dd>${sub ? `<dd class="text-[10px] text-gray-500 leading-snug">${sub}</dd>` : ''}</div>`;
@@ -492,6 +479,8 @@ function renderRuleDetail(cell, fit) {
     stat('Closing line value', st.clvN ? `<span class="${signCls(st.clv)}">${signedPct(st.clv)}</span>` : 'n/a',
       st.clvN ? `${count(st.clvN, 'bet')} priced more than once` : 'no closing prices here',
       'Odds when first priced against the closing odds. Above zero means the market moved toward the model: the earliest sign an edge is real.'),
+    (s => stat('Safe stake', stakeText(s), stakeSub(s),
+      `A share of the bank per bet at ${riskOf().label} risk: ${riskOf().text}. This rule is one of several looked at, so it flatters.`))(stakeOfBets(cell.bets)),
   ].join('');
 
   let run = 0;
@@ -570,12 +559,12 @@ let betsOpener = null;   // what had the focus, to hand it back on closing
 const outcome = b => b.push >= 1 ? 'Push' : b.win >= 1 ? 'Won' : b.win + b.push <= 0 ? 'Lost' : b.win > 0 ? 'Half won' : 'Half lost';
 
 function renderBets() {
-  const all = [...listed.bets].reverse();   // they come oldest first
+  const all = [...betsOpen.bets].reverse();   // they come oldest first
   const parts = { all, won: all.filter(b => profit(b) > 0), lost: all.filter(b => profit(b) < 0) };
   const bets = parts[betsShow], shown = bets.slice(0, BETS_MAX);
   const total = bets.reduce((a, b) => a + profit(b), 0);
   const manySports = new Set(all.map(b => b.sport)).size > 1;
-  $('bets-title').textContent = listed.title;
+  $('bets-title').textContent = betsOpen.title;
   $('bets-sub').textContent = `${count(bets.length, 'bet')}${bets.length ? ` · ${units(total)} at 1 unit a bet` : ''} · newest first`;
   $('bets-show').innerHTML = [['all', 'All'], ['won', 'Won'], ['lost', 'Lost']].map(([key, label], i) =>
     `<button type="button" data-show="${key}" aria-pressed="${key === betsShow}" class="px-2.5 py-1 ${i ? 'border-l border-gray-600 ' : ''}${
@@ -595,8 +584,10 @@ function renderBets() {
     $('f-stage').value === 'close' ? 'at the close' : 'when first priced'}. Profit is on 1 unit, after commission where it applies.`;
 }
 
-function openBets() {
-  if (!listed) return;
+// list: { title, bets }, the rule panel's row by default
+function openBets(list = listed) {
+  if (!list) return;
+  betsOpen = list;
   betsOpener = document.activeElement;
   betsShow = 'all';
   renderBets();
@@ -624,13 +615,13 @@ document.addEventListener('keydown', e => {
 });
 
 // One row per sport and market: its best-supported rule, whatever Sport and
-// Market are set to. Only the odds source, stage, count and odds range change it.
+// Market are set to. Only the odds source, stage, count, odds range and risk change it.
 function renderBestRules(base) {
-  const key = [$('f-source').value, $('f-stage').value, $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, raw.length].join('|');
+  const key = [$('f-source').value, $('f-stage').value, $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length].join('|');
   if (bestCache.key !== key) {
     const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
-      const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0);
-      return { g, best: bestRule(bets), pos: pos.length, games: new Set(pos.map(b => b.game)).size,
+      const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0), best = bestRule(bets);
+      return { g, best, stake: best && stakeOfBets(best.bets), pos: pos.length, games: new Set(pos.map(b => b.game)).size,
                roi: pos.length ? pos.reduce((a, b) => a + profit(b), 0) / pos.length : null };
     });
     rows.sort((a, b) => (b.best ? b.best.roiCI[0] : -Infinity) - (a.best ? a.best.roiCI[0] : -Infinity) || b.pos - a.pos);
@@ -638,11 +629,11 @@ function renderBestRules(base) {
   }
   const { rows } = bestCache;
   const cell = (x, cls = 'text-gray-300') => `<td class="px-2 py-2 text-right ${cls}">${x}</td>`;
-  $('best-rules').innerHTML = !rows.length ? '<tr><td colspan="7" class="px-2 py-6 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
-    : rows.map(({ g, best, pos, games, roi }) => {
+  $('best-rules').innerHTML = !rows.length ? '<tr><td colspan="8" class="px-2 py-6 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
+    : rows.map(({ g, best, stake, pos, games, roi }) => {
       const open = `<tr data-group="${esc(g)}" ${best ? `data-edge="${best.rule.edgeLo}"` : ''} class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums">
         <td class="px-2 py-2 text-left font-semibold text-gray-100">${esc(groupLabel(g))}</td>`;
-      if (!best) return `${open}<td class="px-2 py-2 text-left text-gray-500" colspan="6">Not enough yet: ${count(pos, 'bet')} at an edge of 0% or more over ${count(games, 'game')}${
+      if (!best) return `${open}<td class="px-2 py-2 text-left text-gray-500" colspan="7">Not enough yet: ${count(pos, 'bet')} at an edge of 0% or more over ${count(games, 'game')}${
         roi != null ? `, <span class="${roi >= 0 ? 'text-green-400/60' : 'text-red-400/60'}">${signedPct(roi, 0)}</span> so far` : ''}</td></tr>`;
       const [chip, chipCls] = VERDICT_CHIPS[best.verdict];
       return `${open}<td class="px-2 py-2 text-left text-gray-200 whitespace-nowrap">${capital(ruleText(best.rule))}
@@ -650,12 +641,13 @@ function renderBestRules(base) {
         ${cell(best.n.toLocaleString())}${cell(best.games.toLocaleString())}
         <td class="px-2 py-2 text-right"><span class="font-bold ${signCls(best.roi)}">${signedPct(best.roi)}</span><span class="block text-[10px] text-gray-500">${range(best.roiCI)}</span></td>
         ${cell(signedPct(best.restRoi), signCls(best.restRoi))}
-        <td class="px-2 py-2 text-right text-gray-300" title="${best.clvN} of ${best.n} with a closing price">${clvText(best)}</td></tr>`;
+        <td class="px-2 py-2 text-right text-gray-300" title="${best.clvN} of ${best.n} with a closing price">${clvText(best)}</td>
+        <td class="px-2 py-2 text-right font-semibold text-gray-100 whitespace-nowrap" title="${esc(stakeSub(stake))}">${stakeText(stake)}</td></tr>`;
     }).join('');
   const source = SOURCE_LABELS[$('f-source').value];
   $('best-rules-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
   $('best-rules-note').textContent = 'Each row is the best of several rules, one for each edge its bets are cut at, and the best of several always flatters. Trust one more when the rows around it agree, '
-    + 'when it holds up without its best game, and when the closing price moved its way.';
+    + 'when it holds up without its best game, and when the closing price moved its way. Its safe stake flatters it for the same reason.';
 }
 
 function renderRules(base) {
@@ -675,6 +667,88 @@ function renderRules(base) {
   // The range is worked out for thin rows too: the whisker shows how little they say
   renderRuleDetail(renderRuleTable(ruleRows(bets, { mode: gridMode, thinRange: true }), fit), fit);
   renderBestRules(base);
+}
+
+// --- where to bet: edge by odds -------------------------------------------------
+// The bins the Best Bets page stakes from, for the bets in view at every
+// price: which have proven a profit at the Risk level, what each earns, and
+// the edge and odds past which bets turn to losing again.
+
+const GRID_VERDICT = { ahead: 'proven profit', behind: 'proven loss', open: 'unproven', thin: 'too few to call' };
+const UP_RGB = '34,197,94', DOWN_RGB = '239,68,68';
+let gridLists = new Map();   // data-cell -> { title, bets }
+
+function gridCellStyle(st) {
+  const rgb = st.roi >= 0 ? UP_RGB : DOWN_RGB;
+  return st.verdict === 'ahead' || st.verdict === 'behind' ? `background:rgba(${rgb},0.55);`
+    : st.verdict === 'open' ? `background:rgba(${rgb},0.15);` : `box-shadow:inset 0 0 0 1px rgba(${rgb},0.35);`;
+}
+
+function renderGrid(anyOdds) {
+  const detail = BIN_DETAIL[stakePrefs.detail] || BIN_DETAIL.coarse, risk = riskOf();
+  const bets = selected(anyOdds).filter(b => b.edge >= 0);
+  const grid = binGrid(bets, risk, detail);
+  const total = binStats(bets, risk);
+  const E = grid.edge, O = grid.odds, ce = grid.ceil.edge, co = grid.ceil.odds;
+  const edgeName = i => edgeBandLabel(E, i).replace('edge ', '');
+  gridLists = new Map();
+
+  const cell = (st, key, label, { strong = false, top = false, left = false } = {}) => {
+    const lines = [`${label}: ${st.n ? `${signedPct(st.roi)} on ${count(st.n, 'bet')} over ${count(st.games, 'game')}` : 'no settled bets'}`];
+    const borders = `${top ? 'border-top:2px dashed rgba(239,68,68,0.8);' : ''}${left ? 'border-left:2px dashed rgba(239,68,68,0.8);' : ''}`;
+    if (!st.n) return `<td class="px-1.5 py-1 text-center text-gray-700" style="${borders}">·</td>`;
+    const s = st.verdict === 'ahead' ? kellyStake(st.low, st.odds, st.commission, risk) : null;
+    lines.push(`${capital(GRID_VERDICT[st.verdict])}${st.low != null ? `: ${signedPct(st.low)} to ${signedPct(st.high)}, each end ${Math.round(risk.conf * 100)}% sure (${risk.label} risk)` : ''}`);
+    if (s) lines.push(`Safe stake ${share(s.frac)}${stakePrefs.balance ? ` (${money(stakePrefs.balance * s.frac)})` : ''} at ${odds(st.odds)}, about ${s.betsToSure.toLocaleString()} bets to be 99% sure of a profit`);
+    lines.push('Select to list the bets');
+    gridLists.set(key, { title: `${marketText()}: ${label}`, bets: st.bets });
+    return `<td data-cell="${key}" class="px-1.5 py-1 text-center cursor-pointer hover:outline hover:outline-1 hover:outline-gray-400 tabular-nums ${strong ? 'border-l border-gray-700' : ''}"
+      style="${gridCellStyle(st)}${borders}" title="${esc(lines.join('\n'))}">
+      <div class="font-semibold ${st.verdict === 'thin' ? 'text-gray-400' : 'text-gray-100'}">${signedPct(st.roi, 0)}</div>
+      <div class="text-[10px] ${s ? 'text-green-300 font-semibold' : 'text-gray-500'}">${s ? share(s.frac) : st.n}</div></td>`;
+  };
+
+  const head = `<thead><tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+      <th class="px-1.5 py-1.5 text-left font-semibold whitespace-nowrap">Edge \\ odds</th>
+      ${O.slice(0, -1).map((_, j) => `<th class="px-1.5 py-1.5 text-center font-semibold whitespace-nowrap normal-case ${co != null && j >= co ? 'text-red-400/80' : ''}">${oddsBandLabel(O, j)}</th>`).join('')}
+      <th class="px-1.5 py-1.5 text-center font-semibold whitespace-nowrap border-l border-gray-700">Any odds</th></tr></thead>`;
+  const body = E.slice(0, -1).map((_, i) => `<tr>
+      <th scope="row" class="px-1.5 py-1 text-left font-semibold whitespace-nowrap ${ce != null && i >= ce ? 'text-red-400/80' : 'text-gray-200'}"
+          style="${ce === i ? 'border-top:2px dashed rgba(239,68,68,0.8);' : ''}">${edgeName(i)}</th>
+      ${grid.cells[i].map((st, j) => cell(st, `${i}:${j}`, `${edgeBandLabel(E, i)} · ${oddsBandLabel(O, j)}`, { top: ce === i, left: co === j })).join('')}
+      ${cell(grid.rows[i], `${i}:*`, `${edgeBandLabel(E, i)} · any odds`, { strong: true, top: ce === i })}</tr>`).join('')
+    + `<tr class="border-t border-gray-700"><th scope="row" class="px-1.5 py-1 text-left font-semibold text-gray-400 whitespace-nowrap">Any edge</th>
+      ${grid.cols.map((st, j) => cell(st, `*:${j}`, `edge 0%+ · ${oddsBandLabel(O, j)}`, { left: co === j })).join('')}
+      ${cell(total, '*:*', 'edge 0%+ · any odds', { strong: true })}</tr>`;
+  $('grid-table').innerHTML = head + `<tbody>${body}</tbody>`;
+
+  const source = SOURCE_LABELS[$('f-source').value];
+  $('grid-sub').textContent = [marketText(), source, $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
+    'every price (the odds slider is left out: the columns are the odds)', `${risk.label} risk`].filter(Boolean).join(' · ');
+  for (const b of $('grid-detail').children) {
+    const on = b.dataset.detail === stakePrefs.detail;
+    b.className = `px-2.5 py-1 ${b.previousElementSibling ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
+    b.setAttribute('aria-pressed', on);
+  }
+
+  const ceilings = [ce != null && `bets at an ${edgeBandLabel(E, ce)}`, co != null && `bets at odds of ${oddsBandLabel(O, co)} and longer`].filter(Boolean);
+  const conf = `${Math.round(CEILING_CONF * 100)}%`;
+  $('grid-ceilings').innerHTML = ceilings.length
+    ? `<span class="font-semibold text-red-400">Outliers</span> (dashed line): ${ceilings.join('; ')} have lost, and together the loss is clear of luck (${conf}). `
+      + 'Past there a bigger model edge has meant model error, not value, so the Best Bets page stakes nothing.'
+    : `No edge or odds yet past which bets have turned to losing, clear of luck. That takes every band from there up (with ${CEILING_MIN_BETS} bets over ${CEILING_MIN_GAMES} games) losing, `
+      + `and the bets from there up together losing at the high end of their ${conf} range. Long odds win rarely, so a few without a winner yet is no sign of a loss.`;
+
+  const called = grid.cells.flat().filter(st => st.verdict !== 'thin');
+  const proven = called.filter(st => st.verdict === 'ahead').length;
+  const byLuck = called.length * (1 - risk.conf);
+  $('grid-note').textContent = !bets.length ? 'No settled selections at an edge of 0% or more match these filters yet.'
+    : `${count(called.length, 'cell')} of ${grid.cells.flat().length} ${called.length === 1 ? 'has' : 'have'} enough bets to call (${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games). `
+      + `If there were no edge anywhere, about ${byLuck.toFixed(1)} of them would still show a proven profit by luck at ${risk.label} risk; ${proven} ${proven === 1 ? 'does' : 'do'}. `
+      + 'Finer bins look closer but each needs longer to prove anything, and more of them look good by luck. '
+      + "The Best Bets page doesn't stake from these cells but from each bet's own pool: settled bets in its market at an edge no higher than its own, "
+      + 'at odds from half its own to the next step up (all markets where its own market has proven nothing either way), '
+      + 'at odds when first priced, every source, one bet per market. The outlier lines here apply to it.';
 }
 
 // --- by team ------------------------------------------------------------------
@@ -861,6 +935,7 @@ function render() {
   renderCountNote(s);
   renderTiles(bets, fit, pooled);
   renderRules(base);
+  renderGrid(s.anyOdds);
   renderRoiChart(bets, fit, pooled);
   renderCalChart(bets);
   renderTeams(s.every);
@@ -872,6 +947,28 @@ function fillSelect(id, options) {
 }
 
 ['f-sport', 'f-market', 'f-source', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+
+// Risk, bank and bin detail are shared with the Best Bets page
+$('f-risk').value = stakePrefs.risk;
+$('f-balance').value = stakePrefs.balance ?? '';
+$('f-risk').addEventListener('change', e => { stakePrefs.risk = e.target.value; saveStakePrefs(stakePrefs); render(); });
+$('f-balance').addEventListener('change', e => {
+  const v = parseFloat(e.target.value);
+  stakePrefs.balance = v > 0 ? v : null;
+  saveStakePrefs(stakePrefs);
+  render();
+});
+$('grid-detail').addEventListener('click', e => {
+  const d = e.target.closest('button[data-detail]')?.dataset.detail;
+  if (!d || d === stakePrefs.detail) return;
+  stakePrefs.detail = d;
+  saveStakePrefs(stakePrefs);
+  renderGrid(scopes().anyOdds);
+});
+$('grid-table').addEventListener('click', e => {
+  const list = gridLists.get(e.target.closest('td[data-cell]')?.dataset.cell);
+  if (list) openBets(list);
+});
 
 // The odds slider: the readout follows the drag, the page redraws on release
 for (const [id, start] of [['f-odds-min', ODDS_DEFAULT[0]], ['f-odds-max', ODDS_DEFAULT[1]]]) {
@@ -909,7 +1006,7 @@ $('rules-rows').addEventListener('click', e => {
   renderRules(scopes().base);
 });
 
-$('rule-bets').addEventListener('click', openBets);
+$('rule-bets').addEventListener('click', () => openBets());
 
 // A row of the best-rules table: that sport and market, with its rule's row open
 $('best-rules').addEventListener('click', e => {
@@ -939,7 +1036,7 @@ async function init() {
   if (res?.status === 403) { gateCard('Restricted', "This page is restricted. Your account doesn't have access to Best Bets."); return; }
   if (!res?.ok) { gateCard('Could not load the analysis', 'Try again in a moment.'); return; }
   const data = await res.json();
-  raw = decode(data);
+  raw = decodeRows(data);
   pending = data.pending;
   fillSelect('f-sport', [['all', 'All'], ...Object.keys(SPORT_LABELS).filter(s => raw.some(r => r.sport === s)).map(s => [s, SPORT_LABELS[s]])]);
   fillSelect('f-market', [['all', 'All'], ...[...new Set(raw.map(r => r.kind))].sort().map(k => [k, kindLabel(k)])]);

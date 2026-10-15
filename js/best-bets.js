@@ -10,13 +10,18 @@
 // scorers open the player's stats window (player-stats-modal.js) and show his
 // team and how often he has scored (last 10 / last season / career, from the
 // Multi Builder's game_player_logs) against the chance the bookie odds imply.
-// The game links to that game's Multi Builder.
+// The game links to that game's Multi Builder. The Stake column comes from
+// the settled selections in /api/best_bets/analysis like each bet (its market,
+// edge up to its own, odds near its own: safe-stake.js), at the Risk level
+// chosen and the bank entered.
 import { BACKEND, apiUrl } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, odds, pct, signedPct, signCls, wonCount,
-         isNhlThreeWay, selectionText, bestBookHtml, edgeBands } from './best-bets-shared.js';
+         isNhlThreeWay, selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
+import { decodeRows, toBet, stakeModel, stakeFor, liveBet } from './safe-stake.js';
+import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 
 const TABS = [
   { key: 'all',     label: 'All',         kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total'] },
@@ -36,6 +41,10 @@ let shown = [];            // the rows in the table, in order (data-row indexes 
 let results = null;        // /api/best_bets/results, loaded on first open
 let tab = 'all';
 let sport = 'all';
+let settled = null;        // settled selections as bets, for the stakes (null until loaded)
+let stakesFailed = false;
+let model = null;          // stakeModel over them at the current settings
+const stakePrefs = loadStakePrefs();
 
 // Sort / My Teams / NHL 3-way choices are remembered between visits.
 function loadPrefs() {
@@ -238,6 +247,68 @@ function renderSportPills() {
               ? 'border-amber-400 text-amber-400' : 'border-gray-700 text-gray-400 hover:text-gray-200'}">${s === 'all' ? 'All' : SPORT_LABELS[s]}</button>`).join('');
 }
 
+// --- stakes -----------------------------------------------------------------
+// Settled selections as the analysis page counts them by default: odds when
+// first priced, every source, one bet per market.
+
+const VERDICT_TEXT = { thin: 'too few to call', open: 'unproven', ahead: 'proven profit', behind: 'proven loss' };
+
+function buildModel() {
+  model = settled && stakeModel(settled, stakePrefs.risk, stakePrefs.detail);
+}
+
+async function loadStakes() {
+  try {
+    const data = await api('best_bets/analysis');
+    if (!data) return;
+    settled = onePerMarket(dropEmptyMarkets(decodeRows(data).map(r => toBet(r))).kept);
+    buildModel();
+  } catch {
+    stakesFailed = true;
+  }
+  renderBets();
+}
+
+function stakeTitle(s) {
+  const risk = model.risk;
+  const binText = t => {
+    const st = t.stats;
+    return `${t.label}: ${st.n ? `${signedPct(st.roi)} on ${st.n} bet${st.n === 1 ? '' : 's'} over ${st.games} game${st.games === 1 ? '' : 's'}` : 'no settled bets'}`
+      + `, ${VERDICT_TEXT[st.verdict]}${st.low != null ? ` (low end ${signedPct(st.low)})` : ''}${st.thin && st.n ? ', on few bets' : ''}`;
+  };
+  const lines = [
+    s.reason === 'outlier' ? `No stake: outlier. ${s.outlier.label}: past here a bigger model edge has meant model error, not value.`
+    : s.reason === 'behind' ? 'No stake: bets like this have proven a loss.'
+    : s.reason ? 'No stake yet: bets like this have not proven a profit.'
+    : `Stake ${pct(s.frac, 2)} of the bank${s.dollars != null ? ` (${money(s.dollars)})` : ''}`,
+  ];
+  if (s.thin) lines.push(`⚠ Not proven yet: this rests on ${s.used.stats.n} bet${s.used.stats.n === 1 ? '' : 's'} over ${s.used.stats.games} game${s.used.stats.games === 1 ? '' : 's'}. `
+    + `A pool is called proven at ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games; with fewer, its range runs narrower than it should, so the stake is less sure than it looks.`);
+  if (s.warning) lines.push("⚠ This market's own bets have lost so far (not proven either way): the stake comes from all markets.");
+  if (s.path.length) lines.push('', 'Bets like this (edge no higher, odds from half to the next step up), its own market first:',
+    ...s.path.map(t => `${t === s.used ? '→' : '·'} ${binText(t)}`));
+  if (s.kelly) lines.push('', `${s.kelly.k.toFixed(2)} × Kelly on a ${signedPct(s.kelly.edge)} edge (full Kelly ${pct(s.kelly.kelly)})`,
+    `About ${s.kelly.betsToSure.toLocaleString()} bets at this edge to be 99% sure of a profit`);
+  lines.push('', `${risk.label} risk: ${risk.text}.`);
+  return lines.join('\n');
+}
+
+function stakeCell(r) {
+  const td = (inner, title = '') => `<td class="px-2 py-2 text-right tabular-nums whitespace-nowrap"${title ? ` title="${esc(title)}"` : ''}>${inner}</td>`;
+  if (!model) return td(stakesFailed ? '<span class="text-gray-600">–</span>' : '<span class="bsm-skeleton h-3 w-10 inline-block"></span>',
+    stakesFailed ? 'Could not load the settled bets the stake is worked out from' : '');
+  const s = stakeFor(liveBet(r), model, stakePrefs.balance);
+  const title = stakeTitle(s);
+  if (s.reason === 'outlier') return td('<span class="text-[11px] font-semibold text-red-400">Outlier</span>', title);
+  if (s.reason === 'behind') return td('<span class="text-[11px] text-red-400/80">Losing</span>', title);
+  if (s.reason) return td('<span class="text-gray-500">–</span>', title);
+  const share = pct(s.frac, s.frac < 0.01 ? 2 : 1);
+  const warn = s.warning || s.thin ? `<span class="text-amber-400 mr-1" aria-label="${s.thin ? 'not proven yet' : 'warning'}">⚠</span>` : '';
+  return td(s.dollars != null
+    ? `<div class="font-bold text-gray-100">${warn}${money(s.dollars)}</div><div class="text-[11px] text-gray-500">${share}</div>`
+    : `<span class="font-bold text-gray-100">${warn}${share}</span>`, title);
+}
+
 // --- current bets -----------------------------------------------------------
 
 function betRow(r, i) {
@@ -248,6 +319,7 @@ function betRow(r, i) {
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
       <td class="px-2 py-2 text-right tabular-nums font-bold text-green-400">${signedPct(r.edge)}</td>
+      ${stakeCell(r)}
     </tr>`;
 }
 
@@ -259,7 +331,7 @@ function renderBets() {
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="7" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
     rows.sort((a, b) => byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge);
@@ -276,11 +348,16 @@ function renderBets() {
     + 'the best price found and who had it underneath. Scorers are fetched once per game and NFL head-to-head and '
     + 'line prices once a day, so they will have moved: check the price before betting. '
     + 'Scorer prices assume the player takes the field.';
+  const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (same market, '
+    + 'edge no higher, odds from half its own to the next step up), '
+    + 'falling back to all markets where that market has not proven anything either way. None until that low end is a profit, and none past the edge or odds '
+    + `where bets have turned to losing again (outliers). ⚠ marks a stake resting on fewer than ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games: not proven yet.`;
   const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
   $('method-note').textContent = tab === 'scorers' ? bookNote
     : tab === 'totals' ? exchangeNote.replace('Other bookie', 'Bookie').replace('Their edge', 'Edge')
     : `${bookNote} ${exchangeNote}`;
+  $('method-note').textContent += stakeNote;
 }
 
 function openStats(r) {
@@ -420,6 +497,18 @@ $('bets-body').addEventListener('click', e => {
   const row = e.target.closest('tr[data-row]');
   if (row && shown[row.dataset.row]) openStats(shown[row.dataset.row]);
 });
+$('stake-risk').addEventListener('change', e => {
+  stakePrefs.risk = e.target.value;
+  saveStakePrefs(stakePrefs);
+  buildModel();
+  renderBets();
+});
+$('stake-balance').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  stakePrefs.balance = v > 0 ? v : null;
+  saveStakePrefs(stakePrefs);
+  renderBets();
+});
 ['sort-by', 'my-teams-only', 'nhl-three-way'].forEach(id =>
   $(id).addEventListener('change', () => { savePrefs(); render(); }));
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
@@ -446,11 +535,14 @@ async function init() {
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   loadPrefs();
+  $('stake-risk').value = stakePrefs.risk;
+  $('stake-balance').value = stakePrefs.balance ?? '';
   loadMyTeams();   // profile teams may arrive later; MY_TEAMS_CHANGED re-renders
   const wanted = new URLSearchParams(location.search).get('tab');
   tab = TABS.some(t => t.key === wanted) ? wanted : 'all';
   render();
   loadResults();   // the track record fills in when it arrives
+  loadStakes();    // and the Stake column
 }
 
 init();

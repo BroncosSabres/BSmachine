@@ -30,8 +30,9 @@ function rng(seed) {
 // 90% interval for the mean of value(b), resampling whole games: both sides of
 // a line, or a handicap and its moneyline, win and lose together, so
 // resampling bets one at a time would make the interval too narrow.
-// null with fewer than `minGames` games.
-export function gameBootstrap(bets, value, { reps = 400, seed = 7, minGames = 5 } = {}) {
+// `lowPct` moves the ends: 0.01 gives the 1st and 99th percentiles (ask for
+// more `reps` to place them). null with fewer than `minGames` games.
+export function gameBootstrap(bets, value, { reps = 400, seed = 7, minGames = 5, lowPct = 0.05 } = {}) {
   const games = new Map();
   for (const b of bets) {
     const v = value(b);
@@ -53,7 +54,7 @@ export function gameBootstrap(bets, value, { reps = 400, seed = 7, minGames = 5 
     means[r] = sum / n;
   }
   means.sort();
-  return [means[Math.floor(reps * 0.05)], means[Math.ceil(reps * 0.95) - 1]];
+  return [means[Math.floor(reps * lowPct)], means[Math.ceil(reps * (1 - lowPct)) - 1]];
 }
 
 // Everything the page shows about one group of bets.

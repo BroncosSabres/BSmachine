@@ -425,12 +425,25 @@ function mountLineControls(games) {
       id: String(g.game_id),
       homeTeam: g.home_team,
       awayTeam: g.away_team,
+      homeShort: g.home_abbr,
       homeColor: '#4ade80',
       awayColor: '#f87171',
       expectedMargin,
+      market: marketLineFor(g),
       onChange: () => { if (lineSortMode === 'discrepant') applyLineSort(); },
     });
   });
+}
+
+// The default line: the bookmakers' consensus spread (or Betfair's, when they don't
+// price the game) from the betfair-api odds sync; null leaves the BS Machine's own.
+function marketLineFor(g) {
+  const m = g.market_line;
+  if (!m || typeof m.line !== 'number') return null;
+  const label = m.source === 'betfair' ? 'Betfair' : 'Bookies';
+  const who   = m.source === 'betfair' ? 'Betfair exchange handicap line' : 'Australian bookmakers\' consensus line';
+  const when  = m.checked_at ? `, as of ${formatDate(m.checked_at, true)}` : '';
+  return { line: m.line, label, title: `${who}${when}` };
 }
 
 function applyLineSort() {
@@ -495,7 +508,7 @@ window.addEventListener(MY_TEAMS_CHANGED, () => {
 loadMyTeams();
 
 resetBtn?.addEventListener('click', () => {
-  if (!confirm('Reset all custom lines back to the BS Machine\'s default for every game?')) return;
+  if (!confirm('Reset all custom lines back to the bookies\' line (or the BS Machine\'s, where there isn\'t one) for every game?')) return;
   matchLines.resetAll();
   mountLineControls(Object.values(gamesById));
 });

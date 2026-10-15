@@ -10,6 +10,19 @@ export const KIND_LABELS = { match_odds: 'Match odds', handicap: 'Handicap', tot
 // Sort / My Teams / NHL 3-way choices on the Best Bets page, remembered between visits.
 export const PREFS_KEY = 'bsm_best_bets_prefs';
 
+// The stake settings both pages share (see safe-stake.js): { risk, detail,
+// balance }. Kept in this browser only; the balance never leaves it.
+const STAKE_KEY = 'bsm_best_bets_stake';
+export function loadStakePrefs() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(STAKE_KEY) || '{}') || {}; } catch { /* storage unavailable */ }
+  return { risk: p.risk || 'medium', detail: p.detail || 'coarse', balance: p.balance > 0 ? +p.balance : null };
+}
+export function saveStakePrefs(prefs) {
+  try { localStorage.setItem(STAKE_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
+}
+export const money = x => x == null ? '–' : `$${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 export const odds = o => o == null ? '–' : o.toFixed(o >= 10 ? 1 : 2);
 export const pct = (x, dp = 1) => x == null || !isFinite(x) ? '–' : `${(x * 100).toFixed(dp)}%`;
