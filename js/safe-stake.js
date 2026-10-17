@@ -86,11 +86,13 @@ export const kellyFraction = risk => 2 / (1 + Math.log(risk.ruin) / Math.log(1 -
 // results. Finer ones are for looking closer as results come in: each cell
 // then needs longer to prove anything, and more cells means more that look
 // good by luck.
+// Every level reaches past 30%: big edges are where model error shows, so
+// they get rows of their own rather than one lump.
 const twoPoint = Array.from({ length: 16 }, (_, i) => Math.round(i * 2) / 100);
 export const BIN_DETAIL = {
-  coarse: { label: 'Coarse', edge: [0, 0.05, 0.1, 0.2, Infinity], odds: [1, 2, 3, 5, 10, Infinity] },
-  medium: { label: 'Medium', edge: [0, 0.03, 0.06, 0.1, 0.15, 0.2, 0.3, Infinity], odds: [1, 1.5, 2, 2.5, 3, 4, 5, 7, 10, Infinity] },
-  fine:   { label: 'Fine', edge: [...twoPoint, Infinity], odds: [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity] },
+  coarse: { label: 'Coarse', edge: [0, 0.05, 0.1, 0.2, 0.3, 0.5, Infinity], odds: [1, 2, 3, 5, 10, Infinity] },
+  medium: { label: 'Medium', edge: [0, 0.03, 0.06, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, Infinity], odds: [1, 1.5, 2, 2.5, 3, 4, 5, 7, 10, Infinity] },
+  fine:   { label: 'Fine', edge: [...twoPoint, 0.35, 0.4, 0.45, 0.5, 0.6, 0.75, 1, 1.5, Infinity], odds: [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity] },
 };
 
 // Index of the band [cuts[i], cuts[i + 1]) holding x, or -1.

@@ -41,21 +41,23 @@ export const isNhlThreeWay = r => r.sport === 'nhl' && r.market_kind === 'match_
 // lumps every big edge into one. So the bands start narrow (EDGE_STEPS) and
 // neighbours are joined until each holds at least `minBets` settled bets: few
 // wide bands while the sample is small, more and finer ones as it grows.
-// Bands never straddle `minEdge` (the page's Min edge filter), so the ones
-// below it can be dimmed. picks: settled picks with flagged_edge and result.
-// -> [{ lo, hi, label, picks }] in edge order.
-export const EDGE_STEPS = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 1, Infinity];
+// Bands never straddle either end of `[lo, hi]` (the page's Edge filter, hi
+// Infinity for no top), so the ones outside it can be dimmed. Ends typed
+// between steps become cuts of their own. picks: settled picks with
+// flagged_edge and result. -> [{ lo, hi, label, picks }] in edge order.
+export const EDGE_STEPS = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, Infinity];
 
-export function edgeBands(picks, minEdge = 0, minBets = 10) {
+export function edgeBands(picks, [minEdge, maxEdge] = [0, Infinity], minBets = 10) {
   const live = p => p.result !== 'void';
-  const fine = EDGE_STEPS.slice(0, -1).map((lo, i) => {
-    const hi = EDGE_STEPS[i + 1];
+  const steps = [...new Set([...EDGE_STEPS, minEdge, maxEdge].filter(x => x >= 0))].sort((a, b) => a - b);
+  const fine = steps.slice(0, -1).map((lo, i) => {
+    const hi = steps[i + 1];
     const inBand = picks.filter(p => p.flagged_edge >= lo && p.flagged_edge < hi);
     return { lo, hi, picks: inBand, n: inBand.filter(live).length };
   });
   const join = (a, b) => ({ lo: a.lo, hi: b.hi, picks: a.picks.concat(b.picks), n: a.n + b.n });
   const bands = [];
-  for (const group of [fine.filter(b => b.hi <= minEdge), fine.filter(b => b.hi > minEdge)]) {
+  for (const group of [fine.filter(b => b.hi <= minEdge), fine.filter(b => b.lo >= minEdge && b.hi <= maxEdge), fine.filter(b => b.lo >= maxEdge)]) {
     const start = bands.length;
     let open = null;
     for (const b of group) {
@@ -66,7 +68,7 @@ export function edgeBands(picks, minEdge = 0, minBets = 10) {
     if (open && bands.length > start) bands.push(join(bands.pop(), open));
     else if (open) bands.push(open);
   }
-  const pc = x => Math.round(x * 100);
+  const pc = x => +(x * 100).toFixed(1);   // a typed end can fall between whole percents
   return bands.map(({ lo, hi, picks }) => ({ lo, hi, picks, label: isFinite(hi) ? `${pc(lo)}–${pc(hi)}%` : `${pc(lo)}%+` }));
 }
 

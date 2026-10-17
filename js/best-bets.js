@@ -6,7 +6,7 @@
 // (signed in, not granted) or the data, and the page shows a sign-in card, a
 // "Restricted" card or the tables accordingly. The track-record sidebar aggregates the
 // settled picks from /api/best_bets/results in the browser so the sport and
-// minimum-edge and maximum-odds filters apply to the ROI numbers too. NFL / NHL
+// edge and odds range filters apply to the ROI numbers too. NFL / NHL
 // scorers open the player's stats window (player-stats-modal.js) and show his
 // team and how often he has scored (last 10 / last season / career, from the
 // Multi Builder's game_player_logs) against the chance the bookie odds imply.
@@ -46,19 +46,23 @@ let stakesFailed = false;
 let model = null;          // stakeModel over them at the current settings
 const stakePrefs = loadStakePrefs();
 
-// Sort / My Teams / NHL 3-way choices are remembered between visits.
+// Sort / My Teams / NHL 3-way choices and the edge and odds ranges are
+// remembered between visits. A range end saved blank stays blank (any).
+const RANGE_INPUTS = ['edge-min', 'edge-max', 'odds-min', 'odds-max'];
 function loadPrefs() {
   try {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
     $('sort-by').value = p.sort === 'time' ? 'time' : 'edge';
     $('my-teams-only').checked = !!p.myTeams;
     $('nhl-three-way').checked = !!p.threeWay;
+    for (const id of RANGE_INPUTS) if (typeof p.ranges?.[id] === 'string') $(id).value = p.ranges[id];
   } catch { /* storage unavailable */ }
 }
 function savePrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
-      sort: $('sort-by').value, myTeams: $('my-teams-only').checked, threeWay: $('nhl-three-way').checked }));
+      sort: $('sort-by').value, myTeams: $('my-teams-only').checked, threeWay: $('nhl-three-way').checked,
+      ranges: Object.fromEntries(RANGE_INPUTS.map(id => [id, $(id).value])) }));
   } catch { /* storage unavailable */ }
 }
 
@@ -69,8 +73,29 @@ function passes(r) {
     && (!$('my-teams-only').checked || !hasAnyTeams() || involvesMyTeam(r.sport, r.home_team, r.away_team));
 }
 
-// Bookie odds under the Max odds choice (0 = any price).
-const underMaxOdds = o => { const max = +$('max-odds').value; return !max || o < max; };
+// The Edge and Odds filters: [lo, hi], both ends included, a blank end open
+// (0 / Infinity). Edge is typed in percent. Ends typed the wrong way round
+// are read as the range between them.
+function typedRange(minId, maxId, scale = 1) {
+  const read = (id, blank) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v * scale : blank; };
+  const lo = read(minId, 0), hi = read(maxId, Infinity);
+  return lo <= hi ? [lo, hi] : [hi, lo];
+}
+const edgeRange = () => typedRange('edge-min', 'edge-max', 0.01);
+const oddsRange = () => typedRange('odds-min', 'odds-max');
+// A hair of slack so 10% typed still takes an edge stored as 0.09999...
+const inRange = (x, [lo, hi]) => x >= lo - 1e-9 && x <= hi + 1e-9;
+
+// "10–30%", "10%+", "up to 30%"; null for any edge
+function edgeRangeText([lo, hi]) {
+  const w = x => `${+(x * 100).toFixed(1)}%`;
+  return isFinite(hi) ? (lo > 0 ? `${+(lo * 100).toFixed(1)}–${w(hi)}` : `up to ${w(hi)}`) : lo > 0 ? `${w(lo)}+` : null;
+}
+// "odds $5–$15", "odds $5+", "odds up to $10"; null for any price
+function oddsRangeText([lo, hi]) {
+  const d = x => `$${+x.toFixed(2)}`;
+  return isFinite(hi) ? (lo > 1 ? `odds ${d(lo)}–${d(hi)}` : `odds up to ${d(hi)}`) : lo > 1 ? `odds ${d(lo)}+` : null;
+}
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 
@@ -327,7 +352,8 @@ function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
   const byEdge = $('sort-by').value !== 'time';
   const inTab = bets.filter(r => kinds.includes(r.market_kind));
-  const rows = inTab.filter(r => passes(r) && r.edge >= +$('min-edge').value && underMaxOdds(r.back));
+  const er = edgeRange(), or = oddsRange();
+  const rows = inTab.filter(r => passes(r) && inRange(r.edge, er) && inRange(r.back, or));
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
@@ -419,18 +445,18 @@ function roiBar(label, st, scale, dim) {
 
 function renderTrackRecord() {
   const t = TABS.find(x => x.key === tab);
-  const minEdge = +$('min-edge').value, maxOdds = +$('max-odds').value;
-  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${maxOdds ? ` · odds under $${maxOdds}` : ''} · settled bets, 1 unit each at the odds when flagged`;
+  const er = edgeRange(), or = oddsRange(), oddsText = oddsRangeText(or);
+  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsText ? ` · ${oddsText}` : ''} · settled bets, 1 unit each at the odds when flagged`;
   if (!results) {
     $('roi-headline').innerHTML = '';
     $('roi-bars').innerHTML = resultsFailed ? '' : Array.from({ length: 5 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
     $('roi-note').textContent = resultsFailed ? 'Could not load results. Try again in a moment.' : '';
     return;
   }
-  const picks = results.picks.filter(p => t.kinds.includes(p.market_kind) && passes(p) && underMaxOdds(p.flagged_back));
-  const bands = edgeBands(picks, minEdge, MIN_BAND_BETS).map(b => ({ ...b, st: summarise(b.picks) }));
-  const sel = summarise(picks.filter(p => p.flagged_edge >= minEdge));
-  const which = minEdge ? `at ${Math.round(minEdge * 100)}%+ edge` : 'all edges';
+  const picks = results.picks.filter(p => t.kinds.includes(p.market_kind) && passes(p) && inRange(p.flagged_back, or));
+  const bands = edgeBands(picks, er, MIN_BAND_BETS).map(b => ({ ...b, st: summarise(b.picks) }));
+  const sel = summarise(picks.filter(p => inRange(p.flagged_edge, er)));
+  const which = edgeRangeText(er) ? `at ${edgeRangeText(er)} edge` : 'all edges';
 
   $('roi-headline').innerHTML = sel.n ? `
     <div class="flex items-baseline gap-2">
@@ -447,10 +473,10 @@ function renderTrackRecord() {
     <div class="flex items-center gap-2 text-[10px] uppercase tracking-wider text-gray-500 font-semibold">
       <span class="w-14 shrink-0">Edge</span><span class="flex-1 text-center">loss · profit</span>
       <span class="w-14 shrink-0 text-right">ROI</span><span class="w-12 shrink-0 text-right" title="Bets won out of bets settled. A half-win counts as half.">Won</span>
-    </div>` + bands.map(b => roiBar(b.label, b.st, scale, b.hi <= minEdge)).join('');
+    </div>` + bands.map(b => roiBar(b.label, b.st, scale, b.hi <= er[0] || b.lo >= er[1])).join('');
   $('roi-note').textContent = `${results.pending.toLocaleString()} tracked bet${results.pending === 1 ? '' : 's'} awaiting a result. `
     + `Each band is as narrow as it can be with ${MIN_BAND_BETS} settled bets in it, so there are more bands as results come in. `
-    + 'Bands below the minimum edge are dimmed. Settled from our own results data; voided bets excluded. Small samples swing a lot.';
+    + 'Bands outside the edge range are dimmed. Settled from our own results data; voided bets excluded. Small samples swing a lot.';
 }
 
 let resultsFailed = false;
@@ -490,8 +516,7 @@ $('sport-pills').addEventListener('click', e => {
   const b = e.target.closest('[data-sport]');
   if (b) { sport = b.dataset.sport; render(); }
 });
-$('min-edge').addEventListener('change', render);
-$('max-odds').addEventListener('change', render);
+RANGE_INPUTS.forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
 $('bets-body').addEventListener('click', e => {
   if (e.target.closest('a')) return;   // the game's Multi Builder link
   const row = e.target.closest('tr[data-row]');

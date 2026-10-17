@@ -43,26 +43,20 @@
             <div id="view-tabs" role="tablist" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5"></div>
             <div class="flex items-center gap-2 flex-wrap text-xs text-gray-400">
               <div id="sport-pills" class="flex items-center gap-1 flex-wrap"></div>
-              <label class="flex items-center gap-1.5">Min edge
-                <select id="min-edge" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                  <option value="0">Any</option>
-                  <option value="0.02">2%</option>
-                  <option value="0.05">5%</option>
-                  <option value="0.1" selected>10%</option>
-                  <option value="0.2">20%</option>
-                </select>
-              </label>
-              <label class="flex items-center gap-1.5" title="Only selections with bookie odds under this price">Max odds
-                <select id="max-odds" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                  <option value="0">Any</option>
-                  <option value="2">&lt; $2</option>
-                  <option value="3">&lt; $3</option>
-                  <option value="5">&lt; $5</option>
-                  <option value="10" selected>&lt; $10</option>
-                  <option value="20">&lt; $20</option>
-                  <option value="50">&lt; $50</option>
-                </select>
-              </label>
+              <div class="flex items-center gap-1" role="group" aria-label="Edge range" title="Only selections with a model edge in this range, both ends included. Leave an end blank for no limit.">Edge
+                <input id="edge-min" type="number" min="0" step="any" inputmode="decimal" placeholder="any" value="10" aria-label="Lowest edge, percent"
+                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                <span aria-hidden="true">–</span>
+                <input id="edge-max" type="number" min="0" step="any" inputmode="decimal" placeholder="any" aria-label="Highest edge, percent"
+                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">%
+              </div>
+              <div class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with bookie odds in this range, both ends included. Leave an end blank for no limit.">Odds $
+                <input id="odds-min" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Lowest odds"
+                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                <span aria-hidden="true">–</span> $
+                <input id="odds-max" type="number" min="1" step="any" inputmode="decimal" placeholder="any" value="10" aria-label="Highest odds"
+                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+              </div>
               <label class="flex items-center gap-1.5" title="How cautious the Stake column is. Low: 99% sure of the edge, under 1% chance of ever losing a quarter of the bank. Medium: 95% sure, under 1% chance of ever losing half. High: 80% sure, under 5% chance of ever losing half.">Risk
                 <select id="stake-risk" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                   <option value="low">Low</option>

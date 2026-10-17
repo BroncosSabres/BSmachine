@@ -73,10 +73,12 @@ export function summarise(bets, opts) {
 }
 
 // Bins by model edge. mode 'width': fixed-width bins (`width`, e.g. 0.02)
-// aligned on zero, with everything beyond +/- `cap` gathered into one bin each
-// side. mode 'count': `count` bins with the same number of bets in each.
+// aligned on zero, up to `cap` above zero and down to `floor` below it.
+// Everything under `floor` is one bin; over `cap` the bins widen along
+// EDGE_LADDER, so the tail is never lumped into one. mode 'count': `count`
+// bins with the same number of bets in each.
 // -> [{ lo, hi, bets }] in edge order, empty bins left out.
-export function binByEdge(bets, { mode = 'width', width = 0.02, cap = 0.3, count = 10 } = {}) {
+export function binByEdge(bets, { mode = 'width', width = 0.02, cap = 1, floor = -0.3, count = 10 } = {}) {
   if (!bets.length) return [];
   if (mode === 'count') {
     const sorted = [...bets].sort((a, b) => a.edge - b.edge);
@@ -88,18 +90,18 @@ export function binByEdge(bets, { mode = 'width', width = 0.02, cap = 0.3, count
     }
     return bins;
   }
-  const byIdx = new Map();
-  const maxIdx = Math.round(cap / width);
+  // Cut points: the floor, steps of `width` up to the cap, then the ladder
+  const minIdx = Math.round(floor / width), maxIdx = Math.round(cap / width);
+  const cuts = [-Infinity];
+  for (let i = minIdx; i <= maxIdx; i++) cuts.push(Math.round(i * width * 1e6) / 1e6);
+  cuts.push(...EDGE_LADDER.filter(e => e > maxIdx * width + 1e-9), Infinity);
+  const parts = cuts.slice(0, -1).map(() => []);
   for (const b of bets) {
-    const idx = clamp(Math.floor(b.edge / width + 1e-9), -maxIdx - 1, maxIdx);
-    if (!byIdx.has(idx)) byIdx.set(idx, []);
-    byIdx.get(idx).push(b);
+    let i = cuts.length - 2;
+    while (i > 0 && b.edge < cuts[i] - 1e-9) i--;
+    parts[i].push(b);
   }
-  return [...byIdx.keys()].sort((a, b) => a - b).map(idx => ({
-    lo: idx < -maxIdx ? -Infinity : idx * width,
-    hi: idx >= maxIdx ? Infinity : (idx + 1) * width,
-    bets: byIdx.get(idx),
-  }));
+  return parts.map((p, i) => ({ lo: cuts[i], hi: cuts[i + 1], bets: p })).filter(b => b.bets.length);
 }
 
 // Winners against what each price expected, over every bet that wasn't a full
