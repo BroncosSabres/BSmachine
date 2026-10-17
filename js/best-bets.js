@@ -348,12 +348,32 @@ function betRow(r, i) {
     </tr>`;
 }
 
+// A game's alternate lines and totals win and lose with its standard one, so
+// at most one line is shown per game, market and side. With no odds range
+// typed that is the bookies' standard line; with one, the standard line when
+// its price fits, else the alternate nearest it that does.
+function oneLinePerSide(rows, oddsTyped) {
+  if (!oddsTyped) return rows.filter(r => !r.alternate);
+  const key = r => `${r.sport}:${r.game_id}|${r.market_kind}|${r.side}`;
+  const standard = new Set(rows.filter(r => !r.alternate).map(key));
+  const nearest = new Map();
+  for (const r of rows) {
+    if (!r.alternate || standard.has(key(r))) continue;
+    const dist = r.main_line == null ? Infinity : Math.abs(r.line - r.main_line);
+    const best = nearest.get(key(r));
+    if (!best || dist < best.dist || (dist === best.dist && r.edge > best.r.edge)) nearest.set(key(r), { r, dist });
+  }
+  const shownAlts = new Set([...nearest.values()].map(b => b.r));
+  return rows.filter(r => !r.alternate || shownAlts.has(r));
+}
+
 function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
   const byEdge = $('sort-by').value !== 'time';
   const inTab = bets.filter(r => kinds.includes(r.market_kind));
   const er = edgeRange(), or = oddsRange();
-  const rows = inTab.filter(r => passes(r) && inRange(r.edge, er) && inRange(r.back, or));
+  const rows = oneLinePerSide(inTab.filter(r => passes(r) && inRange(r.edge, er) && inRange(r.back, or)),
+                              or[0] > 0 || isFinite(or[1]));
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
@@ -371,8 +391,9 @@ function renderBets() {
   // Rows that count bookmakers in the market name ("6 AU books") are bookmaker
   // prices; the rest are Betfair's
   const bookNote = 'Where the market names bookmakers ("6 AU books"), bookie odds are the median price across them, with '
-    + 'the best price found and who had it underneath. Scorers are fetched once per game and NFL head-to-head and '
-    + 'line prices once a day, so they will have moved: check the price before betting. '
+    + 'the best price found and who had it underneath. They are refreshed up to every 15 minutes close to the start, '
+    + 'but can still have moved: check the price before betting. Alternate lines and totals ("Alt Line") only show '
+    + 'with an odds range set, one per game and side: the standard line wins and loses with them. '
     + 'Scorer prices assume the player takes the field.';
   const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (same market, '
     + 'edge no higher, odds from half its own to the next step up), '
@@ -380,9 +401,7 @@ function renderBets() {
     + `where bets have turned to losing again (outliers). ⚠ marks a stake resting on fewer than ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games: not proven yet.`;
   const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
-  $('method-note').textContent = tab === 'scorers' ? bookNote
-    : tab === 'totals' ? exchangeNote.replace('Other bookie', 'Bookie').replace('Their edge', 'Edge')
-    : `${bookNote} ${exchangeNote}`;
+  $('method-note').textContent = tab === 'scorers' ? bookNote : `${bookNote} ${exchangeNote}`;
   $('method-note').textContent += stakeNote;
 }
 

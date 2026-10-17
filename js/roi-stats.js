@@ -342,16 +342,17 @@ export function dropEmptyMarkets(bets, { maxBook = MAX_BOOK } = {}) {
 // One bet per decision. The two sides of a market are one result seen twice,
 // a game's alternate lines are near enough the same bet again, and a price
 // from both Betfair and the bookmakers is the same bet twice. For each `prop`
-// this keeps one market (the bookmakers' before Betfair's, then the line
-// priced over the most checks: the main one) and, of its sides, the one the
-// model likes best. Bets with no `prop` are all kept.
+// this keeps one market (the bookmakers' before Betfair's, their standard
+// line before an alternate one, then the line priced over the most checks:
+// the main one) and, of its sides, the one the model likes best. Bets with no
+// `prop` are all kept.
 export function onePerMarket(bets) {
   const props = new Map();
   bets.forEach((b, i) => {
     if (b.prop == null) return;
     const markets = props.get(b.prop) || new Map();
     const key = b.market ?? `source:${b.source}`;
-    const m = markets.get(key) || { book: b.source === 'book', checks: 0, first: i, best: i };
+    const m = markets.get(key) || { book: b.source === 'book', standard: !/:alternate_/.test(key), checks: 0, first: i, best: i };
     m.checks = Math.max(m.checks, b.checks ?? 1);
     if (b.edge > bets[m.best].edge) m.best = i;
     markets.set(key, m);
@@ -359,7 +360,8 @@ export function onePerMarket(bets) {
   });
   const keep = new Set();
   for (const markets of props.values()) {
-    const [main] = [...markets.values()].sort((a, b) => b.book - a.book || b.checks - a.checks || a.first - b.first);
+    const [main] = [...markets.values()].sort((a, b) =>
+      b.book - a.book || b.standard - a.standard || b.checks - a.checks || a.first - b.first);
     keep.add(main.best);
   }
   return bets.filter((b, i) => b.prop == null || keep.has(i));
