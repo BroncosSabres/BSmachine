@@ -57,7 +57,9 @@ async function load(sel) {
   } catch { /* no panel */ }
   if (mine !== seq) return;
   const threeWay = wantsThreeWay();
-  rows = found.filter(r => threeWay || !isNhlThreeWay(r)).sort((a, b) => b.edge - a.edge);
+  // Alternate lines and totals win and lose with the standard one, so only
+  // the bookies' standard line is listed (as on the Best Bets page).
+  rows = found.filter(r => !r.alternate && (threeWay || !isNhlThreeWay(r))).sort((a, b) => b.edge - a.edge);
   render();
 }
 
