@@ -18,7 +18,7 @@
 // Above some edge (or odds) bins can turn to losing again: the model's
 // biggest edges are often its own error. Where that loss is clear of luck,
 // bets past that point are outliers and get no stake.
-import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
+import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
 import { profit, gameBootstrap, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 
 // --- rows from /api/best_bets/analysis -----------------------------------------
@@ -31,13 +31,17 @@ export const groupLabel = g => { const [s, k] = g.split('|'); return `${SPORT_LA
 export const sourceKey = r => r.source.startsWith('oddsapi') ? 'book' : 'betfair';
 
 // A market at one line, whichever side: away +3.5 is the same line as home -3.5.
-// Scorers are priced one side only, so they have none.
+// Scorers are priced one side only, so they have none. A player prop is one
+// player's line, Over and Under (market_id ends in the side).
 export const isScorer = r => r.market_kind.endsWith('scorer');
 export const marketKey = r => r.market_id == null || isScorer(r) ? null
+  : isProp(r) ? (r.player_id == null ? null : `${r.market_id.replace(/:(over|under)$/, '')}|${r.player_id}|${r.line ?? ''}`)
   : `${r.market_id}|${r.market_kind === 'handicap' && r.side === 'away' ? -r.line : r.line ?? ''}`;
 // What is being decided: one head-to-head, line and total a game, one bet a
-// scorer. Null when the data doesn't say (an older backend), so nothing is merged.
+// scorer, one a player's stat (every line and side of it). Null when the data
+// doesn't say (an older backend), so nothing is merged.
 export const propKey = r => r.market_id == null ? null
+  : isProp(r) ? (r.player_id == null ? null : `${r.sport}:${r.game_id}|${kindKey(r)}|${r.player_id}`)
   : !isScorer(r) ? `${r.sport}:${r.game_id}|${kindKey(r)}`
   : r.player_id == null ? null : `${r.sport}:${r.game_id}|${kindKey(r)}|${r.player_id}|${r.line ?? ''}`;
 

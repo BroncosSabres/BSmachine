@@ -22,15 +22,17 @@ import { getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, odds, pct, signedPct, signCls, wonCount,
-         isNhlThreeWay, selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
+         isNhlThreeWay, selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
+         PROP_KINDS, isProp } from './best-bets-shared.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 
 const TABS = [
-  { key: 'all',     label: 'All',         kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total'] },
-  { key: 'match',   label: 'Match Lines', kinds: ['match_odds', 'handicap'] },
-  { key: 'scorers', label: 'Scorers',     kinds: ['anytime_scorer', 'multi_scorer'] },
-  { key: 'totals',  label: 'Totals',      kinds: ['total'] },
+  { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
+  { key: 'match',   label: 'Match Lines',  kinds: ['match_odds', 'handicap'] },
+  { key: 'scorers', label: 'Scorers',      kinds: ['anytime_scorer', 'multi_scorer'] },
+  { key: 'props',   label: 'Player Props', kinds: PROP_KINDS },
+  { key: 'totals',  label: 'Totals',       kinds: ['total'] },
 ];
 // Track-record bands (edge when first flagged) are widened until each holds
 // this many settled bets: see edgeBands in best-bets-shared.js.
@@ -170,6 +172,9 @@ const hasStats = r => r.player_id != null && STATS_SPORTS.includes(r.sport);
 // first appear: {players: {id: {stat: {l10|prev|car: [[value, games], ...]}}},
 // sides: {id: 'home'|'away'}, prev_season}.
 const LOG_STAT = { nfl: 'td', nhl: 'goal' };
+// Over / under player markets: the log stat each is settled on
+const PROP_LOG_STAT = { pass_yds: 'pass_yds', pass_tds: 'pass_td', rec_yds: 'rec_yds', rush_yds: 'rush_yds',
+                        assists: 'assist', points: 'point' };
 const HIT_BAND = 3;        // points either side of the bookie's chance shown neutral
 const logs = new Map();    // 'sport:game_id' -> response (undefined = loading, null = failed)
 const logsKey = r => `${r.sport}:${r.game_id}`;
@@ -223,6 +228,9 @@ function teamOf(r) {
 
 const histGames = h => h.reduce((s, [, n]) => s + n, 0);
 const histHit = (h, line) => h.reduce((s, [v, n]) => s + (v >= line ? n : 0), 0) / histGames(h);
+// Share of games the selection would have won: N+ for scorers, over / under the line for props
+const hitRate = (h, r) => !isProp(r) ? histHit(h, r.line || 1)
+  : h.reduce((s, [v, n]) => s + ((r.side === 'under' ? v < r.line : v > r.line) ? n : 0), 0) / histGames(h);
 
 // How often he has hit this selection over his last 10 games, last season and
 // his career: green above the chance the bookie odds imply, red below.
@@ -230,7 +238,7 @@ function historyHtml(r) {
   if (!hasStats(r)) return '';
   const data = logs.get(logsKey(r));
   if (data === undefined) return '<span class="bsm-skeleton h-3 w-40 block mt-1"></span>';
-  const hist = data?.players?.[r.player_id]?.[LOG_STAT[r.sport]];
+  const hist = data?.players?.[r.player_id]?.[isProp(r) ? PROP_LOG_STAT[r.market_kind] : LOG_STAT[r.sport]];
   if (!hist) return '';
   const implied = Math.round(100 / r.back);
   const prev = r.sport === 'nhl' ? `${String(data.prev_season).slice(2)}-${String(data.prev_season + 1).slice(2)}` : String(data.prev_season);
@@ -241,7 +249,7 @@ function historyHtml(r) {
   ];
   return `<div class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-gray-400 leading-none">${wins.map(([w, label, tip]) => {
     const h = hist[w] || [], g = histGames(h);
-    const hit = g ? Math.round(histHit(h, r.line || 1) * 100) : null;
+    const hit = g ? Math.round(hitRate(h, r) * 100) : null;
     const cls = hit == null || Math.abs(hit - implied) <= HIT_BAND ? 'text-gray-200' : hit > implied ? 'text-green-400' : 'text-red-400';
     const title = `${tip}: ${g} game${g === 1 ? '' : 's'} · bookie odds imply ${implied}%`;
     return `<span class="whitespace-nowrap" title="${esc(title)}">${label(g)} ${g ? `<span class="${cls} font-semibold">${hit}%</span>` : '–'}</span>`;
@@ -402,17 +410,17 @@ function renderBets() {
   // Rows that count bookmakers in the market name ("6 AU books") are bookmaker
   // prices; the rest are Betfair's
   const bookNote = 'Where the market names bookmakers ("6 AU books"), bookie odds are the median price across them, with '
-    + 'the best price found and who had it underneath. They are refreshed up to every 15 minutes close to the start, '
+    + 'the best price found and who had it underneath. They are refreshed up to every 30 minutes close to the start (player props hourly), '
     + 'but can still have moved: check the price before betting. Alternate lines and totals ("Alt Line") only show '
     + 'with an odds range set, one per game and side: the standard line wins and loses with them. '
-    + 'Scorer prices assume the player takes the field.';
+    + 'Scorer and player prop prices assume the player takes the field (bookmakers void the bet if he does not).';
   const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (same market, '
     + 'edge no higher, odds from half its own to the next step up), '
     + 'falling back to all markets where that market has not proven anything either way. None until that low end is a profit, and none past the edge or odds '
     + `where bets have turned to losing again (outliers). ⚠ marks a stake resting on fewer than ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games: not proven yet.`;
   const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
-  $('method-note').textContent = tab === 'scorers' ? bookNote : `${bookNote} ${exchangeNote}`;
+  $('method-note').textContent = tab === 'scorers' || tab === 'props' ? bookNote : `${bookNote} ${exchangeNote}`;
   $('method-note').textContent += stakeNote;
 }
 

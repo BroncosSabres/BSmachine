@@ -1361,14 +1361,28 @@ function announceGame(game = currentGame) {
   window.dispatchEvent(new CustomEvent('bsm:match-selected', { detail: window.bsmSelectedMatch }));
 }
 
-// The leg a best bet (an /api/best_bets row) becomes here: a scorer pick or a
-// margin / total line. null when this builder has no such leg: the 60-minute
-// three-way market, whole and quarter lines (the dropdowns are half-points),
-// a line outside a dropdown, or a player not in this game's player data.
+// Best Bets player props -> this builder's pick kinds (all "N or more")
+const PROP_LEGS = { assists: 'assist', points: 'point' };
+
+// The leg a best bet (an /api/best_bets row) becomes here: a scorer pick, a
+// player prop's Over (N+ assists / points) or a margin / total line. null when
+// this builder has no such leg: the 60-minute three-way market, a prop's
+// Under, whole and quarter lines (the dropdowns are half-points), a line
+// outside a dropdown, or a player not in this game's player data.
 function bestBetLeg(r) {
   if (!currentGame || String(r.game_id) !== String(currentGame.game_id)) return null;
   const gs = S();
   const halfPoint = r.line != null && Math.abs(r.line * 2) % 2 === 1;
+  if (PROP_LEGS[r.market_kind]) {
+    const kind = PROP_LEGS[r.market_kind];
+    if (r.side !== 'over' || !halfPoint) return null;
+    const side = ['home', 'away'].find(sd => findPlayer(gs, sd, r.player_id));
+    const pl = side && findPlayer(gs, side, r.player_id);
+    const n = Math.floor(r.line) + 1;
+    if (!pl || !pl.active || n > maxLegN(gs, side, kind)) return null;
+    return { key: `${side}:${kind}:${pl.id}`,
+             pick: { side, kind, n, playerId: pl.id, teamId: gs.playerData[side].team_id, name: pl.name } };
+  }
   if (r.market_kind === 'anytime_scorer' || r.market_kind === 'multi_scorer') {
     const side = ['home', 'away'].find(sd => findPlayer(gs, sd, r.player_id));
     const pl = side && findPlayer(gs, side, r.player_id);

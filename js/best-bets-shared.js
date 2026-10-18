@@ -5,7 +5,13 @@
 export const SPORT_LABELS = { nrl: 'NRL', nrlw: 'NRLW', nfl: 'NFL', nhl: 'NHL' };
 export const SPORT_COLORS = { nrl: '#fbbf24', nrlw: '#e879f9', nfl: '#60a5fa', nhl: '#818cf8' };
 export const KIND_LABELS = { match_odds: 'Match odds', handicap: 'Handicap', total: 'Total',
-                             anytime_scorer: 'Anytime scorer', multi_scorer: '2+ scorer' };
+                             anytime_scorer: 'Anytime scorer', multi_scorer: '2+ scorer',
+                             pass_yds: 'Passing yards', pass_tds: 'Passing TDs', rec_yds: 'Receiving yards',
+                             rush_yds: 'Rushing yards', assists: 'Assists', points: 'Points' };
+// Over / under player markets (bookmakers only): side over / under, line the
+// bookies' point, the player in player_id.
+export const PROP_KINDS = ['pass_yds', 'pass_tds', 'rec_yds', 'rush_yds', 'assists', 'points'];
+export const isProp = r => PROP_KINDS.includes(r.market_kind);
 
 // Sort / My Teams / NHL 3-way choices on the Best Bets page, remembered between visits.
 export const PREFS_KEY = 'bsm_best_bets_prefs';
@@ -86,6 +92,7 @@ export function bestBookHtml(r) {
 // style runners are just the team / Over / Under, so add it.
 export function selectionText(r) {
   let name = r.selection_name;
+  if (isProp(r) && r.line != null) return `${name} ${r.side === 'under' ? 'Under' : 'Over'} ${r.line}`;
   if (r.line != null && (r.market_kind === 'handicap' || r.market_kind === 'total') && !/\d/.test(name)) {
     name += ` ${r.market_kind === 'handicap' && r.line > 0 ? '+' : ''}${r.line}`;
   }
