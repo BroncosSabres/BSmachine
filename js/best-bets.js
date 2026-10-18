@@ -13,7 +13,10 @@
 // The game links to that game's Multi Builder. The Stake column comes from
 // the settled selections in /api/best_bets/analysis like each bet (its market,
 // edge up to its own, odds near its own: safe-stake.js), at the Risk level
-// chosen and the bank entered.
+// chosen and the bank entered. Each bet shows its opening, best and current
+// odds. The Live view (/api/best_bets/live) is every tracked bet whose game
+// has started, until it settles: the score, where the bet stands, its chance
+// from here and the expected return, with a projected ROI over them all.
 import { BACKEND, apiUrl } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
@@ -44,6 +47,7 @@ let sport = 'all';
 let settled = null;        // settled selections as bets, for the stakes (null until loaded)
 let stakesFailed = false;
 let model = null;          // stakeModel over them at the current settings
+let view = 'upcoming';     // 'upcoming' | 'live'
 const stakePrefs = loadStakePrefs();
 
 // Sort / My Teams / NHL 3-way choices and the edge and odds ranges are
@@ -55,6 +59,7 @@ function loadPrefs() {
     $('sort-by').value = p.sort === 'time' ? 'time' : 'edge';
     $('my-teams-only').checked = !!p.myTeams;
     $('nhl-three-way').checked = !!p.threeWay;
+    $('odds-basis').value = p.basis in BASIS ? p.basis : 'best';
     for (const id of RANGE_INPUTS) if (typeof p.ranges?.[id] === 'string') $(id).value = p.ranges[id];
   } catch { /* storage unavailable */ }
 }
@@ -62,6 +67,7 @@ function savePrefs() {
   try {
     localStorage.setItem(PREFS_KEY, JSON.stringify({
       sort: $('sort-by').value, myTeams: $('my-teams-only').checked, threeWay: $('nhl-three-way').checked,
+      basis: $('odds-basis').value,
       ranges: Object.fromEntries(RANGE_INPUTS.map(id => [id, $(id).value])) }));
   } catch { /* storage unavailable */ }
 }
@@ -193,7 +199,7 @@ function pumpLogs() {
       logsActive--;
       logs.set(key, data);
       clearTimeout(logsPaint);          // several land together: one repaint
-      logsPaint = setTimeout(renderBets, 60);
+      logsPaint = setTimeout(renderView, 60);
       pumpLogs();
     });
   }
@@ -262,8 +268,11 @@ function renderTabs() {
               ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${t.label}</button>`).join('');
 }
 
+// The rows behind the view on show
+const viewRows = () => view === 'live' ? (liveData?.rows || []) : bets;
+
 function renderSportPills() {
-  const source = bets;
+  const source = viewRows();
   const present = Object.keys(SPORT_LABELS).filter(s => source.some(r => r.sport === s));
   if (sport !== 'all' && !present.includes(sport)) sport = 'all';
   $('sport-pills').innerHTML = (present.length > 1 ? ['all', ...present] : []).map(s => `
@@ -291,7 +300,7 @@ async function loadStakes() {
   } catch {
     stakesFailed = true;
   }
-  renderBets();
+  renderView();
 }
 
 function stakeTitle(s) {
@@ -340,6 +349,8 @@ function betRow(r, i) {
   return `
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${gameCell(r)}${selectionCell(r)}
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-400">${odds(r.open_odds)}</td>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.best_odds)}</td>
       <td class="px-2 py-2 text-right tabular-nums font-bold text-amber-400">${odds(r.back)}</td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
@@ -377,7 +388,7 @@ function renderBets() {
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="7" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
     rows.sort((a, b) => byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge);
@@ -406,13 +417,20 @@ function renderBets() {
 }
 
 function openStats(r) {
+  const g = r.game;   // live rows only
   openPlayerStats({
     sport: r.sport, gameId: r.game_id, playerId: r.player_id,
     name: r.selection_name,
     team: teamOf(r), teams: { home: r.home_team, away: r.away_team },
-    subtitle: `${SPORT_LABELS[r.sport]} · ${r.home_team} v ${r.away_team} · ${kickoffText(r.kickoff)}`,
-    tiles: [
-      { label: 'Bookie odds', value: odds(r.back), cls: 'text-amber-400' },
+    subtitle: `${SPORT_LABELS[r.sport]} · ${r.home_team} v ${r.away_team} · ${g
+      ? `${g.home != null ? `${g.home}–${g.away} ` : ''}${g.state === 'pre' ? kickoffText(r.kickoff) : g.label}` : kickoffText(r.kickoff)}`,
+    tiles: g ? [
+      { label: `Odds (${basis()})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open_back)} · Best ${odds(r.best_back)} · Close ${odds(r.close_back)}` },
+      { label: 'Model at kickoff', value: pct(r.model_prob) },
+      { label: 'Chance now', value: pct(r.live.p_win), sub: (LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown)[0] },
+      { label: 'Live EV', value: signedPct(r.ev), cls: signCls(r.ev) },
+    ] : [
+      { label: 'Bookie odds', value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open_odds)} · Best ${odds(r.best_odds)}` },
       { label: 'Model', value: pct(r.model_prob) },
       { label: 'Fair odds', value: odds(r.fair_odds) },
       { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge) },
@@ -422,6 +440,229 @@ function openStats(r) {
       + 'Price assumes the player takes the field.',
   });
 }
+
+// --- live -------------------------------------------------------------------
+// /api/best_bets/live: every tracked bet whose game has started, until it
+// settles, with the score and where the bet stands (best_bets_live.py on the
+// backend: won / lost as soon as nothing can change it, else its chance from
+// here on the pre-game model). Refreshed every 30 s while the Live view is up
+// and the tab visible (the backend caches 20 s), otherwise every 2 minutes for
+// the count on the Live tab.
+
+const LIVE_MS = 30_000;
+const LIVE_IDLE_MS = 120_000;
+let liveData = null;       // /api/best_bets/live (null until loaded)
+let liveFailed = false;
+let liveLoadedAt = 0;
+let liveTimer = 0;
+let liveShown = [];        // the live rows on show, in order (data-row indexes it)
+
+// The Odds at choice: which of a bet's prices its edge, EV and the filters use
+const BASIS = { open: 'open_back', best: 'best_back', close: 'close_back' };
+const basis = () => $('odds-basis').value in BASIS ? $('odds-basis').value : 'best';
+
+// [badge, classes]; the settled-looking ones are final or locked
+const LIVE_STATUS = {
+  won:          ['Won ✓', 'bg-green-500/20 text-green-300 border-green-500/50'],
+  lost:         ['Lost ✗', 'bg-red-500/20 text-red-300 border-red-500/50'],
+  push:         ['Push', 'text-gray-300 border-gray-600'],
+  half_won:     ['Half won', 'bg-green-500/10 text-green-300 border-green-500/40'],
+  half_lost:    ['Half lost', 'bg-red-500/10 text-red-300 border-red-500/40'],
+  winning:      ['Winning', 'text-green-400 border-green-500/40'],
+  half_winning: ['Half winning', 'text-green-400 border-green-500/30'],
+  losing:       ['Losing', 'text-red-400 border-red-500/40'],
+  half_losing:  ['Half losing', 'text-red-400 border-red-500/30'],
+  level:        ['Level', 'text-gray-300 border-gray-600'],
+  needs:        ['Needs', 'text-amber-300 border-amber-500/40'],
+  void:         ['Void', 'text-gray-400 border-gray-600'],
+  pending:      ['Not started', 'text-gray-400 border-gray-700'],
+  unknown:      ['No live data', 'text-gray-500 border-gray-700'],
+};
+const LOCKED = new Set(['won', 'lost', 'push', 'half_won', 'half_lost']);
+
+// A live pick as the shared filters and cells read it: back and edge at the
+// odds chosen (an opening price that was only a Betfair placeholder falls back
+// to the price it was first flagged at), ev = expected return per unit from
+// here, sd = the spread of that return.
+function liveBetAt(p) {
+  const back = p[BASIS[basis()]] ?? p.flagged_back;
+  const net = (back - 1) * (1 - p.commission);
+  const edge = p.model_prob == null ? null : p.model_prob * net - (1 - p.model_prob);
+  const { p_win: w, p_lose: l } = p.live;
+  const ev = w == null ? null : w * net - l;
+  const sd = w == null ? null : Math.sqrt(Math.max(0, w * net * net + l - ev * ev));
+  return { ...p, back, edge, ev, sd };
+}
+
+// The live rows that pass the view's tab and filters, sorted
+function liveRows() {
+  if (!liveData) return [];
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  const er = edgeRange(), or = oddsRange();
+  const rows = oneLinePerSide(liveData.rows.map(liveBetAt).filter(r => kinds.includes(r.market_kind)
+    && passes(r) && r.edge != null && inRange(r.edge, er) && inRange(r.back, or)), or[0] > 0 || isFinite(or[1]));
+  const byEdge = $('sort-by').value !== 'time';
+  const game = r => `${r.sport}:${r.game_id}`;
+  return rows.sort((a, b) => byEdge ? b.edge - a.edge
+    : byTime(a, b) || game(a).localeCompare(game(b)) || b.edge - a.edge);
+}
+
+function liveGameCell(r) {
+  const g = r.game;
+  const dot = g.state === 'live' && g.live
+    ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse mr-1 align-middle" aria-hidden="true"></span>' : '';
+  const score = g.home != null ? `<span class="font-semibold tabular-nums text-gray-200">${g.home}–${g.away}</span> ` : '';
+  return `<td class="px-2 py-2">
+    <a href="${builderUrl(r)}" title="Open this game in the Multi Builder"
+       class="block font-semibold text-gray-100 hover:underline decoration-gray-500 underline-offset-2">${esc(r.home_team)} <span class="text-gray-500 font-normal">v</span> ${esc(r.away_team)}</a>
+    <div class="text-[11px] text-gray-500 whitespace-nowrap">${sportTag(r.sport)} · ${dot}${score}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}</div>
+  </td>`;
+}
+
+function liveSelectionCell(r) {
+  const [badge, cls] = LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown;
+  const team = hasStats(r) ? teamOf(r) : null;
+  const name = esc(selectionText(r));
+  return `<td class="px-2 py-2">
+    <div class="font-semibold text-gray-100">${hasStats(r)
+      ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
+      : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
+    <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
+    <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
+      <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
+      ${r.live.detail ? `<span class="text-gray-400">${esc(r.live.detail)}</span>` : ''}
+    </div>
+  </td>`;
+}
+
+function liveRow(r, i) {
+  const ch = r.live.p_win, m = r.model_prob;
+  const move = ch == null || m == null || LOCKED.has(r.live.status) || Math.abs(ch - m) < 0.005 ? ''
+    : ch > m ? '<span class="text-green-400 text-[10px] mr-0.5">▲</span>' : '<span class="text-red-400 text-[10px] mr-0.5">▼</span>';
+  const chTitle = ch == null ? 'No estimate' : `Chance it wins from here; ${pct(m)} at kickoff`
+    + (r.live.p_push > 0.001 ? `, ${pct(r.live.p_push)} it pushes` : '');
+  const at = (o, key) => `<td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums ${key === basis() ? 'font-bold text-amber-400' : 'text-gray-400'}">${odds(o)}</td>`;
+  return `
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+      ${liveGameCell(r)}${liveSelectionCell(r)}
+      ${at(r.open_back, 'open')}${at(r.best_back, 'best')}${at(r.close_back, 'close')}
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.edge)}</td>
+      <td class="px-2 py-2 text-right tabular-nums text-gray-100 whitespace-nowrap" title="${esc(chTitle)}">${move}${pct(ch, 0)}</td>
+      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}<div class="sm:hidden text-[11px] font-normal text-gray-500">@ ${odds(r.back)}</div></td>
+    </tr>`;
+}
+
+const units = x => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(2)}u`;
+
+function liveAgo() {
+  if (!liveLoadedAt) return '';
+  const s = Math.round((Date.now() - liveLoadedAt) / 1000);
+  return s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`;
+}
+
+// Projected ROI over the bets on show (voids and bets with no estimate left
+// out), 1 unit each at the odds chosen: the expected return from here, what
+// is locked in already, and what the model expected at kickoff.
+function renderLiveSummary(rows) {
+  const counted = rows.filter(r => r.ev != null && r.live.status !== 'void');
+  const n = counted.length;
+  if (!n) { $('live-summary').innerHTML = ''; return; }
+  const sum = f => counted.reduce((a, r) => a + f(r), 0);
+  const exp = sum(r => r.ev), sd = Math.sqrt(sum(r => r.sd * r.sd));
+  const pre = sum(r => r.edge) / n;
+  const locked = counted.filter(r => LOCKED.has(r.live.status));
+  const has = st => counted.filter(r => st.includes(r.live.status)).length;
+  const tally = [
+    [has(['won', 'half_won']), 'won', 'text-green-400'], [has(['lost', 'half_lost']), 'lost', 'text-red-400'],
+    [has(['winning', 'half_winning']), 'winning', 'text-green-400/80'], [has(['losing', 'half_losing']), 'losing', 'text-red-400/80'],
+    [has(['needs']), 'need more', 'text-amber-300'], [has(['level', 'push']), 'level', 'text-gray-300'],
+    [has(['pending']), 'not started', 'text-gray-400'],
+  ].filter(([k]) => k).map(([k, label, cls]) => `<span class="${cls}">${k} ${label}</span>`).join(' · ');
+  $('live-summary').innerHTML = `
+    <div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3 flex flex-wrap items-end gap-x-6 gap-y-2">
+      <div title="Mean expected return per unit from here, over the bets below">
+        <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Projected ROI</div>
+        <div class="text-2xl font-bold tabular-nums ${signCls(exp)}">${signedPct(exp / n)}</div>
+      </div>
+      <div title="Expected profit from here in units (1 unit a bet), ± one standard deviation of how it could land">
+        <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Expected</div>
+        <div class="text-lg font-semibold tabular-nums text-gray-100">${units(exp)} <span class="text-xs font-normal text-gray-500">± ${sd.toFixed(1)}u</span></div>
+      </div>
+      <div title="Profit already decided: bets won or lost, whatever happens next (results are provisional until they settle)">
+        <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">Locked</div>
+        <div class="text-lg font-semibold tabular-nums ${signCls(locked.length ? sum(r => LOCKED.has(r.live.status) ? r.ev : 0) : 0)}">${
+          locked.length ? units(sum(r => LOCKED.has(r.live.status) ? r.ev : 0)) : '–'}</div>
+      </div>
+      <div title="The model's expected ROI on the same bets at kickoff, at the same odds">
+        <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">At kickoff</div>
+        <div class="text-lg font-semibold tabular-nums ${signCls(pre)}">${signedPct(pre)}</div>
+      </div>
+      <div class="flex-1 min-w-[12rem] text-right text-[11px] text-gray-500">
+        <div>${n} bet${n === 1 ? '' : 's'}, 1 unit each at ${basis()} odds</div>
+        <div class="mt-0.5">${tally}</div>
+        <div class="mt-0.5" id="live-updated">Updated ${liveAgo()}</div>
+      </div>
+    </div>`;
+}
+
+function renderLive() {
+  const body = $('live-body');
+  const rows = liveRows();
+  liveShown = rows;
+  let summary = '';
+  if (!liveData) {
+    $('live-summary').innerHTML = '';
+    body.innerHTML = liveFailed
+      ? '<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the live bets. Trying again shortly.</td></tr>'
+      : Array.from({ length: 4 }, () => '<tr><td colspan="8" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
+  } else if (!rows.length) {
+    $('live-summary').innerHTML = '';
+    body.innerHTML = `<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">${
+      liveData.rows.length ? 'No bets in play match these filters.' : 'Nothing in play right now.'}</td></tr>`;
+  } else {
+    loadLogs(rows);
+    renderLiveSummary(rows);
+    body.innerHTML = rows.map(liveRow).join('');
+    summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} in play · sorted by ${$('sort-by').value !== 'time' ? 'edge' : 'start time'}`;
+  }
+  $('status').textContent = summary;
+  $('method-note').textContent = 'Every bet tracked before kickoff with value at the best price seen, from the start of its game until it '
+    + 'settles. Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
+    + 'marked won the moment they land; anything else at full time shows its result as provisional until it settles (usually within '
+    + 'the hour; NFL scorers can wait on snap counts). Chance: from the current score and the time left on the pre-game model (the sim\'s '
+    + 'score spread shrunk to the time left; scorers from the chance the model gave them), so at kickoff it is the model\'s own. '
+    + 'Live EV: the expected return per unit from here at the odds chosen, after commission; locked bets show what they returned. '
+    + 'The Edge and Odds filters use the odds chosen too. A player not in the line-up (NHL) or listed inactive (NFL) shows as void.';
+}
+
+function scheduleLive() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(loadLive, view === 'live' && !document.hidden ? LIVE_MS : LIVE_IDLE_MS);
+}
+
+async function loadLive() {
+  clearTimeout(liveTimer);
+  try {
+    const data = await api('best_bets/live');
+    if (!data) return;   // signed out / restricted: the gate card is up
+    liveData = data;
+    liveFailed = false;
+    liveLoadedAt = Date.now();
+  } catch {
+    liveFailed = true;
+  }
+  renderViewSwitch();
+  if (view === 'live') {
+    renderSportPills();
+    renderLive();
+  }
+  scheduleLive();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && view === 'live' && Date.now() - liveLoadedAt > LIVE_MS) loadLive();
+});
+setInterval(() => { const el = $('live-updated'); if (el) el.textContent = `Updated ${liveAgo()}`; }, 5000);
 
 // --- track record -----------------------------------------------------------
 // Settled picks for the current tab's markets, by the edge they were first
@@ -510,22 +751,60 @@ async function loadResults() {
 
 // --- view switching ---------------------------------------------------------
 
+// Upcoming / Live, with how many bets are in play under the current filters
+function renderViewSwitch() {
+  const n = liveData ? liveRows().length : null;
+  const item = (key, label, extra = '') => `
+    <button type="button" data-view="${key}" role="tab" aria-selected="${key === view}"
+            class="-mb-px pb-2 border-b-2 text-sm font-semibold flex items-center gap-1.5 transition-colors ${key === view
+              ? 'border-amber-400 text-gray-100' : 'border-transparent text-gray-400 hover:text-gray-200'}">${label}${extra}</button>`;
+  $('view-switch').innerHTML = item('upcoming', 'Upcoming')
+    + item('live', 'Live', n ? `<span class="inline-flex items-center gap-1 rounded-full bg-red-500/15 text-red-300 px-1.5 text-[11px] tabular-nums">
+        <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true"></span>${n}</span>` : '');
+}
+
+const renderView = () => view === 'live' ? renderLive() : renderBets();
+
 function render() {
+  const isLive = view === 'live';
+  renderViewSwitch();
   renderTabs();
+  $('bets-view').classList.toggle('hidden', isLive);
+  $('live-view').classList.toggle('hidden', !isLive);
+  $('risk-wrap').classList.toggle('hidden', isLive);
+  $('bank-wrap').classList.toggle('hidden', isLive);
+  $('basis-wrap').classList.toggle('hidden', !isLive);
   $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams());
-  $('three-way-wrap').classList.toggle('hidden', !bets.some(isNhlThreeWay));
+  $('three-way-wrap').classList.toggle('hidden', !viewRows().some(isNhlThreeWay));
   renderSportPills();
-  renderBets();
+  renderView();
   renderTrackRecord();
+}
+
+function setParam(key, value) {
+  const url = new URL(location.href);
+  url.searchParams.set(key, value);
+  history.replaceState(null, '', url);
 }
 
 function setTab(next) {
   tab = next;
-  const url = new URL(location.href);
-  url.searchParams.set('tab', tab);
-  history.replaceState(null, '', url);
+  setParam('tab', tab);
   render();
 }
+
+function setView(next) {
+  view = next;
+  setParam('view', view);
+  render();
+  if (view === 'live' && Date.now() - liveLoadedAt > LIVE_MS) loadLive();
+  else scheduleLive();   // 30 s while Live is up, 2 min otherwise
+}
+
+$('view-switch').addEventListener('click', e => {
+  const b = e.target.closest('[data-view]');
+  if (b && b.dataset.view !== view) setView(b.dataset.view);
+});
 
 $('view-tabs').addEventListener('click', e => {
   const b = e.target.closest('[data-tab]');
@@ -541,19 +820,24 @@ $('bets-body').addEventListener('click', e => {
   const row = e.target.closest('tr[data-row]');
   if (row && shown[row.dataset.row]) openStats(shown[row.dataset.row]);
 });
+$('live-body').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const row = e.target.closest('tr[data-row]');
+  if (row && liveShown[row.dataset.row]) openStats(liveShown[row.dataset.row]);
+});
 $('stake-risk').addEventListener('change', e => {
   stakePrefs.risk = e.target.value;
   saveStakePrefs(stakePrefs);
   buildModel();
-  renderBets();
+  renderView();
 });
 $('stake-balance').addEventListener('input', e => {
   const v = parseFloat(e.target.value);
   stakePrefs.balance = v > 0 ? v : null;
   saveStakePrefs(stakePrefs);
-  renderBets();
+  renderView();
 });
-['sort-by', 'my-teams-only', 'nhl-three-way'].forEach(id =>
+['sort-by', 'my-teams-only', 'nhl-three-way', 'odds-basis'].forEach(id =>
   $(id).addEventListener('change', () => { savePrefs(); render(); }));
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
 
@@ -584,9 +868,11 @@ async function init() {
   loadMyTeams();   // profile teams may arrive later; MY_TEAMS_CHANGED re-renders
   const wanted = new URLSearchParams(location.search).get('tab');
   tab = TABS.some(t => t.key === wanted) ? wanted : 'all';
+  view = new URLSearchParams(location.search).get('view') === 'live' ? 'live' : 'upcoming';
   render();
   loadResults();   // the track record fills in when it arrives
   loadStakes();    // and the Stake column
+  loadLive();      // and the bets in play (the Live tab's count too)
 }
 
 init();
