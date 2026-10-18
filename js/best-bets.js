@@ -18,7 +18,7 @@
 // has started, until it settles: the score, where the bet stands, its chance
 // from here and the expected return, with a projected ROI over them all.
 import { BACKEND, apiUrl } from './api-config.js';
-import { getSession } from './supabase-client.js';
+import { supabase, getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, odds, pct, signedPct, signCls, wonCount,
@@ -40,7 +40,6 @@ const MIN_BAND_BETS = 10;
 
 const $ = id => document.getElementById(id);
 
-let token = null;
 let bets = [];             // /api/best_bets rows
 let shown = [];            // the rows in the table, in order (data-row indexes it)
 let results = null;        // /api/best_bets/results, loaded on first open
@@ -128,9 +127,21 @@ function showSignIn() {
 
 const showRestricted = () => gateCard('Restricted', "This page is restricted. Your account doesn't have access to Best Bets.");
 
+// The session is read on every call, never kept: access tokens last an hour
+// and the Live poll outlives that. getSession hands back a refreshed one once
+// it has expired. A 401 refreshes and retries once before the sign-in card,
+// since the backend also answers 401 when Supabase's token check blips.
 async function api(path) {
-  const res = await fetch(`${BACKEND}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
-  if (res.status === 401) { showSignIn(); return null; }
+  const call = session => fetch(`${BACKEND}/${path}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+  let session = await getSession();
+  if (!session) { showSignIn(); return null; }
+  let res = await call(session);
+  if (res.status === 401) {
+    const { data } = await supabase.auth.refreshSession();
+    session = data?.session;
+    if (session) res = await call(session);
+  }
+  if (res.status === 401 || !session) { showSignIn(); return null; }
   if (res.status === 403) { showRestricted(); return null; }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -850,9 +861,6 @@ $('stake-balance').addEventListener('input', e => {
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
 
 async function init() {
-  const session = await getSession();
-  if (!session) { showSignIn(); return; }
-  token = session.access_token;
   let data;
   try {
     data = await api('best_bets');
