@@ -13,7 +13,7 @@ export const KIND_LABELS = { match_odds: 'Match odds', handicap: 'Handicap', tot
 export const PROP_KINDS = ['pass_yds', 'pass_tds', 'rec_yds', 'rush_yds', 'assists', 'points'];
 export const isProp = r => PROP_KINDS.includes(r.market_kind);
 
-// Sort / My Teams / NHL 3-way choices on the Best Bets page, remembered between visits.
+// The Best Bets page's settings from before the filter modal (best-bets-prefs.js reads them once).
 export const PREFS_KEY = 'bsm_best_bets_prefs';
 
 // The stake settings both pages share (see safe-stake.js): { risk, detail,
@@ -78,14 +78,19 @@ export function edgeBands(picks, [minEdge, maxEdge] = [0, Infinity], minBets = 1
   return bands.map(({ lo, hi, picks }) => ({ lo, hi, picks, label: isFinite(hi) ? `${pc(lo)}–${pc(hi)}%` : `${pc(lo)}%+` }));
 }
 
-// Bookmaker scorer rows: where the best price was and what it was. The row's
-// own odds / edge are at the median price across the bookmakers, so this is
-// the one to actually take. Empty for Betfair rows (and older checks).
-export function bestBookHtml(r) {
+// Bookmaker rows: where the best price was and what it was. Empty for Betfair
+// rows (and older checks). median: given when the row's own odds are already
+// the best price (the Best Bets page's Best bookie basis), to name the bookie
+// and show the median alongside; otherwise the row's odds are the median and
+// this is the price to actually take.
+export function bestBookHtml(r, median = null) {
   if (!r.best_book || r.best_book_back == null) return '';
   const title = `Highest price found: ${odds(r.best_book_back)} at ${r.best_book}`
-    + (r.best_book_edge == null ? '' : ` (${signedPct(r.best_book_edge)} edge at that price)`);
-  return `<div class="text-[11px] text-gray-400" title="${esc(title)}">Best <span class="font-semibold tabular-nums text-amber-400">${odds(r.best_book_back)}</span> at <span class="font-semibold text-gray-200">${esc(r.best_book)}</span></div>`;
+    + (r.best_book_edge == null ? '' : ` (${signedPct(r.best_book_edge)} edge at that price)`)
+    + (median == null ? '' : `; median across the bookies ${odds(median)}`);
+  return median == null
+    ? `<div class="text-[11px] text-gray-400" title="${esc(title)}">Best <span class="font-semibold tabular-nums text-amber-400">${odds(r.best_book_back)}</span> at <span class="font-semibold text-gray-200">${esc(r.best_book)}</span></div>`
+    : `<div class="text-[11px] text-gray-400" title="${esc(title)}">At <span class="font-semibold text-gray-200">${esc(r.best_book)}</span> · avg <span class="tabular-nums">${odds(median)}</span></div>`;
 }
 
 // Betfair names the line in most runner names ("Roosters -4.5"); Asian-handicap

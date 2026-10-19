@@ -19,6 +19,8 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionTe
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { BASES } from './best-bets-filters.js';
+import { localPrefs, syncPrefs, savePrefs } from './best-bets-prefs.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
@@ -42,6 +44,16 @@ let betsShow = 'all';    // 'all' / 'won' / 'lost': which of them that window sh
 let bestCache = { key: null, rows: [] };
 let betsOpen = null;     // { title, bets } in the window that lists bets
 const stakePrefs = loadStakePrefs();
+// The price bets are judged at, shared with the Best Bets page's Filters (and
+// so saved to the account): the best single bookie's ('book') or the median
+// across them ('avg')
+let prefs = localPrefs();
+const basis = () => $('f-price').value === 'avg' ? 'avg' : 'book';
+// "odds when first priced · best bookie"
+function stageText(capital = false) {
+  const t = `${$('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced'} · ${BASES[basis()].toLowerCase()}`;
+  return capital ? t[0].toUpperCase() + t.slice(1) : t;
+}
 const riskOf = () => RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
 
 // --- access states (as best-bets.js) ------------------------------------------
@@ -105,14 +117,16 @@ function scopes() {
   for (const r of raw) {
     if (source !== 'all' && sourceKey(r) !== source) continue;
     if (stage === 'close' && !(r.n_checks > 1)) continue;
-    out.push(toBet(r, stage));
+    out.push(toBet(r, stage, basis()));
   }
   const { kept, dropped } = dropEmptyMarkets(out);
   // The bet that stands for a market is picked before the odds cut, so moving
   // the slider never changes which line or side that is
   const counted = $('f-count').value === 'one' ? onePerMarket(kept) : kept;
   const inOdds = b => b.back >= oddsLo && b.back < oddsHi;
-  return { base: counted.filter(inOdds), every: kept.filter(inOdds), anyOdds: counted, empty: dropped, repeats: kept.length - counted.length };
+  const base = counted.filter(inOdds);
+  return { base, every: kept.filter(inOdds), anyOdds: counted, empty: dropped, repeats: kept.length - counted.length,
+           fallbacks: base.filter(b => b.fallback).length };
 }
 
 const selected = bets => bets.filter(b => ($('f-sport').value === 'all' || b.sport === $('f-sport').value)
@@ -134,13 +148,14 @@ const marketText = () => {
 
 function scopeText() {
   return [marketText(), SOURCE_LABELS[$('f-source').value],
-          $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced', oddsText()].filter(Boolean).join(' · ');
+          stageText(), oddsText()].filter(Boolean).join(' · ');
 }
 
 function renderCountNote(s) {
   const parts = [];
   if (s.repeats) parts.push(`${count(s.repeats, 'selection')} left out as the other side, another line or a second source of a bet already counted`);
   if (s.empty) parts.push(`${s.empty.toLocaleString()} left out from markets with no real prices (the prices on offer add up to over ${Math.round(MAX_BOOK * 100)}%)`);
+  if (s.fallbacks) parts.push(`${count(s.fallbacks, 'bet')} of ${s.base.length.toLocaleString()} priced at the average: no best bookie price was recorded for them`);
   $('count-note').textContent = !raw.some(r => r.market_id != null) ? 'Counting every selection: the data to tell repeats apart is not being returned yet.'
     : parts.length ? `${capital(parts.join('; '))}.` : '';
 }
@@ -581,7 +596,7 @@ function renderBets() {
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">None of these.</td></tr>';
   $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}Odds and edge are as ${
-    $('f-stage').value === 'close' ? 'at the close' : 'when first priced'}. Profit is on 1 unit, after commission where it applies.`;
+    $('f-stage').value === 'close' ? 'at the close' : 'when first priced'}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}. Profit is on 1 unit, after commission where it applies.`;
 }
 
 // list: { title, bets }, the rule panel's row by default
@@ -617,7 +632,7 @@ document.addEventListener('keydown', e => {
 // One row per sport and market: its best-supported rule, whatever Sport and
 // Market are set to. Only the odds source, stage, count, odds range and risk change it.
 function renderBestRules(base) {
-  const key = [$('f-source').value, $('f-stage').value, $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length].join('|');
+  const key = [$('f-source').value, $('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length].join('|');
   if (bestCache.key !== key) {
     const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
       const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0), best = bestRule(bets);
@@ -645,7 +660,7 @@ function renderBestRules(base) {
         <td class="px-2 py-2 text-right font-semibold text-gray-100 whitespace-nowrap" title="${esc(stakeSub(stake))}">${stakeText(stake)}</td></tr>`;
     }).join('');
   const source = SOURCE_LABELS[$('f-source').value];
-  $('best-rules-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
+  $('best-rules-sub').textContent = `${stageText(true)}${source ? ` · ${source}` : ''} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
   $('best-rules-note').textContent = 'Each row is the best of several rules, one for each edge its bets are cut at, and the best of several always flatters. Trust one more when the rows around it agree, '
     + 'when it holds up without its best game, and when the closing price moved its way. Its safe stake flatters it for the same reason.';
 }
@@ -654,7 +669,7 @@ function renderRules(base) {
   const bets = selected(base);
   const fit = fitBlend(bets) || fitBlend(base);
   $('rules-sub').textContent = [marketText(), SOURCE_LABELS[$('f-source').value],
-    $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced', oddsText() ?? 'any odds', '1 unit on every bet in the row'].filter(Boolean).join(' · ');
+    stageText(), oddsText() ?? 'any odds', '1 unit on every bet in the row'].filter(Boolean).join(' · ');
   for (const b of $('rules-mode').children) {
     const on = b.dataset.mode === gridMode;
     b.className = `px-2.5 py-1 ${b.dataset.mode === 'band' ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
@@ -723,7 +738,7 @@ function renderGrid(anyOdds) {
   $('grid-table').innerHTML = head + `<tbody>${body}</tbody>`;
 
   const source = SOURCE_LABELS[$('f-source').value];
-  $('grid-sub').textContent = [marketText(), source, $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
+  $('grid-sub').textContent = [marketText(), source, stageText(),
     'every price (the odds slider is left out: the columns are the odds)', `${risk.label} risk`].filter(Boolean).join(' · ');
   for (const b of $('grid-detail').children) {
     const on = b.dataset.detail === stakePrefs.detail;
@@ -748,7 +763,7 @@ function renderGrid(anyOdds) {
       + 'Finer bins look closer but each needs longer to prove anything, and more of them look good by luck. '
       + "The Best Bets page doesn't stake from these cells but from each bet's own pool: settled bets in its market at an edge no higher than its own, "
       + 'at odds from half its own to the next step up (all markets where its own market has proven nothing either way), '
-      + 'at odds when first priced, every source, one bet per market. The outlier lines here apply to it.';
+      + 'at odds when first priced (at the price chosen here, which the Best Bets page shares), every source, one bet per market. The outlier lines here apply to it.';
 }
 
 // --- by team ------------------------------------------------------------------
@@ -868,7 +883,7 @@ function renderTeams(base) {
   const tgs = teamGames(base.filter(b => sport === 'all' || b.sport === sport));
   if (teamKey && !tgs.some(g => g.key === teamKey && g.n)) teamKey = null;
   $('team-sub').textContent = [sport === 'all' ? 'All sports' : SPORT_LABELS[sport], SOURCE_LABELS[$('f-source').value],
-    $('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced',
+    stageText(),
     oddsText(), 'not narrowed by Market'].filter(Boolean).join(' · ');
   const none = !tgs.length;
   $('team-empty').classList.toggle('hidden', !none);
@@ -914,7 +929,7 @@ function renderBreakdown(base) {
     ? ($('f-sport').value === 'all' && $('f-market').value === 'all' ? 'all' : null)
     : `${$('f-sport').value}|${$('f-market').value}`;
   const source = SOURCE_LABELS[$('f-source').value];
-  $('breakdown-sub').textContent = `${$('f-stage').value === 'close' ? 'Closing odds' : 'Odds when first priced'}${source ? ` · ${source}` : ''}${oddsText() ? ` · ${oddsText()}` : ''} · select a row to chart it`;
+  $('breakdown-sub').textContent = `${stageText(true)}${source ? ` · ${source}` : ''}${oddsText() ? ` · ${oddsText()}` : ''} · select a row to chart it`;
   $('breakdown-body').innerHTML = !base.length
     ? '<tr><td colspan="11" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
     : breakdownRow('All sports and markets', base, 'all', current === 'all')
@@ -947,6 +962,12 @@ function fillSelect(id, options) {
 }
 
 ['f-sport', 'f-market', 'f-source', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+$('f-price').value = prefs.basis;
+$('f-price').addEventListener('change', () => {
+  prefs = { ...prefs, basis: basis() };
+  savePrefs(prefs);
+  render();
+});
 
 // Risk, bank and bin detail are shared with the Best Bets page
 $('f-risk').value = stakePrefs.risk;
@@ -1045,6 +1066,12 @@ async function init() {
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   render();
+  // The account's price basis, where it differs from this browser's
+  syncPrefs(prefs).then(remote => {
+    if (!remote) return;
+    prefs = remote;
+    if ($('f-price').value !== prefs.basis) { $('f-price').value = prefs.basis; render(); }
+  }).catch(() => {});
 }
 
 init();

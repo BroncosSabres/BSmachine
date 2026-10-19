@@ -35,7 +35,7 @@
       <div id="gate"><div class="card"><span class="bsm-skeleton h-24 w-full block"></span></div></div>
 
       <div id="content" class="hidden">
-        <p class="text-sm text-gray-400 mb-6">Where the model's price beats the best back price from the bookie. Edge is the expected return per unit staked.</p>
+        <p class="text-sm text-gray-400 mb-6">Where the model's price beats the bookies' price. Edge is the expected return per unit staked.</p>
 
         <div class="grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_19rem]">
         <div class="card min-w-0">
@@ -45,14 +45,13 @@
             <div id="view-tabs" role="tablist" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5"></div>
             <div class="flex items-center gap-2 flex-wrap text-xs text-gray-400">
               <div id="sport-pills" class="flex items-center gap-1 flex-wrap"></div>
-              <div class="flex items-center gap-1" role="group" aria-label="Edge range" title="Only selections with a model edge in this range, both ends included. Leave an end blank for no limit.">Edge
-                <input id="edge-min" type="number" min="0" step="any" inputmode="decimal" placeholder="any" value="10" aria-label="Lowest edge, percent"
-                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
-                <span aria-hidden="true">–</span>
-                <input id="edge-max" type="number" min="0" step="any" inputmode="decimal" placeholder="any" aria-label="Highest edge, percent"
-                       class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">%
-              </div>
-              <div class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with bookie odds in this range, both ends included. Leave an end blank for no limit.">Odds $
+              <button id="filters-btn" type="button" aria-haspopup="dialog"
+                      title="Which markets to show, the edge each needs, and whether bets are judged at the best bookie's price or the average"
+                      class="flex items-center gap-1.5 bg-gray-800 border border-gray-600 hover:border-gray-400 rounded px-2 py-1 text-sm text-white">
+                <svg aria-hidden="true" viewBox="0 0 20 20" class="w-3.5 h-3.5 fill-current text-amber-400"><path d="M3 4h14l-5.5 6.5V16l-3 1.5v-7L3 4z"/></svg>
+                Filters <span id="filters-summary" class="text-xs text-gray-400"></span>
+              </button>
+              <div class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with odds in this range, both ends included, in every market. Leave an end blank for no limit.">Odds $
                 <input id="odds-min" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Lowest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 <span aria-hidden="true">–</span> $
@@ -86,9 +85,6 @@
               <label id="my-teams-wrap" class="hidden flex items-center gap-1.5 cursor-pointer" title="Only games involving a team in My Teams">
                 <input id="my-teams-only" type="checkbox" class="accent-amber-400"> My Teams
               </label>
-              <label id="three-way-wrap" class="hidden flex items-center gap-1.5 cursor-pointer" title="Show NHL 60-minute (three-way) markets as well as the two-way moneyline">
-                <input id="nhl-three-way" type="checkbox" class="accent-amber-400"> NHL 3-way Result
-              </label>
             </div>
           </div>
 
@@ -100,9 +96,9 @@
                   <tr class="text-xs text-gray-500 uppercase tracking-wider">
                     <th class="px-2 py-2 text-left font-semibold">Game</th>
                     <th class="px-2 py-2 text-left font-semibold">Selection</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The first price recorded for this selection, whatever the edge was then. Bookmaker markets: the median across the books, like Now">Open</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The highest price seen since it first showed value (or now, if higher). Bookmaker markets: the highest median across the books, like Now; the single best price on offer now is under the selection">Best</th>
-                    <th class="px-2 py-2 text-right font-semibold" title="Median price across bookmakers where the market names them (scorers, NFL head-to-head and line); otherwise the best back price on the Betfair Exchange when last checked. At kickoff this becomes the closing price.">Now</th>
+                    <th id="th-open" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Open</th>
+                    <th id="th-best" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Best</th>
+                    <th id="th-now" class="px-2 py-2 text-right font-semibold">Now</th>
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="Model probability">Model</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Model fair odds">Fair</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked, after commission">Edge</th>
@@ -123,9 +119,9 @@
                   <tr class="text-xs text-gray-500 uppercase tracking-wider">
                     <th class="px-2 py-2 text-left font-semibold">Game</th>
                     <th class="px-2 py-2 text-left font-semibold">Selection</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The first price recorded for this selection (bookmaker markets: the median across the books)">Open</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The highest price seen from when it first showed value to kickoff (bookmaker markets: the highest median across the books)">Best</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The last price before kickoff">Close</th>
+                    <th id="lth-open" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Open</th>
+                    <th id="lth-best" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Best</th>
+                    <th id="lth-close" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Close</th>
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The model's expected return per unit at kickoff, at the odds chosen (Odds at)">Edge</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Estimated chance the bet wins from here: the current score and the time left, on the pre-game model">Chance</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked from here, at the odds chosen (Odds at), after commission. A settled or locked bet shows what it returned.">Live EV</th>

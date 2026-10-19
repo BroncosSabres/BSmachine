@@ -1,7 +1,9 @@
 // match-best-bets.js — the Best Bets panel at the top of each Multi Builder.
 //
 // For accounts with Best Bets access it lists the selected game's
-// positive-edge selections (/api/best_bets?sport=&game_id=), best edge first.
+// positive-edge selections (/api/best_bets?sport=&game_id=), best edge first,
+// in the markets switched on in the Best Bets page's Filters and at the price
+// chosen there (the best bookie's or the average; best-bets-prefs.js).
 // Everyone else gets nothing: the panel stays hidden and no bets are asked for.
 //
 // The builders are three separate scripts (the NRL one a classic script, so it
@@ -15,7 +17,9 @@
 //                          the betslip, and adding / removing it
 import { BACKEND } from './api-config.js';
 import { getSession, hasBestBetsAccess } from './supabase-client.js';
-import { PREFS_KEY, esc, odds, pct, signedPct, isNhlThreeWay, selectionText, bestBookHtml } from './best-bets-shared.js';
+import { esc, odds, pct, signedPct, selectionText, bestBookHtml } from './best-bets-shared.js';
+import { marketOf, ruleFor } from './best-bets-filters.js';
+import { localPrefs } from './best-bets-prefs.js';
 
 const panel = document.getElementById('match-best-bets');
 const TOP = 5;             // rows before "Show all"
@@ -26,9 +30,11 @@ let showAll = false;
 let seq = 0;               // drops the answer for a game since navigated away from
 const cache = new Map();   // 'sport:gameId' -> { rows, ts }
 
-// The Best Bets page's NHL 3-way choice applies here too.
-function wantsThreeWay() {
-  try { return !!JSON.parse(localStorage.getItem(PREFS_KEY) || '{}').threeWay; } catch { return false; }
+// A row at the price chosen on the Best Bets page: the best bookie's where
+// the bookies name one, else its own (the median; Betfair's for its markets)
+function at(r, basis) {
+  const book = basis === 'book' && r.best_book_back != null && r.best_book_edge != null;
+  return { ...r, shownBack: book ? r.best_book_back : r.back, shownEdge: book ? r.best_book_edge : r.edge, median: r.back, atBook: book };
 }
 
 async function fetchRows(sport, gameId, token) {
@@ -56,10 +62,11 @@ async function load(sel) {
     found = await fetchRows(sel.sport, sel.gameId, session.access_token);
   } catch { /* no panel */ }
   if (mine !== seq) return;
-  const threeWay = wantsThreeWay();
+  const prefs = localPrefs();
   // Alternate lines and totals win and lose with the standard one, so only
   // the bookies' standard line is listed (as on the Best Bets page).
-  rows = found.filter(r => !r.alternate && (threeWay || !isNhlThreeWay(r))).sort((a, b) => b.edge - a.edge);
+  rows = found.filter(r => !r.alternate && ruleFor(prefs, marketOf(r)).on).map(r => at(r, prefs.basis))
+    .filter(r => r.shownEdge > 0).sort((a, b) => b.shownEdge - a.shownEdge);
   render();
 }
 
@@ -102,12 +109,12 @@ function render() {
               <td class="pr-2 py-1.5">
                 <span class="font-semibold text-gray-100">${esc(selectionText(r))}</span>
                 <span class="block text-[11px] text-gray-500">${esc(r.market_name)}</span>
-                ${bestBookHtml(r)}
+                ${bestBookHtml(r, r.atBook ? r.median : null)}
               </td>
-              <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.back)}</td>
+              <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.shownBack)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
-              <td class="px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.edge)}</td>
+              <td class="px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.shownEdge)}</td>
               ${addCell(r, i)}
             </tr>`).join('')}
           </tbody>

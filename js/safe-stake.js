@@ -20,6 +20,7 @@
 // bets past that point are outliers and get no stake.
 import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
 import { profit, gameBootstrap, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { priceAt } from './best-bets-filters.js';
 
 // --- rows from /api/best_bets/analysis -----------------------------------------
 
@@ -57,15 +58,19 @@ export function decodeRows(data) {
 }
 
 // A decoded row as a bet (see roi-stats.js), at the odds when first priced
-// ('open') or the closing odds ('close'). A selection priced once has no CLV.
-export function toBet(r, stage = 'open') {
+// ('open') or the closing odds ('close'), at the best single bookmaker's price
+// (basis 'book': the price worth taking; Betfair rows at the exchange's) or the
+// median across them ('avg'). A row with no best-bookmaker price recorded is
+// read at the median, marked fallback. A selection priced once has no CLV.
+export function toBet(r, stage = 'open', basis = 'book') {
   const repriced = r.n_checks > 1;
+  const at = priceAt(r, stage, basis);
   return {
     game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-    edge: r[`${stage}_edge`], prob: r[`${stage}_prob`], back: r[`${stage}_back`], commission: r.commission,
+    edge: at.edge, prob: r[`${stage}_prob`], back: at.back, commission: r.commission, fallback: at.fallback,
     win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
-    clv: repriced ? r.open_back / r.close_back - 1 : null,
+    clv: repriced ? priceAt(r, 'open', basis).back / priceAt(r, 'close', basis).back - 1 : null,
     market: marketKey(r), prop: propKey(r), checks: r.n_checks,
     row: r,   // for naming the bet when a group of bets is listed
   };

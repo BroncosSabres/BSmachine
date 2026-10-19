@@ -79,6 +79,12 @@
                 <option value="close">Closing</option>
               </select>
             </label>
+            <label class="flex items-center gap-1.5" title="Best bookie: every bet at the best price any one bookie offered (the price you would take betting with whoever is best; Betfair markets at the exchange's price). Average bookie: at the median across the bookies. Shared with the Best Bets page's Filters.">Price
+              <select id="f-price" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                <option value="book" selected>Best bookie</option>
+                <option value="avg">Average bookie</option>
+              </select>
+            </label>
             <label class="flex items-center gap-1.5" title="One bet per market: of a game's head-to-head, line and total, only the main line and the side the model likes best, and a scorer priced by both Betfair and the bookmakers once. Every selection counts both sides of a market, each alternate line and each source, so one result shows up several times.">Count
               <select id="f-count" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="one" selected>One bet per market</option>
