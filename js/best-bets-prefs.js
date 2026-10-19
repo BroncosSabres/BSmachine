@@ -102,8 +102,8 @@ function bodyHtml() {
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Price</div>
       <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${basis}</div>
       <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.basis === 'book'
-        ? 'Edges, odds, stakes and the track record at the best price any one bookie offers (the Betfair Exchange\'s own for its markets).'
-        : 'Edges, odds, stakes and the track record at the median price across the bookies.'}</p>
+        ? 'Bets taken at the best price any one bookie offers (the Betfair Exchange\'s own for its markets): odds, stakes and the track record\'s returns use it.'
+        : 'Bets taken at the median price across the bookies.'} A bet needs an edge at the median price either way, and the edge ranges below are always at the median.</p>
     </div>
     ${sports.map(s => `
       <section class="mb-3">
@@ -149,7 +149,7 @@ function build() {
       <div class="flex items-start justify-between gap-3 p-4 pb-2">
         <div>
           <h2 id="bb-filters-title" class="text-lg font-bold text-gray-100">Filters</h2>
-          <p class="text-xs text-gray-500">The markets to show and the edge each needs. Saved to your account.</p>
+          <p class="text-xs text-gray-500">The markets to show and the edge (at the median price) each needs. Saved to your account.</p>
         </div>
         <button type="button" data-close aria-label="Close" class="text-gray-400 hover:text-gray-100 text-xl leading-none px-1">✕</button>
       </div>

@@ -58,10 +58,12 @@ export function decodeRows(data) {
 }
 
 // A decoded row as a bet (see roi-stats.js), at the odds when first priced
-// ('open') or the closing odds ('close'), at the best single bookmaker's price
-// (basis 'book': the price worth taking; Betfair rows at the exchange's) or the
-// median across them ('avg'). A row with no best-bookmaker price recorded is
-// read at the median, marked fallback. A selection priced once has no CLV.
+// ('open') or the closing odds ('close'), taken at the best single bookmaker's
+// price (basis 'book'; Betfair rows at the exchange's) or the median across
+// them ('avg'). Its edge is the median's either way (see priceAt), so the
+// same bets have value under both and only the returns differ. A row with no
+// best-bookmaker price recorded is taken at the median, marked fallback. A
+// selection priced once has no CLV.
 export function toBet(r, stage = 'open', basis = 'book') {
   const repriced = r.n_checks > 1;
   const at = priceAt(r, stage, basis);

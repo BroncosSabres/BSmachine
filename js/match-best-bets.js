@@ -31,10 +31,11 @@ let seq = 0;               // drops the answer for a game since navigated away f
 const cache = new Map();   // 'sport:gameId' -> { rows, ts }
 
 // A row at the price chosen on the Best Bets page: the best bookie's where
-// the bookies name one, else its own (the median; Betfair's for its markets)
+// the bookies name one, else its own (the median; Betfair's for its markets).
+// Its edge stays the median's, as on the Best Bets page.
 function at(r, basis) {
   const book = basis === 'book' && r.best_book_back != null && r.best_book_edge != null;
-  return { ...r, shownBack: book ? r.best_book_back : r.back, shownEdge: book ? r.best_book_edge : r.edge, median: r.back, atBook: book };
+  return { ...r, shownBack: book ? r.best_book_back : r.back, shownEdge: r.edge, median: r.back, atBook: book };
 }
 
 async function fetchRows(sport, gameId, token) {

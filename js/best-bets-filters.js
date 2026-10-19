@@ -3,9 +3,11 @@
 // keeps the settings (browser + the account's profile) and draws the modal.
 //
 // Settings: { v, basis, odds, markets, sort, myTeams, liveStage }
-//   basis     'book': bets are judged at the best single bookmaker's price
-//             (the price worth taking; Betfair rows: the exchange's), 'avg':
-//             at the median across the bookmakers
+//   basis     'book': bets are taken at the best single bookmaker's price
+//             (Betfair rows: the exchange's), 'avg': at the median across the
+//             bookmakers. Either way a bet's edge - what says it has value, and
+//             what the edge filters and bands read - is the edge at the median:
+//             one generous bookmaker can't make a bet worth having.
 //   odds      [min, max] as typed, '' for no limit: one range for every market
 //   markets   { 'sport|kind': { on, edge: [min, max] } }, edge typed in percent
 //   liveStage 'open' | 'best' | 'close': which of a live bet's prices it is judged at
@@ -103,27 +105,27 @@ export const oddsTyped = prefs => { const [lo, hi] = oddsRangeOf(prefs); return 
 // A hair of slack so 10% typed still takes an edge stored as 0.09999...
 export const inRange = (x, [lo, hi]) => x != null && x >= lo - 1e-9 && x <= hi + 1e-9;
 
-// Whether a bet at this price passes its market's switch and edge range, the
-// odds range and has value at all (a bet listed for its best-bookmaker edge
-// can have none at the median).
+// Whether a bet passes its market's switch and edge range, the odds range,
+// and has value at all. edge: at the median; back: the price taken.
 export function passesMarket(prefs, key, edge, back) {
   const rule = ruleFor(prefs, key);
   return rule.on && edge != null && edge > 0 && inRange(edge, edgeRangeOf(prefs, key)) && inRange(back, oddsRangeOf(prefs));
 }
 
-// A tracked row's price at one stage ('open', 'flagged', 'best', 'close') on
-// the basis chosen: { back, edge, fallback }. Rows store the median as
-// {stage}_back / {stage}_edge and the best bookmaker's as {stage}_book_back /
-// {stage}_book_edge. A row with no best-bookmaker price recorded (before it
-// was kept) is read at the median, with fallback set. An edge missing at the
-// best price is the median's scaled to it (exact bar the chance of a push).
+// A tracked row at one stage ('open', 'flagged', 'best', 'close') on the
+// basis chosen: { back: the price taken, edge: the edge at the median (the
+// value signal, whatever the basis), bookEdge: the edge at the price taken,
+// fallback }. Rows store the median as {stage}_back / {stage}_edge and the
+// best bookmaker's as {stage}_book_back / {stage}_book_edge. A row with no
+// best-bookmaker price recorded is taken at the median, with fallback set.
+// An edge missing at the best price is the median's scaled to it (exact bar
+// the chance of a push).
 export function priceAt(r, stage, basis) {
   const back = r[`${stage}_back`], edge = r[`${stage}_edge`];
-  if (basis !== 'book') return { back, edge, fallback: false };
-  const book = r[`${stage}_book_back`];
-  if (book == null) return { back, edge, fallback: back != null };
-  const bookEdge = r[`${stage}_book_edge`];
-  return { back: book, edge: bookEdge ?? (edge != null && back > 0 ? (1 + edge) * book / back - 1 : null), fallback: false };
+  const book = basis === 'book' ? r[`${stage}_book_back`] : null;
+  if (book == null) return { back, edge, bookEdge: edge, fallback: basis === 'book' && back != null };
+  const bookEdge = r[`${stage}_book_edge`] ?? (edge != null && back > 0 ? (1 + edge) * book / back - 1 : null);
+  return { back: book, edge, bookEdge, fallback: false };
 }
 
 // "10–30%", "10%+", "up to 30%", "any edge"
