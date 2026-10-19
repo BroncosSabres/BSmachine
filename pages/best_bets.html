@@ -101,7 +101,8 @@
                     <th id="th-now" class="px-2 py-2 text-right font-semibold">Now</th>
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="Model probability">Model</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Model fair odds">Fair</th>
-                    <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked at the median price, after commission: what says a bet has value, and what the edge filters read. With Best bookie chosen, the edge at the price to take is underneath.">Edge</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked at the average (median) price across the bookies, after commission. A bet is only listed when this is positive, and the edge filters read it.">Avg edge</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked at the best price any one bookie offers (Betfair markets: the exchange's, so the same as Avg edge)">Best edge</th>
                     <th class="px-2 py-2 text-right font-semibold" title="How much of the bank to stake, from how settled bets like it have done: the same market (or all markets), an edge no higher, odds from half its own to the next step up. Nothing until those bets have proven a profit at the Risk level chosen. Hover a stake for where it comes from.">Stake</th>
                   </tr>
                 </thead>
@@ -122,7 +123,8 @@
                     <th id="lth-open" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Open</th>
                     <th id="lth-best" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Best</th>
                     <th id="lth-close" class="hidden sm:table-cell px-2 py-2 text-right font-semibold">Close</th>
-                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The model's expected return per unit at kickoff, at the odds chosen (Odds at)">Edge</th>
+                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The model's expected return per unit at kickoff, at the average (median) price of the odds chosen (Odds at). What the edge filters read.">Avg edge</th>
+                    <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The same at the best bookie's price">Best edge</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Estimated chance the bet wins from here: the current score and the time left, on the pre-game model">Chance</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Expected return per unit staked from here, at the odds chosen (Odds at), after commission. A settled or locked bet shows what it returned.">Live EV</th>
                   </tr>

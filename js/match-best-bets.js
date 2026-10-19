@@ -101,7 +101,8 @@ function render() {
               <th class="px-2 py-1 text-right font-semibold" title="Bookie odds at the last check">Odds</th>
               <th class="hidden sm:table-cell px-2 py-1 text-right font-semibold" title="Model probability">Model</th>
               <th class="hidden sm:table-cell px-2 py-1 text-right font-semibold" title="Model fair odds">Fair</th>
-              <th class="px-2 py-1 text-right font-semibold" title="Expected return per unit staked, after commission">Edge</th>
+              <th class="px-2 py-1 text-right font-semibold" title="Expected return per unit staked at the average (median) price across the bookies, after commission">Avg edge</th>
+              <th class="hidden sm:table-cell px-2 py-1 text-right font-semibold" title="Expected return per unit staked at the best price any one bookie offers">Best edge</th>
               <th class="pl-2 py-1"><span class="sr-only">Add to multi</span></th>
             </tr>
           </thead>
@@ -116,6 +117,7 @@ function render() {
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
               <td class="px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.shownEdge)}</td>
+              <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.best_book_edge ?? r.edge)}</td>
               ${addCell(r, i)}
             </tr>`).join('')}
           </tbody>

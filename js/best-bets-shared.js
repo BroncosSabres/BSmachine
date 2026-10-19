@@ -94,11 +94,13 @@ export function bestBookHtml(r, median = null) {
 }
 
 // Betfair names the line in most runner names ("Roosters -4.5"); Asian-handicap
-// style runners are just the team / Over / Under, so add it.
+// style runners and bookmaker rows are just the team / Over / Under, so add it.
+// A number inside a word ("49ers", "76ers") is part of the name, not a line.
+const NAMES_LINE = /(^|[^\w.])[+-]?\d+(\.\d+)?(?![\w.])/;
 export function selectionText(r) {
   let name = r.selection_name;
   if (isProp(r) && r.line != null) return `${name} ${r.side === 'under' ? 'Under' : 'Over'} ${r.line}`;
-  if (r.line != null && (r.market_kind === 'handicap' || r.market_kind === 'total') && !/\d/.test(name)) {
+  if (r.line != null && (r.market_kind === 'handicap' || r.market_kind === 'total') && !NAMES_LINE.test(name)) {
     name += ` ${r.market_kind === 'handicap' && r.line > 0 ? '+' : ''}${r.line}`;
   }
   return name;

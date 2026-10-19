@@ -60,16 +60,19 @@ export function decodeRows(data) {
 // A decoded row as a bet (see roi-stats.js), at the odds when first priced
 // ('open') or the closing odds ('close'), taken at the best single bookmaker's
 // price (basis 'book'; Betfair rows at the exchange's) or the median across
-// them ('avg'). Its edge is the median's either way (see priceAt), so the
-// same bets have value under both and only the returns differ. A row with no
-// best-bookmaker price recorded is taken at the median, marked fallback. A
-// selection priced once has no CLV.
+// them ('avg'). The bet is chosen at the median either way: its edge and back
+// (what the odds range, odds bands and stake pools read, and the bookie's
+// implied chance) are the median's, so the same bets fall in the same places
+// under both and only the returns differ. taken: the price it is taken at,
+// which profit() pays out at. A row with no best-bookmaker price recorded is
+// taken at the median, marked fallback. A selection priced once has no CLV.
 export function toBet(r, stage = 'open', basis = 'book') {
   const repriced = r.n_checks > 1;
   const at = priceAt(r, stage, basis);
   return {
     game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-    edge: at.edge, prob: r[`${stage}_prob`], back: at.back, commission: r.commission, fallback: at.fallback,
+    edge: at.edge, prob: r[`${stage}_prob`], back: r[`${stage}_back`], taken: at.back, commission: r.commission,
+    fallback: at.fallback,
     win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
     clv: repriced ? priceAt(r, 'open', basis).back / priceAt(r, 'close', basis).back - 1 : null,
@@ -160,9 +163,10 @@ function erfc(x) {   // Numerical Recipes erfcc, |error| < 1.2e-7
 // -> [low, high] of the return at the one-sided level `lowPct`, or null with
 // no decided bets.
 export function exactBounds(bets, lowPct) {
-  const decided = bets.filter(b => b.push < 1 && b.back > 1);
+  const taken = b => b.taken ?? b.back;
+  const decided = bets.filter(b => b.push < 1 && taken(b) > 1);
   if (!decided.length) return null;
-  const qs = decided.map(b => 1 / (1 + (b.back - 1) * (1 - (b.commission || 0))));
+  const qs = decided.map(b => 1 / (1 + (taken(b) - 1) * (1 - (b.commission || 0))));
   const wins = Math.round(decided.reduce((a, b) => a + b.win, 0));
   const top = 0.999 / Math.min(...qs);
   const at = th => qs.map(q => Math.min(0.999, th * q));
@@ -203,7 +207,7 @@ export function binStats(bets, risk, { callThin = false } = {}) {
     bets, n, games, roi, thin,
     low: ci ? ci[0] : null, high: ci ? ci[1] : null,
     verdict: !ci ? 'thin' : ci[0] > 0 ? 'ahead' : ci[1] < 0 ? 'behind' : 'open',
-    odds: median(bets.map(b => b.back)), commission: median(bets.map(b => b.commission || 0)),
+    odds: median(bets.map(b => b.taken ?? b.back)), commission: median(bets.map(b => b.commission || 0)),
   };
 }
 
@@ -365,7 +369,7 @@ export function stakeFor(bet, model, balance = null) {
   if (!used) return none('unproven', { path });
 
   const warning = used.scope === 'all' && path.some(t => t.scope === 'market' && t.stats.n && t.stats.roi < 0);
-  const kelly = kellyStake(Math.min(used.stats.low, bet.edge), bet.back, bet.commission, model.risk);
+  const kelly = kellyStake(Math.min(used.stats.low, bet.edge), bet.taken ?? bet.back, bet.commission, model.risk);
   const frac = kelly ? kelly.frac : 0;
   return { frac, dollars: balance ? balance * frac : null, reason: kelly ? null : 'unproven', used, path, warning, thin: used.stats.thin, outlier: null, kelly };
 }
@@ -395,5 +399,7 @@ function outlierOf(ei, oi, own, all, market) {
 export function liveBet(r) {
   const p = r.model_prob, b = r.back - 1;
   const c = r.source === 'betfair' && p > 0 && b > 0 ? 1 - (r.edge + 1 - p) / (p * b) : 0;
-  return { group: `${r.sport}|${kindKey(r)}`, edge: r.edge, back: r.back, commission: Math.min(0.2, Math.max(0, c)) };
+  // Chosen at the median (r.median, where the page takes the best bookie's price), taken at r.back
+  return { group: `${r.sport}|${kindKey(r)}`, edge: r.edge, back: r.median ?? r.back, taken: r.back,
+           commission: Math.min(0.2, Math.max(0, c)) };
 }

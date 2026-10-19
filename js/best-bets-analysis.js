@@ -590,7 +590,7 @@ function renderBets() {
       <td class="px-2 py-1.5 whitespace-nowrap">${dayText(b.date)}</td>
       <td class="px-2 py-1.5">${esc(r.home_team)} v ${esc(r.away_team)}${manySports ? `<span class="block text-[10px] text-gray-500">${esc(SPORT_LABELS[b.sport] || b.sport)}</span>` : ''}</td>
       <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.source === 'book' ? 'bookmakers' : 'Betfair'}</span></td>
-      <td class="px-2 py-1.5 text-right">${odds(b.back)}</td>
+      <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}</td>
       <td class="px-2 py-1.5 text-right">${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span></td>
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
     </tr>`;

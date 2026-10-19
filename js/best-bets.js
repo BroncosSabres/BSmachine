@@ -84,8 +84,9 @@ function passes(r) {
   return (sport === 'all' || r.sport === sport)
     && (!$('my-teams-only').checked || !hasAnyTeams() || involvesMyTeam(r.sport, r.home_team, r.away_team));
 }
-// Its market switched on, the edge that market needs (at the median), the odds range
-const passesFilters = r => passesMarket(prefs, marketOf(r), r.avgEdge ?? r.edge, r.back);
+// Its market switched on, the edge that market needs and the odds range, both
+// at the median: the same bets pass whichever price they are taken at
+const passesFilters = r => passesMarket(prefs, marketOf(r), r.avgEdge ?? r.edge, r.avgBack ?? r.median ?? r.back);
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 
@@ -361,9 +362,9 @@ function stakeCell(r) {
 function upcomingAt(r) {
   const book = bookBasis() && r.best_book_back != null && r.best_book_edge != null;
   return book
-    ? { ...r, back: r.best_book_back, bookEdge: r.best_book_edge, open: r.open_book_odds ?? r.open_odds,
+    ? { ...r, back: r.best_book_back, bestEdge: r.best_book_edge, open: r.open_book_odds ?? r.open_odds,
         best: r.best_book_odds ?? r.best_odds, median: r.back, atBook: true }
-    : { ...r, open: r.open_odds, best: r.best_odds, median: r.back };
+    : { ...r, bestEdge: r.best_book_edge ?? r.edge, open: r.open_odds, best: r.best_odds, median: r.back };
 }
 
 function betRow(r, i) {
@@ -375,8 +376,8 @@ function betRow(r, i) {
       <td class="px-2 py-2 text-right tabular-nums font-bold text-amber-400">${odds(r.back)}</td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
-      <td class="px-2 py-2 text-right tabular-nums font-bold text-green-400">${signedPct(r.edge)}${r.atBook
-        ? `<div class="text-[11px] font-normal text-gray-400 whitespace-nowrap" title="Edge at the best bookie's price, the one to take">${signedPct(r.bookEdge)} at best</div>` : ''}</td>
+      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.edge)}">${signedPct(r.edge)}</td>
+      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</td>
       ${stakeCell(r)}
     </tr>`;
 }
@@ -412,7 +413,7 @@ function renderBets() {
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="10" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
     rows.sort((a, b) => byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge);
@@ -459,7 +460,7 @@ function openStats(r) {
       { label: `Bookie odds (${bookBasis() ? 'best bookie' : 'average'})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open)} · Best ${odds(r.best)}` },
       { label: 'Model', value: pct(r.model_prob) },
       { label: 'Fair odds', value: odds(r.fair_odds) },
-      { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge) },
+      { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge), sub: `average price · ${signedPct(r.bestEdge)} at the best` },
     ],
     note: `${selectionText(r)} — ${r.market_name}. `
       + (!g && r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. ` : '')
@@ -519,12 +520,14 @@ function liveBetAt(p) {
   const edgeAt = o => p.model_prob == null || o == null ? null : p.model_prob * (o - 1) * (1 - p.commission) - (1 - p.model_prob);
   const net = (back - 1) * (1 - p.commission);
   const edge = edgeAt(back);
-  // The value signal the filters read: the edge at the median price
-  const avgEdge = edgeAt(p[`${basis()}_back`] ?? p.flagged_back);
+  // What the filters read: the median price and the edge at it
+  const avgBack = p[`${basis()}_back`] ?? p.flagged_back;
+  const avgEdge = edgeAt(avgBack);
+  const bestEdge = edgeAt(p[`${basis()}_book_back`] ?? avgBack);
   const { p_win: w, p_lose: l } = p.live;
   const ev = w == null ? null : w * net - l;
   const sd = w == null ? null : Math.sqrt(Math.max(0, w * net * net + l - ev * ev));
-  return { ...p, prices, back, edge, avgEdge, ev, sd };
+  return { ...p, prices, back, edge, avgBack, avgEdge, bestEdge, ev, sd };
 }
 
 // The live rows that pass the sport / My Teams / market filters, one line per side (any tab)
@@ -538,8 +541,8 @@ function liveRows() {
   const rows = liveAll().filter(r => kinds.includes(r.market_kind));
   const byEdge = $('sort-by').value !== 'time';
   const game = r => `${r.sport}:${r.game_id}`;
-  return rows.sort((a, b) => byEdge ? b.edge - a.edge
-    : byTime(a, b) || game(a).localeCompare(game(b)) || b.edge - a.edge);
+  return rows.sort((a, b) => byEdge ? b.avgEdge - a.avgEdge
+    : byTime(a, b) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge);
 }
 
 function liveGameCell(r) {
@@ -581,7 +584,8 @@ function liveRow(r, i) {
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${liveGameCell(r)}${liveSelectionCell(r)}
       ${at(r.prices.open, 'open')}${at(r.prices.best, 'best')}${at(r.prices.close, 'close')}
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.edge)}</td>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.avgEdge)}</td>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.bestEdge)}</td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-100 whitespace-nowrap" title="${esc(chTitle)}">${move}${pct(ch, 0)}</td>
       <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}<div class="sm:hidden text-[11px] font-normal text-gray-500">@ ${odds(r.back)}</div></td>
     </tr>`;
@@ -648,11 +652,11 @@ function renderLive() {
   if (!liveData) {
     $('live-summary').innerHTML = '';
     body.innerHTML = liveFailed
-      ? '<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the live bets. Trying again shortly.</td></tr>'
-      : Array.from({ length: 4 }, () => '<tr><td colspan="8" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
+      ? '<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the live bets. Trying again shortly.</td></tr>'
+      : Array.from({ length: 4 }, () => '<tr><td colspan="9" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
   } else if (!rows.length) {
     $('live-summary').innerHTML = '';
-    body.innerHTML = `<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">${
       liveData.rows.length ? 'No bets in play match these filters.' : 'Nothing in play right now.'}</td></tr>`;
   } else {
     loadLogs(rows);
@@ -661,7 +665,7 @@ function renderLive() {
     summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} in play · sorted by ${$('sort-by').value !== 'time' ? 'edge' : 'start time'}`;
   }
   $('status').textContent = summary;
-  $('method-note').textContent = 'Every bet tracked before kickoff with value at the best price seen, from the start of its game until it '
+  $('method-note').textContent = 'Every bet tracked before kickoff with value at the average price, from the start of its game until it '
     + 'settles. Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
     + 'marked won the moment they land; anything else at full time shows its result as provisional until it settles (usually within '
     + 'the hour; NFL scorers can wait on snap counts). Chance: from the current score and the time left on the pre-game model (the sim\'s '
@@ -713,10 +717,12 @@ function summarise(picks) {
   return {
     n,
     wins:     live.reduce((a, p) => a + p.win_frac, 0),   // a half-win counts as half
-    roi:      mean(p => profit(p, p.flagged_back)),
-    roiBest:  mean(p => profit(p, p.best_back)),
-    roiClose: mean(p => profit(p, p.close_back)),
-    clv:      mean(p => p.flagged_back / p.close_back - 1),
+    roi:      mean(p => profit(p, p.takeFlagged)),
+    roiAvg:   mean(p => profit(p, p.flagged_back)),
+    roiBook:  mean(p => profit(p, p.bookFlagged)),
+    roiBest:  mean(p => profit(p, p.takeBest)),
+    roiClose: mean(p => profit(p, p.takeClose)),
+    clv:      mean(p => p.takeFlagged / p.takeClose - 1),
   };
 }
 
@@ -738,13 +744,14 @@ function roiBar(label, st, scale, dim) {
   </div>`;
 }
 
-// A settled pick at the price chosen in Filters: flagged / best / close odds
-// at the best bookie's price (where it was recorded) or the median. Its edge
-// stays the median's. fallback: the best bookie's price was not recorded for it.
+// A settled pick at the price chosen in Filters: the flagged / best / close
+// odds it is taken at, the best bookie's (where recorded) or the median. It
+// is chosen (edge, odds range) at the median either way. fallback: the best
+// bookie's price was not recorded for it.
 function trackAt(p) {
   const f = priceAt(p, 'flagged', prefs.basis);
-  return { ...p, flagged_back: f.back, fallback: f.fallback,
-           best_back: priceAt(p, 'best', prefs.basis).back, close_back: priceAt(p, 'close', prefs.basis).back };
+  return { ...p, takeFlagged: f.back, fallback: f.fallback, bookFlagged: priceAt(p, 'flagged', 'book').back,
+           takeBest: priceAt(p, 'best', prefs.basis).back, takeClose: priceAt(p, 'close', prefs.basis).back };
 }
 
 function renderTrackRecord() {
@@ -758,7 +765,7 @@ function renderTrackRecord() {
     $('roi-note').textContent = resultsFailed ? 'Could not load results. Try again in a moment.' : '';
     return;
   }
-  // Each pick judged by its own market's filter: its edge at the median when flagged, the odds taken then
+  // Each pick judged by its own market's filter at the median price when flagged
   const picks = results.picks.map(trackAt).filter(p => t.kinds.includes(p.market_kind) && passes(p)
     && passesMarket(prefs, marketOf(p), p.flagged_edge, p.flagged_back));
   const keys = modalKeys().filter(k => t.kinds.includes(k.split('|')[1].replace(':3', '')));
@@ -773,8 +780,10 @@ function renderTrackRecord() {
       <span class="text-xs font-semibold ${signCls(sel.roi)}">${sel.roi > 0 ? 'profit' : sel.roi < 0 ? 'loss' : ''}</span>
     </div>
     <div class="text-[11px] text-gray-500">ROI at your filters · ${sel.n} bet${sel.n === 1 ? '' : 's'}, ${wonCount(sel.wins)} won</div>
+    <div class="mt-1.5 text-xs tabular-nums text-gray-300" title="The same bets, 1 unit each when flagged, at the average price across the bookies and at the best price any one bookie offered">
+      Average odds <span class="font-semibold ${signCls(sel.roiAvg)}">${signedPct(sel.roiAvg)}</span> · Best bookie <span class="font-semibold ${signCls(sel.roiBook)}">${signedPct(sel.roiBook)}</span></div>
     <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds before kickoff; CLV compares flagged odds with closing odds. All at the ${at}.">
-      best odds ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>`
+      best seen ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>`
     : '<div class="text-xs text-gray-500">No settled bets at these filters yet.</div>';
 
   const scale = Math.max(0.1, ...bands.filter(b => b.st.n).map(b => Math.abs(b.st.roi)));

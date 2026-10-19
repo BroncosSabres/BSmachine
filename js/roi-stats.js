@@ -9,7 +9,9 @@
 //   win / push  fraction of the stake that won / was returned
 //   clv         back / closing odds - 1, or null when there is no closing price
 
-export const profit = b => b.win * (b.back - 1) * (1 - b.commission) - (1 - b.win - b.push);
+// At the price the bet was taken at (taken; safe-stake.js toBet), which can beat
+// back, the price it was chosen at
+export const profit = b => b.win * ((b.taken ?? b.back) - 1) * (1 - b.commission) - (1 - b.win - b.push);
 
 const mean = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
@@ -190,7 +192,7 @@ export function fitBlend(bets, { ridge = 1e-3, iters = 40 } = {}) {
     fit.weightCI = [clamp(bModel / total - 1.645 * se, 0, 1), clamp(bModel / total + 1.645 * se, 0, 1)];
   }
   // Expected return per unit at the bookie odds under the fitted probability
-  fit.expected = b => { const p = fit.prob(b); return p * (b.back - 1) * (1 - b.commission) - (1 - p); };
+  fit.expected = b => { const p = fit.prob(b); return p * ((b.taken ?? b.back) - 1) * (1 - b.commission) - (1 - p); };
   return fit;
 }
 
