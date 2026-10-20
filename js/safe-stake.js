@@ -58,14 +58,16 @@ export function decodeRows(data) {
 }
 
 // A decoded row as a bet (see roi-stats.js), at the odds when first priced
-// ('open') or the closing odds ('close'), taken at the best single bookmaker's
+// ('open'), the closing odds ('close'), or while its median edge was positive
+// ('first', 'avg' time-weighted, 'peak'), taken at the best single bookmaker's
 // price (basis 'book'; Betfair rows at the exchange's) or the median across
 // them ('avg'). The bet is chosen at the median either way: its edge and back
 // (what the odds range, odds bands and stake pools read, and the bookie's
 // implied chance) are the median's, so the same bets fall in the same places
 // under both and only the returns differ. taken: the price it is taken at,
 // which profit() pays out at. A row with no best-bookmaker price recorded is
-// taken at the median, marked fallback. A selection priced once has no CLV.
+// taken at the median, marked fallback. A selection priced once has no CLV;
+// CLV is from the stage's price to the close (from the open, at the close).
 export function toBet(r, stage = 'open', basis = 'book') {
   const repriced = r.n_checks > 1;
   const at = priceAt(r, stage, basis);
@@ -75,7 +77,7 @@ export function toBet(r, stage = 'open', basis = 'book') {
     fallback: at.fallback,
     win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
-    clv: repriced ? priceAt(r, 'open', basis).back / priceAt(r, 'close', basis).back - 1 : null,
+    clv: repriced ? priceAt(r, stage === 'close' ? 'open' : stage, basis).back / priceAt(r, 'close', basis).back - 1 : null,
     market: marketKey(r), prop: propKey(r), checks: r.n_checks,
     row: r,   // for naming the bet when a group of bets is listed
   };

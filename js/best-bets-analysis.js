@@ -49,9 +49,21 @@ const stakePrefs = loadStakePrefs();
 // across them ('avg')
 let prefs = localPrefs();
 const basis = () => $('f-price').value === 'avg' ? 'avg' : 'book';
+// Which odds a selection is judged at. The last three are over the window in
+// which its median edge was positive (only selections that ever showed value):
+// the first price then, the time-weighted mean (the return of betting at a
+// random moment while it showed), and the highest - a ceiling nobody times.
+const STAGES = {
+  open: ['odds when first priced', 'when first priced'],
+  close: ['closing odds', 'at the close'],
+  first: ['odds when first showing value', 'when it first showed value'],
+  avg: ['average odds while showing value', 'averaged over the time it showed value'],
+  peak: ['peak odds while showing value (not achievable)', 'at the best price while it showed value, a ceiling no one can time'],
+};
+const stageOf = () => STAGES[$('f-stage').value] || STAGES.open;
 // "odds when first priced · best bookie"
 function stageText(capital = false) {
-  const t = `${$('f-stage').value === 'close' ? 'closing odds' : 'odds when first priced'} · ${BASES[basis()].toLowerCase()}`;
+  const t = `${stageOf()[0]} · ${BASES[basis()].toLowerCase()}`;
   return capital ? t[0].toUpperCase() + t.slice(1) : t;
 }
 const riskOf = () => RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
@@ -117,6 +129,7 @@ function scopes() {
   for (const r of raw) {
     if (source !== 'all' && sourceKey(r) !== source) continue;
     if (stage === 'close' && !(r.n_checks > 1)) continue;
+    if (r[`${stage}_back`] == null) continue;   // never showed value (or not recorded)
     out.push(toBet(r, stage, basis()));
   }
   const { kept, dropped } = dropEmptyMarkets(out);
@@ -595,8 +608,7 @@ function renderBets() {
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">None of these.</td></tr>';
-  $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}Odds and edge are as ${
-    $('f-stage').value === 'close' ? 'at the close' : 'when first priced'}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}. Profit is on 1 unit, after commission where it applies.`;
+  $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}Odds and edge are as ${stageOf()[1]}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}. Profit is on 1 unit, after commission where it applies.`;
 }
 
 // list: { title, bets }, the rule panel's row by default
