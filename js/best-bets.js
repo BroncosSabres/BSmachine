@@ -151,12 +151,76 @@ function builderUrl(r) {
   return `/nrl/${page}?match_id=${r.game_id}${r.sport === 'nrlw' ? '&comp=nrlw' : ''}`;
 }
 
+// Wide screens: a column of its own. Phones: a line under the selection
+// (gameLine), to leave the width for the prices.
 function gameCell(r) {
-  return `<td class="px-2 py-2">
+  return `<td class="hidden sm:table-cell px-2 py-2">
     <a href="${builderUrl(r)}" title="Open this game in the Multi Builder"
        class="block font-semibold text-gray-100 hover:underline decoration-gray-500 underline-offset-2">${esc(r.home_team)} <span class="text-gray-500 font-normal">v</span> ${esc(r.away_team)}</a>
     <div class="text-[11px] text-gray-500">${sportTag(r.sport)} · ${esc(kickoffText(r.kickoff))}</div>
   </td>`;
+}
+
+function gameLine(r, when) {
+  return `<div class="sm:hidden text-[11px] text-gray-500 leading-snug">${sportTag(r.sport)} ·
+    <a href="${builderUrl(r)}" class="text-gray-400 hover:underline">${esc(r.home_team)} v ${esc(r.away_team)}</a> · ${when}</div>`;
+}
+
+// --- price history ------------------------------------------------------------
+// /api/best_bets rows carry history: [unix s, median, best bookie's price] at
+// every check so far, runs of one price cut to their ends.
+
+// [unix s, price] at the price on show (the best bookie's, else the median)
+const seriesOf = r => (r.history || []).map(([t, med, book]) => [t, r.atBook ? (book ?? med) : med]);
+
+// The latest move: the price now against the last different one, and when it moved
+function lastMove(series) {
+  const now = series.at(-1)?.[1];
+  for (let i = series.length - 2; i >= 0; i--) {
+    if (series[i][1] !== now) return { from: series[i][1], to: now, at: series[i + 1][0], up: now > series[i][1] };
+  }
+  return null;
+}
+
+function agoText(unix) {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - unix) / 60));
+  return mins < 60 ? `${mins} min ago` : mins < 2880 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} days ago`;
+}
+
+// Lengthened (a better price than before) up and green, shortened down and red
+function moveArrow(mv) {
+  if (!mv) return '';
+  return mv.up ? '<span class="text-green-400 text-[10px] ml-0.5" aria-label="lengthened">▲</span>'
+    : '<span class="text-red-400 text-[10px] ml-0.5" aria-label="shortened">▼</span>';
+}
+
+// The price over time as a step line (a price holds until the next check),
+// with the latest marked
+function sparkline(series) {
+  if (series.length < 2) return '';
+  const W = 64, H = 16, P = 2;
+  const t0 = series[0][0], t1 = series.at(-1)[0];
+  const vals = series.map(p => p[1]);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const x = t => (t1 === t0 ? W - P : P + (t - t0) / (t1 - t0) * (W - 2 * P)).toFixed(1);
+  const y = v => (hi === lo ? H / 2 : H - P - (v - lo) / (hi - lo) * (H - 2 * P)).toFixed(1);
+  let d = `M${x(t0)},${y(vals[0])}`;
+  for (let i = 1; i < series.length; i++) d += `H${x(series[i][0])}V${y(vals[i])}`;
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="inline-block text-gray-500" aria-hidden="true">
+    <path d="${d}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+    <circle cx="${x(t1)}" cy="${y(vals.at(-1))}" r="2" fill="#fbbf24"/></svg>`;
+}
+
+function historyTitle(r, series, mv) {
+  const lines = [`${r.atBook ? 'Best bookie price' : 'Median price'}: ${odds(r.back)} now`];
+  if (mv) lines.push(`${mv.up ? 'Lengthened' : 'Shortened'} from ${odds(mv.from)} ${agoText(mv.at)}`);
+  else if (series.length) lines.push(`Unchanged since ${kickoffText(new Date(series[0][0] * 1000))}`);
+  if (series.length > 1) {
+    const vals = series.map(p => p[1]);
+    lines.push(`Since ${kickoffText(new Date(series[0][0] * 1000))}: low ${odds(Math.min(...vals))}, high ${odds(Math.max(...vals))}`);
+  }
+  lines.push(`Open ${odds(r.open)}: the first price recorded. Best ${odds(r.best)}: the highest since it first showed value.`);
+  return lines.join('\n');
 }
 
 // Scorers with a stats window (the multi builders' player_detail endpoints).
@@ -259,6 +323,7 @@ function selectionCell(r) {
       ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
       : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
+    ${gameLine(r, esc(kickoffText(r.kickoff)))}
     ${bestBookHtml(r, r.atBook ? r.median : null)}
     ${historyHtml(r)}
   </td>`;
@@ -367,17 +432,29 @@ function upcomingAt(r) {
     : { ...r, bestEdge: r.best_book_edge ?? r.edge, open: r.open_odds, best: r.best_odds, median: r.back };
 }
 
+// Prices, model and edges each stacked in one cell: the selection cell is
+// three or four lines tall anyway, and a phone has room for few columns.
 function betRow(r, i) {
+  const series = seriesOf(r);
+  const mv = lastMove(series);
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${gameCell(r)}${selectionCell(r)}
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-400">${odds(r.open)}</td>
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.best)}</td>
-      <td class="px-2 py-2 text-right tabular-nums font-bold text-amber-400">${odds(r.back)}</td>
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
-      <td class="px-2 py-2 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
-      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.edge)}">${signedPct(r.edge)}</td>
-      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</td>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(historyTitle(r, series, mv))}">
+        <div class="font-bold text-amber-400">${odds(r.back)}${moveArrow(mv)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Open ${odds(r.open)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Best ${odds(r.best)}</div>
+        ${sparkline(series)}
+      </td>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="text-gray-200">${pct(r.model_prob)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Fair ${odds(r.fair_odds)}</div>
+      </td>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-bold ${signCls(r.edge)}" title="At the average (median) price">${signedPct(r.edge)}</div>
+        <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+        <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
+      </td>
       ${stakeCell(r)}
     </tr>`;
 }
@@ -413,7 +490,7 @@ function renderBets() {
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="10" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
     rows.sort((a, b) => byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge);
@@ -550,7 +627,7 @@ function liveGameCell(r) {
   const dot = g.state === 'live' && g.live
     ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse mr-1 align-middle" aria-hidden="true"></span>' : '';
   const score = g.home != null ? `<span class="font-semibold tabular-nums text-gray-200">${g.home}–${g.away}</span> ` : '';
-  return `<td class="px-2 py-2">
+  return `<td class="hidden sm:table-cell px-2 py-2">
     <a href="${builderUrl(r)}" title="Open this game in the Multi Builder"
        class="block font-semibold text-gray-100 hover:underline decoration-gray-500 underline-offset-2">${esc(r.home_team)} <span class="text-gray-500 font-normal">v</span> ${esc(r.away_team)}</a>
     <div class="text-[11px] text-gray-500 whitespace-nowrap">${sportTag(r.sport)} · ${dot}${score}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}</div>
@@ -561,11 +638,13 @@ function liveSelectionCell(r) {
   const [badge, cls] = LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown;
   const team = hasStats(r) ? teamOf(r) : null;
   const name = esc(selectionText(r));
+  const g = r.game;
   return `<td class="px-2 py-2">
     <div class="font-semibold text-gray-100">${hasStats(r)
       ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
       : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
+    ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}`)}
     <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
       <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
       ${r.live.detail ? `<span class="text-gray-400">${esc(r.live.detail)}</span>` : ''}
@@ -579,15 +658,21 @@ function liveRow(r, i) {
     : ch > m ? '<span class="text-green-400 text-[10px] mr-0.5">▲</span>' : '<span class="text-red-400 text-[10px] mr-0.5">▼</span>';
   const chTitle = ch == null ? 'No estimate' : `Chance it wins from here; ${pct(m)} at kickoff`
     + (r.live.p_push > 0.001 ? `, ${pct(r.live.p_push)} it pushes` : '');
-  const at = (o, key) => `<td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums ${key === basis() ? 'font-bold text-amber-400' : 'text-gray-400'}">${odds(o)}</td>`;
+  // The three prices stacked, the one chosen in Odds at highlighted
+  const at = (key, label) => `<div class="text-[11px] leading-snug ${key === basis() ? 'font-semibold text-amber-400' : 'text-gray-400'}">${label} ${odds(r.prices[key])}</div>`;
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${liveGameCell(r)}${liveSelectionCell(r)}
-      ${at(r.prices.open, 'open')}${at(r.prices.best, 'best')}${at(r.prices.close, 'close')}
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.avgEdge)}</td>
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums text-gray-300">${signedPct(r.bestEdge)}</td>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-bold text-amber-400">${odds(r.back)}</div>
+        ${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}
+      </td>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
+        <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+      </td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-100 whitespace-nowrap" title="${esc(chTitle)}">${move}${pct(ch, 0)}</td>
-      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}<div class="sm:hidden text-[11px] font-normal text-gray-500">@ ${odds(r.back)}</div></td>
+      <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}</td>
     </tr>`;
 }
 
@@ -652,11 +737,11 @@ function renderLive() {
   if (!liveData) {
     $('live-summary').innerHTML = '';
     body.innerHTML = liveFailed
-      ? '<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the live bets. Trying again shortly.</td></tr>'
-      : Array.from({ length: 4 }, () => '<tr><td colspan="9" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
+      ? '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the live bets. Trying again shortly.</td></tr>'
+      : Array.from({ length: 4 }, () => '<tr><td colspan="6" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
   } else if (!rows.length) {
     $('live-summary').innerHTML = '';
-    body.innerHTML = `<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">${
+    body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
       liveData.rows.length ? 'No bets in play match these filters.' : 'Nothing in play right now.'}</td></tr>`;
   } else {
     loadLogs(rows);
@@ -846,12 +931,11 @@ function renderHeads() {
   const book = bookBasis();
   const price = book ? 'the best price any one bookie offers (Betfair markets: the exchange\'s best back price)'
     : 'the median price across the bookies (Betfair markets: the exchange\'s best back price)';
-  $('th-open').title = `The first price recorded for this selection, whatever the edge was then: ${price}`;
-  $('th-best').title = `The highest price seen since it first showed value (or now, if higher): ${price}`;
-  $('th-now').title = `Now: ${price}, when last checked. At kickoff this becomes the closing price.`;
-  $('lth-open').title = `The first price recorded for this selection: ${price}`;
-  $('lth-best').title = `The highest price seen from when it first showed value to kickoff: ${price}`;
-  $('lth-close').title = `The last price before kickoff: ${price}`;
+  $('th-odds').title = `All at ${price}. Top: the price now, when last checked, with ▲ / ▼ for its latest move `
+    + '(lengthened / shortened). Open: the first price recorded, whatever the edge was then. Best: the highest seen since it '
+    + 'first showed value (or now, if higher). The line: the price at every check so far, the dot is now. Hover a price for its history.';
+  $('lth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Open: the first price recorded. `
+    + 'Best: the highest from when it first showed value to kickoff. Close: the last before kickoff.';
   $('filters-summary').textContent = `${prefsSummary(prefs, modalKeys())} · ${BASES[prefs.basis].toLowerCase()}`;
 }
 
