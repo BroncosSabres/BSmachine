@@ -805,7 +805,7 @@ function renderLive() {
     + 'Odds at Avg (the default): the average price over the time the bet showed value before kickoff, weighted by time, at the price '
     + 'chosen in Filters (the best bookie\'s by default): what taking it whenever it was listed got on average. Filters and the Odds range '
     + 'read the median price at the odds chosen, as for upcoming bets. A player not in the line-up (NHL) or listed inactive (NFL) shows as void. '
-    + 'NHL totals are settled by each bookie\'s rule: 60 minutes only, or the final score (overtime and the shootout's +1 in).';
+    + 'NHL totals are settled by each bookie\'s rule: 60 minutes only, or the final score (overtime and the shootout\'s +1 in).';
 }
 
 function scheduleLive() {
