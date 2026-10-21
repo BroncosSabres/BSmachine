@@ -56,6 +56,7 @@ let shown = [];            // the rows in the table, in order (data-row indexes 
 let results = null;        // /api/best_bets/results, loaded on first open
 let tab = 'all';
 let sport = 'all';
+let day = 'all';           // a local kickoff date 'YYYY-MM-DD' (upcoming view only)
 let settled = null;        // settled selections as bets, for the stakes (null until loaded)
 let stakesFailed = false;
 let model = null;          // stakeModel over them at the current settings
@@ -94,6 +95,14 @@ function passes(r) {
 const passesFilters = r => passesMarket(prefs, marketOf(r), r.avgEdge ?? r.edge, r.avgBack ?? r.median ?? r.back);
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
+
+// The kickoff's date in the viewer's time zone, 'YYYY-MM-DD'
+function dayOf(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const passesDay = r => day === 'all' || dayOf(r.kickoff) === day;
 
 // --- access states ----------------------------------------------------------
 
@@ -354,6 +363,29 @@ function renderSportPills() {
               ? 'border-amber-400 text-amber-400' : 'border-gray-700 text-gray-400 hover:text-gray-200'}">${s === 'all' ? 'All' : SPORT_LABELS[s]}</button>`).join('');
 }
 
+// Today, Tomorrow, the weekday within the week ahead, else the date
+function dayLabel(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const ahead = Math.round((date - today) / 86400000);
+  if (ahead === 0) return 'Today';
+  if (ahead === 1) return 'Tomorrow';
+  if (ahead > 1 && ahead < 7) return date.toLocaleDateString(undefined, { weekday: 'long' });
+  return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+// The days the upcoming bets start on. Upcoming only: live games have started.
+function renderDayFilter() {
+  const isLive = view === 'live';
+  const days = [...new Set(bets.map(r => dayOf(r.kickoff)).filter(Boolean))].sort();
+  if (day !== 'all' && !days.includes(day)) day = 'all';
+  $('day-wrap').classList.toggle('hidden', isLive || days.length < 2);
+  $('day-filter').innerHTML = ['all', ...days].map(k =>
+    `<option value="${k}"${k === day ? ' selected' : ''}>${k === 'all' ? 'Any' : esc(dayLabel(k))}</option>`).join('');
+}
+
 // --- stakes -----------------------------------------------------------------
 // Settled selections as the analysis page counts them by default: odds when
 // first priced, every source, one bet per market.
@@ -487,9 +519,10 @@ function oneLinePerSide(rows, oddsTyped) {
   return rows.filter(r => !r.alternate || shownAlts.has(r));
 }
 
-// The upcoming bets that pass the sport / My Teams / market filters, at the
-// price chosen, one line per side (any tab)
-const upcomingRows = () => oneLinePerSide(bets.map(upcomingAt).filter(r => passes(r) && passesFilters(r)), oddsTyped(prefs));
+// The upcoming bets that pass the sport / day / My Teams / market filters, at
+// the price chosen, one line per side (any tab)
+const upcomingRows = () => oneLinePerSide(bets.map(upcomingAt).filter(r => passes(r) && passesDay(r) && passesFilters(r)),
+                                          oddsTyped(prefs));
 
 function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
@@ -967,6 +1000,7 @@ function render() {
   $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams());
   renderHeads();
   renderSportPills();
+  renderDayFilter();
   renderView();
   renderTrackRecord();
 }
@@ -1004,6 +1038,7 @@ $('sport-pills').addEventListener('click', e => {
   const b = e.target.closest('[data-sport]');
   if (b) { sport = b.dataset.sport; render(); }
 });
+$('day-filter').addEventListener('change', e => { day = e.target.value; render(); });
 ['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
 // "Most profitable" in the modal: from the settled bets the stakes load
 const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys()),
