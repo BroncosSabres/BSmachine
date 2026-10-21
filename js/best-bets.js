@@ -19,7 +19,11 @@
 // chosen and the bank entered. Each bet shows its opening, best and current
 // odds. The Live view (/api/best_bets/live) is every tracked bet whose game
 // has started, until it settles: the score, where the bet stands, its chance
-// from here and the expected return, with a projected ROI over them all.
+// from here and the expected return, with a projected ROI over them all. Live
+// bets are judged by default at their average price while they showed value
+// (at the price basis chosen: the best bookie's by default), and pass the
+// same filters as the upcoming ones. The Filters modal's "Most profitable"
+// sets each market from the settled bets (best-bets-optimise.js).
 import { BACKEND, apiUrl } from './api-config.js';
 import { supabase, getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
@@ -30,8 +34,9 @@ import { SPORT_LABELS, SPORT_COLORS, esc, odds, pct, signedPct, signCls, wonCoun
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
-         BASES, LIVE_STAGES } from './best-bets-filters.js';
-import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
+         BASES, LIVE_STAGES, LIVE_STAGE_LABELS } from './best-bets-filters.js';
+import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
+import { optimiseMarkets } from './best-bets-optimise.js';
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -74,7 +79,7 @@ function applyPrefs() {
 // The bar's controls into the settings, then saved
 function savePrefs() {
   prefs = { ...prefs, sort: $('sort-by').value === 'time' ? 'time' : 'edge', myTeams: $('my-teams-only').checked,
-            liveStage: LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'best',
+            liveStage: LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'avg',
             odds: [$('odds-min').value.trim(), $('odds-max').value.trim()] };
   storePrefs(prefs);
 }
@@ -372,6 +377,7 @@ async function loadStakes() {
     if (!data) return;
     settledRows = decodeRows(data);
     buildModel();
+    filtersDataReady();
   } catch {
     stakesFailed = true;
   }
@@ -463,9 +469,12 @@ function betRow(r, i) {
 // at most one line is shown per game, market and side. With no odds range
 // typed that is the bookies' standard line; with one, the standard line when
 // its price fits, else the alternate nearest it that does.
+// NHL totals come under two settlement rules (market_id ending ':reg' /
+// ':ot'), each a market of its own with its own standard line.
+const ruleOf = r => /:(reg|ot)$/.exec(r.market_id || '')?.[1] || '';
 function oneLinePerSide(rows, oddsTyped) {
   if (!oddsTyped) return rows.filter(r => !r.alternate);
-  const key = r => `${r.sport}:${r.game_id}|${r.market_kind}|${r.side}`;
+  const key = r => `${r.sport}:${r.game_id}|${r.market_kind}|${ruleOf(r)}|${r.side}`;
   const standard = new Set(rows.filter(r => !r.alternate).map(key));
   const nearest = new Map();
   for (const r of rows) {
@@ -529,7 +538,7 @@ function openStats(r) {
     subtitle: `${SPORT_LABELS[r.sport]} · ${r.home_team} v ${r.away_team} · ${g
       ? `${g.home != null ? `${g.home}–${g.away} ` : ''}${g.state === 'pre' ? kickoffText(r.kickoff) : g.label}` : kickoffText(r.kickoff)}`,
     tiles: g ? [
-      { label: `Odds (${basis()})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.prices.open)} · Best ${odds(r.prices.best)} · Close ${odds(r.prices.close)}` },
+      { label: `Odds (${LIVE_STAGE_LABELS[basis()]})`, value: odds(r.back), cls: 'text-amber-400', sub: `Avg ${odds(r.prices.avg)} · Open ${odds(r.prices.open)} · Best ${odds(r.prices.best)} · Close ${odds(r.prices.close)}` },
       { label: 'Model at kickoff', value: pct(r.model_prob) },
       { label: 'Chance now', value: pct(r.live.p_win), sub: (LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown)[0] },
       { label: 'Live EV', value: signedPct(r.ev), cls: signCls(r.ev) },
@@ -562,8 +571,10 @@ let liveLoadedAt = 0;
 let liveTimer = 0;
 let liveShown = [];        // the live rows on show, in order (data-row indexes it)
 
-// The Odds at choice: which of a bet's prices its edge, EV and the filters use
-const basis = () => LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'best';
+// The Odds at choice: which of a bet's prices its edge, EV and the filters
+// use. 'avg' (the default): the time-weighted average while its median edge
+// was positive, the price a bet taken at any moment it was listed got on average
+const basis = () => LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'avg';
 
 // [badge, classes]; the settled-looking ones are final or locked
 const LIVE_STATUS = {
@@ -584,12 +595,14 @@ const LIVE_STATUS = {
 };
 const LOCKED = new Set(['won', 'lost', 'push', 'half_won', 'half_lost']);
 
-// A live pick as the shared filters and cells read it: its open / best /
-// close prices at the price chosen in Filters (the best bookie's where one was
-// recorded, else the median), back and edge at the one chosen in Odds at (an
-// opening price that was only a Betfair placeholder falls back to the price
-// it was first flagged at), ev = expected return per unit from here, sd = the
-// spread of that return.
+// A live pick as the shared filters and cells read it: its average-with-value
+// / open / best / close prices at the price chosen in Filters (the best
+// bookie's where one was recorded, else the median), back and edge at the one
+// chosen in Odds at (a price not recorded - an opening price that was only a
+// Betfair placeholder, a window from before it was kept - falls back to the
+// price it was first flagged at), ev = expected return per unit from here, sd
+// = the spread of that return. Its edge, what the filters read, is at the
+// median price of that stage, as the upcoming bets' is.
 function liveBetAt(p) {
   const at = stage => (bookBasis() ? p[`${stage}_book_back`] : null) ?? p[`${stage}_back`];
   const prices = Object.fromEntries(LIVE_STAGES.map(s => [s, at(s)]));
@@ -658,14 +671,14 @@ function liveRow(r, i) {
     : ch > m ? '<span class="text-green-400 text-[10px] mr-0.5">▲</span>' : '<span class="text-red-400 text-[10px] mr-0.5">▼</span>';
   const chTitle = ch == null ? 'No estimate' : `Chance it wins from here; ${pct(m)} at kickoff`
     + (r.live.p_push > 0.001 ? `, ${pct(r.live.p_push)} it pushes` : '');
-  // The three prices stacked, the one chosen in Odds at highlighted
+  // The prices stacked, the one chosen in Odds at highlighted
   const at = (key, label) => `<div class="text-[11px] leading-snug ${key === basis() ? 'font-semibold text-amber-400' : 'text-gray-400'}">${label} ${odds(r.prices[key])}</div>`;
   return `
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${liveGameCell(r)}${liveSelectionCell(r)}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold text-amber-400">${odds(r.back)}</div>
-        ${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}
+        ${at('avg', 'Avg')}${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}
       </td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
@@ -722,7 +735,7 @@ function renderLiveSummary(rows) {
         <div class="text-lg font-semibold tabular-nums ${signCls(pre)}">${signedPct(pre)}</div>
       </div>
       <div class="flex-1 min-w-[12rem] text-right text-[11px] text-gray-500">
-        <div>${n} bet${n === 1 ? '' : 's'}, 1 unit each at ${basis()} odds${bookBasis() ? ' (best bookie)' : ' (average)'}</div>
+        <div>${n} bet${n === 1 ? '' : 's'}, 1 unit each at ${LIVE_STAGE_LABELS[basis()]} odds${bookBasis() ? ' (best bookie)' : ' (median)'}</div>
         <div class="mt-0.5">${tally}</div>
         <div class="mt-0.5" id="live-updated">Updated ${liveAgo()}</div>
       </div>
@@ -756,7 +769,10 @@ function renderLive() {
     + 'the hour; NFL scorers can wait on snap counts). Chance: from the current score and the time left on the pre-game model (the sim\'s '
     + 'score spread shrunk to the time left; scorers from the chance the model gave them), so at kickoff it is the model\'s own. '
     + 'Live EV: the expected return per unit from here at the odds chosen, after commission; locked bets show what they returned. '
-    + 'Filters and the Odds range use the odds chosen too. A player not in the line-up (NHL) or listed inactive (NFL) shows as void.';
+    + 'Odds at Avg (the default): the average price over the time the bet showed value before kickoff, weighted by time, at the price '
+    + 'chosen in Filters (the best bookie\'s by default): what taking it whenever it was listed got on average. Filters and the Odds range '
+    + 'read the median price at the odds chosen, as for upcoming bets. A player not in the line-up (NHL) or listed inactive (NFL) shows as void. '
+    + 'NHL totals are settled by each bookie\'s rule: 60 minutes only, or the final score (overtime and the shootout's +1 in).';
 }
 
 function scheduleLive() {
@@ -934,8 +950,8 @@ function renderHeads() {
   $('th-odds').title = `All at ${price}. Top: the price now, when last checked, with ▲ / ▼ for its latest move `
     + '(lengthened / shortened). Open: the first price recorded, whatever the edge was then. Best: the highest seen since it '
     + 'first showed value (or now, if higher). The line: the price at every check so far, the dot is now. Hover a price for its history.';
-  $('lth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Open: the first price recorded. `
-    + 'Best: the highest from when it first showed value to kickoff. Close: the last before kickoff.';
+  $('lth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Avg: the average while it showed value before kickoff, `
+    + 'weighted by time. Open: the first price recorded. Best: the highest from when it first showed value to kickoff. Close: the last before kickoff.';
   $('filters-summary').textContent = `${prefsSummary(prefs, modalKeys())} · ${BASES[prefs.basis].toLowerCase()}`;
 }
 
@@ -989,8 +1005,11 @@ $('sport-pills').addEventListener('click', e => {
   if (b) { sport = b.dataset.sport; render(); }
 });
 ['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
+// "Most profitable" in the modal: from the settled bets the stakes load
+const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys()),
+                               { ready: () => !!settledRows });
 $('filters-btn').addEventListener('click', () => openFilters({
-  prefs, keys: modalKeys(), counts: marketCounts(), opener: $('filters-btn'),
+  prefs, keys: modalKeys(), counts: marketCounts(), opener: $('filters-btn'), optimise,
   onChange: next => {
     prefs = next;
     storePrefs(prefs);

@@ -10,7 +10,11 @@
 //             one generous bookmaker can't make a bet worth having.
 //   odds      [min, max] as typed, '' for no limit: one range for every market
 //   markets   { 'sport|kind': { on, edge: [min, max] } }, edge typed in percent
-//   liveStage 'open' | 'best' | 'close': which of a live bet's prices it is judged at
+//   liveStage 'avg' | 'open' | 'best' | 'close': which of a live bet's prices
+//             it is judged at. 'avg' (the default): the time-weighted average
+//             while its median edge was positive, what betting it at a random
+//             moment while it showed value would have got
+//   v         2 since the 'avg' stage: settings saved before it move to it once
 import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
 
 // kind as safe-stake.js kindKey: the NHL 60-minute (3-way) result apart from the moneyline
@@ -26,7 +30,9 @@ export const MARKETS = [
 ].map(([sport, kind, label]) => ({ key: `${sport}|${kind}`, sport, kind, label }));
 
 export const BASES = { book: 'Best bookie', avg: 'Average bookie' };
-export const LIVE_STAGES = ['open', 'best', 'close'];
+export const LIVE_STAGES = ['avg', 'open', 'best', 'close'];
+export const LIVE_STAGE_LABELS = { avg: 'average with value', open: 'opening', best: 'best', close: 'closing' };
+const PREFS_VERSION = 2;
 const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_ODDS = ['', '10'];
 // Off unless switched on: the moneyline is the NHL head-to-head shown by default
@@ -50,7 +56,7 @@ const typed = x => { const s = String(x ?? '').trim(); return s !== '' && Number
 const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]), typed(p[1])] : [...fallback];
 
 export function defaultPrefs() {
-  return { v: 1, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'best' };
+  return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg' };
 }
 
 // Anything (saved JSON, a profile column) -> valid settings
@@ -63,13 +69,13 @@ export function normalizePrefs(p) {
     markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE) };
   }
   return {
-    v: 1,
+    v: PREFS_VERSION,
     basis: p.basis === 'avg' ? 'avg' : 'book',
     odds: pair(p.odds, DEFAULT_ODDS),
     markets,
     sort: p.sort === 'time' ? 'time' : 'edge',
     myTeams: !!p.myTeams,
-    liveStage: LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'best',
+    liveStage: (p.v ?? 1) >= PREFS_VERSION && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
   };
 }
 
@@ -86,7 +92,6 @@ export function migrateOldPrefs(old) {
   for (const m of MARKETS) p.markets[m.key] = { on: m.key === 'nhl|match_odds:3' ? !!old.threeWay : true, edge: [...edge] };
   p.sort = old.sort === 'time' ? 'time' : 'edge';
   p.myTeams = !!old.myTeams;
-  if (LIVE_STAGES.includes(old.basis)) p.liveStage = old.basis;
   return p;
 }
 
@@ -108,8 +113,11 @@ export const inRange = (x, [lo, hi]) => x != null && x >= lo - 1e-9 && x <= hi +
 // Whether a bet passes its market's switch and edge range, the odds range,
 // and has value at all. edge: at the median; back: the price taken.
 export function passesMarket(prefs, key, edge, back) {
-  const rule = ruleFor(prefs, key);
-  return rule.on && edge != null && edge > 0 && inRange(edge, edgeRangeOf(prefs, key)) && inRange(back, oddsRangeOf(prefs));
+  return passesEdge(prefs, key, edge) && inRange(back, oddsRangeOf(prefs));
+}
+// The same leaving the odds out (where the odds are looked at separately)
+export function passesEdge(prefs, key, edge) {
+  return ruleFor(prefs, key).on && edge != null && edge > 0 && inRange(edge, edgeRangeOf(prefs, key));
 }
 
 // A tracked row at one stage ('open', 'flagged', 'best', 'close') on the

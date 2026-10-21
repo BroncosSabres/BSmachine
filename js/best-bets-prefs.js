@@ -1,15 +1,18 @@
 // best-bets-prefs.js — keeps the Best Bets filter settings (see
 // best-bets-filters.js) and draws the Filters modal. Used by the Best Bets
-// page and its analysis page (the price basis).
+// page and its analysis page (the price basis, and the filters themselves
+// when "My filters" is ticked there). The modal's "Most profitable" button
+// sets every market from its settled bets (best-bets-optimise.js).
 //
 // The settings live in this browser (applied at once) and, signed in, in the
 // account's profile (profiles.best_bets_prefs), so they follow the account:
 // the profile's copy wins when the page loads; a profile with none takes this
 // browser's. The bank balance is not part of them: it stays in the browser.
 import { supabase, getSession } from './supabase-client.js';
-import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc } from './best-bets-shared.js';
+import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, signedPct } from './best-bets-shared.js';
 import { MARKETS, BASES, normalizePrefs, migrateOldPrefs, defaultPrefs, defaultRule, ruleFor,
-         marketLabel } from './best-bets-filters.js';
+         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf } from './best-bets-filters.js';
+import { applyOptimised, OPT_MIN_BETS } from './best-bets-optimise.js';
 
 const KEY = 'bsm_best_bets_filters';
 const SAVE_DELAY_MS = 800;
@@ -64,7 +67,7 @@ export function savePrefs(prefs) {
 // --- the Filters modal ----------------------------------------------------------
 
 let overlay = null;
-let state = null;   // { prefs, keys, counts, onChange, opener }
+let state = null;   // { prefs, keys, counts, countLabel, onChange, optimise, opener, report }
 
 const inputCls = 'w-14 bg-gray-900 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums';
 
@@ -76,7 +79,7 @@ function rowHtml(key) {
       <label class="flex items-center gap-2 flex-1 min-w-[10rem] cursor-pointer">
         <input type="checkbox" data-on class="accent-amber-400 shrink-0" ${rule.on ? 'checked' : ''}>
         <span class="text-sm text-gray-100 truncate">${esc(marketLabel(key))}</span>
-        <span data-count class="text-[11px] tabular-nums text-gray-500 shrink-0">${n ? `${n} now` : ''}</span>
+        <span data-count class="text-[11px] tabular-nums text-gray-500 shrink-0">${countText(n)}</span>
       </label>
       <span class="ml-auto flex items-center gap-1 text-xs text-gray-400 shrink-0" role="group" aria-label="${esc(marketLabel(key))} edge range">
         <input data-edge="0" type="number" min="0" step="any" inputmode="decimal" placeholder="any" value="${esc(rule.edge[0])}"
@@ -87,7 +90,36 @@ function rowHtml(key) {
         <button type="button" data-copy title="Use this edge range for every market"
                 class="ml-1 px-1.5 py-1 rounded border border-gray-700 text-[11px] text-gray-400 hover:text-gray-100 hover:border-gray-500">All</button>
       </span>
+      ${reportLine(state.report?.[key])}
     </div>`;
+}
+
+const countText = n => n ? `${n} ${state.countLabel || 'now'}` : '';
+const units = x => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}u`;
+const bets = n => `${n} bet${n === 1 ? '' : 's'}`;
+
+// Under a row, once "Most profitable" has run: what its settled bets did
+function reportLine(r) {
+  if (!r) return '';
+  const text = r.status === 'on'
+    ? `<span class="text-green-400/90">Most profitable: edge ${esc(edgeText(typedRange(r.edge, 0.01)))}</span> · ${units(r.units)} on ${bets(r.n)} (${signedPct(r.roi)})`
+    : r.status === 'off'
+      ? `<span class="text-red-400/90">No edge range has made money</span> · ${units(r.units)} on ${bets(r.n)} with value`
+      : `${r.n ? `${bets(r.n)} settled` : 'No settled bets'}: under ${OPT_MIN_BETS}, so left as it was`;
+  return `<div class="basis-full text-[11px] text-gray-500 pl-6 -mt-0.5">${text}</div>`;
+}
+
+// What "Most profitable" read, and what it did
+function reportSummary() {
+  const r = Object.values(state.report || {});
+  if (!r.length) return '';
+  const k = st => r.filter(x => x.status === st).length;
+  const odds = oddsText(oddsRangeOf(state.prefs));
+  return `<p class="mb-3 rounded-lg border border-gray-700 bg-gray-900/60 px-3 py-2 text-[11px] text-gray-400 leading-snug">
+    Set from settled bets at the average ${state.prefs.basis === 'book' ? 'best bookie' : 'median'} price while they showed value${odds ? `, ${esc(odds)}` : ''}, one bet per market:
+    <span class="text-gray-200">${k('on')} on</span> at the edge range that made the most units,
+    <span class="text-gray-200">${k('off')} off</span> where none made money, ${k('thin')} left as ${k('thin') === 1 ? 'it was' : 'they were'} (under ${OPT_MIN_BETS} settled bets).
+    It is fitted to past results, so expect less from it. Change anything below as you like.</p>`;
 }
 
 function bodyHtml() {
@@ -97,7 +129,7 @@ function bodyHtml() {
     <button type="button" data-basis="${b}" aria-pressed="${prefs.basis === b}"
             class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.basis === b
               ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('');
-  return `
+  return `${reportSummary()}
     <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Price</div>
       <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${basis}</div>
@@ -130,8 +162,7 @@ function change(mutate, repaint = true) {
   state.counts = state.onChange(prefs) || state.counts;
   if (repaint) paint();
   else for (const el of overlay.querySelectorAll('[data-key]')) {
-    const n = state.counts?.[el.dataset.key];
-    el.querySelector('[data-count]').textContent = n ? `${n} now` : '';
+    el.querySelector('[data-count]').textContent = countText(state.counts?.[el.dataset.key]);
   }
 }
 
@@ -156,7 +187,11 @@ function build() {
       <div data-body class="overflow-y-auto px-4 pb-2"></div>
       <div class="flex items-center justify-between gap-3 p-4 pt-3 border-t border-gray-700">
         <button type="button" data-reset class="text-xs text-gray-400 hover:text-gray-100">Reset to defaults</button>
-        <button type="button" data-close class="px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 text-sm font-bold">Done</button>
+        <span class="flex items-center gap-2">
+          <button type="button" data-optimise title="${OPT_TITLE}"
+                  class="px-3 py-1.5 rounded-md border border-amber-400/60 text-amber-300 text-sm font-semibold hover:bg-amber-400/10 disabled:opacity-40 disabled:cursor-wait">Most profitable</button>
+          <button type="button" data-close class="px-4 py-1.5 rounded-md bg-amber-400 text-gray-900 text-sm font-bold">Done</button>
+        </span>
       </div>
     </div>`;
   document.body.appendChild(overlay);
@@ -166,7 +201,10 @@ function build() {
     const b = e.target.closest('button');
     if (!b) return;
     const key = b.closest('[data-key]')?.dataset.key;
-    if (b.dataset.basis) change(p => { p.basis = b.dataset.basis; });
+    if (b.dataset.basis) {
+      state.report = null;   // read at the other price
+      change(p => { p.basis = b.dataset.basis; });
+    } else if (b.hasAttribute('data-optimise')) optimise();
     else if (b.dataset.allOn || b.dataset.allOff) {
       const s = b.dataset.allOn || b.dataset.allOff;
       change(p => state.keys.filter(k => k.startsWith(`${s}|`)).forEach(k => setRule(p, k, { on: !!b.dataset.allOn })));
@@ -174,6 +212,7 @@ function build() {
       const edge = [...ruleFor(state.prefs, key).edge];
       change(p => state.keys.forEach(k => setRule(p, k, { edge: [...edge] })));
     } else if (b.hasAttribute('data-reset')) {
+      state.report = null;
       change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; });
     }
   });
@@ -193,16 +232,45 @@ function build() {
   });
 }
 
-// keys: the markets to list (sport|kind). counts: { key: bets on show now }.
-// onChange(prefs) is called on every change, and returns fresh counts.
-export function openFilters({ prefs, keys, counts, onChange, opener }) {
+const OPT_TITLE = 'Switch each market on at the edge range its settled bets have made the most money in, and off where '
+  + 'no range has made money. Markets with too few settled bets are left as they are. Change anything afterwards as you like.';
+
+// "Most profitable": every market from its settled bets, the rest as they are
+function optimise() {
+  const report = state.optimise?.(state.prefs);
+  if (!report) return;
+  state.report = report;
+  change(p => Object.assign(p, applyOptimised(p, report)));
+}
+
+// The button waits for the settled bets, which the page may still be loading
+function syncOptimise() {
+  const b = overlay.querySelector('[data-optimise]');
+  const ready = !!state.optimise?.ready?.();
+  b.disabled = !ready;
+  b.classList.toggle('hidden', !state.optimise);
+  b.title = ready ? OPT_TITLE : `Loading the settled bets first. ${OPT_TITLE}`;
+}
+
+// keys: the markets to list (sport|kind). counts: { key: bets }, shown as
+// "n now" (or "n <countLabel>"). onChange(prefs) is called on every change,
+// and returns fresh counts. optimise(prefs) -> best-bets-optimise.js
+// optimiseMarkets' report, with optimise.ready() saying whether the settled
+// bets are in; leave it out for no "Most profitable" button.
+export function openFilters({ prefs, keys, counts, countLabel, onChange, optimise: opt, opener }) {
   if (!overlay) build();
-  state = { prefs: structuredClone(prefs), keys, counts, onChange, opener };
+  state = { prefs: structuredClone(prefs), keys, counts, countLabel, onChange, optimise: opt, opener, report: null };
   paint();
+  syncOptimise();
   overlay.classList.remove('hidden');
   overlay.classList.add('flex');
   document.body.style.overflow = 'hidden';
   overlay.querySelector('[data-close]').focus();
+}
+
+// The page's settled bets have arrived: "Most profitable" can run
+export function filtersDataReady() {
+  if (overlay && state && !overlay.classList.contains('hidden')) syncOptimise();
 }
 
 export function closeFilters() {

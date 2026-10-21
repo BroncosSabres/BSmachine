@@ -58,8 +58,9 @@
                 <input id="odds-max" type="number" min="1" step="any" inputmode="decimal" placeholder="any" value="10" aria-label="Highest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
               </div>
-              <label id="basis-wrap" class="hidden flex items-center gap-1.5" title="Which price the Live tab's odds filter, edges, expected returns and projected ROI use: the first price recorded, the best seen before kickoff, or the closing price">Odds at
+              <label id="basis-wrap" class="hidden flex items-center gap-1.5" title="Which price the Live tab's odds filter, edges, expected returns and projected ROI use: the average while the bet showed value before kickoff (weighted by time: what taking it whenever it was listed got), the first price recorded, the best seen before kickoff, or the closing price">Odds at
                 <select id="odds-basis" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                  <option value="avg">Avg with value</option>
                   <option value="open">Open</option>
                   <option value="best">Best</option>
                   <option value="close">Close</option>

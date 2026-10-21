@@ -12,15 +12,20 @@
 // odds shows which bins have proven a profit and what stake each earns at the
 // Risk level chosen, and where bets turn to losing again (safe-stake.js). The
 // maths is in roi-stats.js; everything is recomputed in the browser so the
-// filters apply to all of it. Same access rules as the Best Bets page.
+// filters apply to all of it. "My filters" narrows everything further to the
+// Best Bets page's own filters (best-bets-filters.js: the markets on, the
+// edge each needs, the odds range), on top of Sport and Market, so selecting
+// a market below still narrows to it; Edit opens the same Filters modal,
+// "Most profitable" and all. Same access rules as the Best Bets page.
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
-import { BASES } from './best-bets-filters.js';
-import { localPrefs, syncPrefs, savePrefs } from './best-bets-prefs.js';
+import { BASES, passesMarket, passesEdge, prefsSummary } from './best-bets-filters.js';
+import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
+import { optimiseMarkets } from './best-bets-optimise.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
@@ -67,6 +72,14 @@ function stageText(capital = false) {
   return capital ? t[0].toUpperCase() + t.slice(1) : t;
 }
 const riskOf = () => RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
+
+// "My filters": the Best Bets page's filters on top of Sport and Market. Ticked
+// or not is remembered in this browser.
+const MINE_KEY = 'bsm_best_bets_analysis_mine';
+const mine = () => $('f-mine').checked;
+// The bets the Best Bets filters let through: the market on, its edge range
+// and (odds: false leaves it out) the odds range, all at the median price
+const passesMine = (b, odds = true) => odds ? passesMarket(prefs, b.group, b.edge, b.back) : passesEdge(prefs, b.group, b.edge);
 
 // --- access states (as best-bets.js) ------------------------------------------
 
@@ -123,7 +136,7 @@ function syncOdds(moved) {
 //   every  each selection whatever "count" says: the team view pairs up the
 //          two sides of a head-to-head itself
 //   anyOdds as base at every price: the grid's columns are the odds
-function scopes() {
+function scopes(withMine = mine()) {
   const stage = $('f-stage').value, source = $('f-source').value, [oddsLo, oddsHi] = oddsRange();
   const out = [];
   for (const r of raw) {
@@ -136,10 +149,10 @@ function scopes() {
   // The bet that stands for a market is picked before the odds cut, so moving
   // the slider never changes which line or side that is
   const counted = $('f-count').value === 'one' ? onePerMarket(kept) : kept;
-  const inOdds = b => b.back >= oddsLo && b.back < oddsHi;
+  const inOdds = withMine ? b => b.back >= oddsLo && b.back < oddsHi && passesMine(b) : b => b.back >= oddsLo && b.back < oddsHi;
   const base = counted.filter(inOdds);
-  return { base, every: kept.filter(inOdds), anyOdds: counted, empty: dropped, repeats: kept.length - counted.length,
-           fallbacks: base.filter(b => b.fallback).length };
+  return { base, every: kept.filter(inOdds), anyOdds: withMine ? counted.filter(b => passesMine(b, false)) : counted,
+           empty: dropped, repeats: kept.length - counted.length, fallbacks: base.filter(b => b.fallback).length };
 }
 
 const selected = bets => bets.filter(b => ($('f-sport').value === 'all' || b.sport === $('f-sport').value)
@@ -156,7 +169,7 @@ const capital = s => s[0].toUpperCase() + s.slice(1);
 
 const marketText = () => {
   const s = $('f-sport').value, m = $('f-market').value;
-  return `${s === 'all' ? 'All sports' : SPORT_LABELS[s]} · ${m === 'all' ? 'all markets' : kindLabel(m)}`;
+  return `${s === 'all' ? 'All sports' : SPORT_LABELS[s]} · ${m === 'all' ? 'all markets' : kindLabel(m)}${mine() ? ' · my filters' : ''}`;
 };
 
 function scopeText() {
@@ -644,7 +657,8 @@ document.addEventListener('keydown', e => {
 // One row per sport and market: its best-supported rule, whatever Sport and
 // Market are set to. Only the odds source, stage, count, odds range and risk change it.
 function renderBestRules(base) {
-  const key = [$('f-source').value, $('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length].join('|');
+  const key = [$('f-source').value, $('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length,
+               mine() && JSON.stringify([prefs.markets, prefs.odds])].join('|');
   if (bestCache.key !== key) {
     const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
       const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0), best = bestRule(bets);
@@ -954,7 +968,22 @@ function renderBreakdown(base) {
 
 // --- wiring -------------------------------------------------------------------
 
+// The Filters button's summary, and the modal's markets: every one of the
+// sports with settled bets
+const modalKeys = () => filterKeys(Object.keys(SPORT_LABELS).filter(sp => raw.some(r => r.sport === sp)), raw.map(r => r.group));
+function renderMine() {
+  $('f-mine-summary').textContent = prefsSummary(prefs, modalKeys());
+}
+
+// { market: settled bets my filters let through, at the scope chosen }
+function mineCounts() {
+  const counts = {};
+  for (const b of scopes(true).base) counts[b.group] = (counts[b.group] || 0) + 1;
+  return counts;
+}
+
 function render() {
+  renderMine();
   const s = scopes(), base = s.base;
   const bets = selected(base);
   let fit = fitBlend(bets), pooled = false;
@@ -974,6 +1003,25 @@ function fillSelect(id, options) {
 }
 
 ['f-sport', 'f-market', 'f-source', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+try { $('f-mine').checked = localStorage.getItem(MINE_KEY) === '1'; } catch { /* storage unavailable */ }
+$('f-mine').addEventListener('change', () => {
+  try { localStorage.setItem(MINE_KEY, mine() ? '1' : '0'); } catch { /* storage unavailable */ }
+  render();
+});
+// The Best Bets page's Filters modal, here: changes are saved for both pages
+const optimise = Object.assign(next => optimiseMarkets(raw, next, modalKeys()), { ready: () => raw.length > 0 });
+$('f-mine-edit').addEventListener('click', () => openFilters({
+  prefs, keys: modalKeys(), counts: mineCounts(), countLabel: 'settled', opener: $('f-mine-edit'), optimise,
+  onChange: next => {
+    prefs = next;
+    savePrefs(prefs);
+    $('f-price').value = prefs.basis;
+    if (!mine()) { $('f-mine').checked = true; try { localStorage.setItem(MINE_KEY, '1'); } catch { /* storage unavailable */ } }
+    render();
+    return mineCounts();
+  },
+}));
+
 $('f-price').value = prefs.basis;
 $('f-price').addEventListener('change', () => {
   prefs = { ...prefs, basis: basis() };
@@ -1078,11 +1126,12 @@ async function init() {
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   render();
-  // The account's price basis, where it differs from this browser's
+  // The account's filters and price basis, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
     prefs = remote;
-    if ($('f-price').value !== prefs.basis) { $('f-price').value = prefs.basis; render(); }
+    $('f-price').value = prefs.basis;
+    render();
   }).catch(() => {});
 }
 
