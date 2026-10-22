@@ -30,10 +30,11 @@ import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, esc, odds, pct, signedPct, signCls, wonCount,
          selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
-         PROP_KINDS, isProp } from './best-bets-shared.js';
+         PROP_KINDS, isProp, outlierHtml, pickOutlierHtml } from './best-bets-shared.js';
+import { installTapTips } from './tap-tips.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
-import { marketOf, passesMarket, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
+import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          BASES, LIVE_STAGES, LIVE_STAGE_LABELS } from './best-bets-filters.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
@@ -91,8 +92,11 @@ function passes(r) {
     && (!$('my-teams-only').checked || !hasAnyTeams() || involvesMyTeam(r.sport, r.home_team, r.away_team));
 }
 // Its market switched on, the edge that market needs and the odds range, both
-// at the median: the same bets pass whichever price they are taken at
-const passesFilters = r => passesMarket(prefs, marketOf(r), r.avgEdge ?? r.edge, r.avgBack ?? r.median ?? r.back);
+// at the median: the same bets pass whichever price they are taken at. An
+// outlier price (upcoming: its market's threshold met now; live: it was one
+// before kickoff) needs no edge.
+const isOutlierBet = r => !!(r.outlier?.is_outlier || r.outlier_at);
+const passesFilters = r => passesBet(prefs, marketOf(r), r.avgEdge ?? r.edge, r.avgBack ?? r.median ?? r.back, isOutlierBet(r));
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 
@@ -339,6 +343,7 @@ function selectionCell(r) {
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${gameLine(r, esc(kickoffText(r.kickoff)))}
     ${bestBookHtml(r, r.atBook ? r.median : null)}
+    ${r.outlier ? `<div class="mt-0.5">${outlierHtml(r)}</div>` : ''}
     ${historyHtml(r)}
   </td>`;
 }
@@ -551,7 +556,12 @@ function renderBets() {
     + '(Filters → Price chooses which the edges, stakes and track record use). They are refreshed up to every 15 minutes close '
     + 'to the start, but can still have moved: check the price before betting. Alternate lines and totals ("Alt Line") only show '
     + 'with an odds range set, one per game and side: the standard line wins and loses with them. '
-    + 'Scorer and player prop prices assume the player takes the field (bookmakers void the bet if he does not).';
+    + 'Scorer and player prop prices assume the player takes the field (bookmakers void the bet if he does not). '
+    + 'A Gap chip marks one bookie well above the rest (against the median of the others; bookies on one price feed count once): '
+    + "tap it for the prices and how bets at that gap have done. ⚡ Outlier: a gap at least its market's threshold, the most profitable "
+    + "gap among the market's settled outlier bets once there are enough of them, and of winners, to judge (+25% until then; none "
+    + 'where no gap has paid). Outliers are listed even without '
+    + 'a model edge, in the markets switched on and the odds range; Filters → Outliers only lists nothing else.';
   const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (same market, '
     + 'edge no higher, odds from half its own to the next step up), '
     + 'falling back to all markets where that market has not proven anything either way. None until that low end is a profit, and none past the edge or odds '
@@ -693,7 +703,7 @@ function liveSelectionCell(r) {
     ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}`)}
     <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
       <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
-      ${r.live.detail ? `<span class="text-gray-400">${esc(r.live.detail)}</span>` : ''}
+      ${r.live.detail ? `<span class="text-gray-400">${esc(r.live.detail)}</span>` : ''}${pickOutlierHtml(r)}
     </div>
   </td>`;
 }
@@ -902,6 +912,14 @@ function renderTrackRecord() {
   // Each pick judged by its own market's filter at the median price when flagged
   const picks = results.picks.map(trackAt).filter(p => t.kinds.includes(p.market_kind) && passes(p)
     && passesMarket(prefs, marketOf(p), p.flagged_edge, p.flagged_back));
+  // Outlier picks apart, edge or not, at the outlier price they were picked at
+  const outs = results.picks.filter(p => p.outlier_at && p.result !== 'void' && t.kinds.includes(p.market_kind) && passes(p)
+    && passesBet({ ...prefs, outliers: 'any' }, marketOf(p), p.flagged_edge, p.flagged_back, true));
+  const outUnits = outs.reduce((a, p) => a + profit(p, p.outlier_book_back ?? p.flagged_back), 0);
+  const outWins = outs.reduce((a, p) => a + p.win_frac, 0);
+  const outLine = outs.length ? `
+    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="Picks made for an outlier price (one bookie far above the rest), with or without a model edge, 1 unit each at that bookie's price when it became an outlier. Not in the numbers above unless they also had an edge.">
+      ⚡ Outlier picks <span class="font-semibold ${signCls(outUnits)}">${signedPct(outUnits / outs.length)}</span> · ${outs.length} bet${outs.length === 1 ? '' : 's'}, ${wonCount(outWins)} won</div>` : '';
   const keys = modalKeys().filter(k => t.kinds.includes(k.split('|')[1].replace(':3', '')));
   const bands = edgeBands(picks, spanRange(prefs, keys), MIN_BAND_BETS).filter(b => b.picks.length)
     .map(b => ({ ...b, st: summarise(b.picks) }));
@@ -917,8 +935,8 @@ function renderTrackRecord() {
     <div class="mt-1.5 text-xs tabular-nums text-gray-300" title="The same bets, 1 unit each when flagged, at the average price across the bookies and at the best price any one bookie offered">
       Average odds <span class="font-semibold ${signCls(sel.roiAvg)}">${signedPct(sel.roiAvg)}</span> · Best bookie <span class="font-semibold ${signCls(sel.roiBook)}">${signedPct(sel.roiBook)}</span></div>
     <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds before kickoff; CLV compares flagged odds with closing odds. All at the ${at}.">
-      best seen ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>`
-    : '<div class="text-xs text-gray-500">No settled bets at these filters yet.</div>';
+      best seen ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>${outLine}`
+    : `<div class="text-xs text-gray-500">No settled bets at these filters yet.</div>${outLine}`;
 
   const scale = Math.max(0.1, ...bands.filter(b => b.st.n).map(b => Math.abs(b.st.roi)));
   $('roi-bars').innerHTML = `
@@ -1078,6 +1096,8 @@ $('stake-balance').addEventListener('input', e => {
 ['sort-by', 'my-teams-only', 'odds-basis'].forEach(id =>
   $(id).addEventListener('change', () => { savePrefs(); render(); }));
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
+
+installTapTips(document.body);
 
 async function init() {
   let data;

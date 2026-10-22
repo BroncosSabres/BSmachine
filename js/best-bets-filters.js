@@ -14,6 +14,9 @@
 //             it is judged at. 'avg' (the default): the time-weighted average
 //             while its median edge was positive, what betting it at a random
 //             moment while it showed value would have got
+//   outliers  'any' | 'only': outlier prices (one bookie far above the others,
+//             betfair-api outliers.py) are listed whatever their edge, in the
+//             markets switched on and the odds range; 'only' lists nothing else
 //   v         2 since the 'avg' stage: settings saved before it move to it once
 import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
 
@@ -56,7 +59,8 @@ const typed = x => { const s = String(x ?? '').trim(); return s !== '' && Number
 const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]), typed(p[1])] : [...fallback];
 
 export function defaultPrefs() {
-  return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg' };
+  return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg',
+           outliers: 'any' };
 }
 
 // Anything (saved JSON, a profile column) -> valid settings
@@ -76,6 +80,7 @@ export function normalizePrefs(p) {
     sort: p.sort === 'time' ? 'time' : 'edge',
     myTeams: !!p.myTeams,
     liveStage: (p.v ?? 1) >= PREFS_VERSION && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
+    outliers: p.outliers === 'only' ? 'only' : 'any',
   };
 }
 
@@ -120,6 +125,13 @@ export function passesEdge(prefs, key, edge) {
   return ruleFor(prefs, key).on && edge != null && edge > 0 && inRange(edge, edgeRangeOf(prefs, key));
 }
 
+// An outlier price passes on its market's switch and the odds range alone: its
+// edge doesn't decide it. outlier: whether the bet is one; back: at the median.
+export function passesBet(prefs, key, edge, back, outlier) {
+  if (prefs.outliers === 'only' && !outlier) return false;
+  return passesMarket(prefs, key, edge, back) || (!!outlier && ruleFor(prefs, key).on && inRange(back, oddsRangeOf(prefs)));
+}
+
 // A tracked row at one stage ('open', 'flagged', 'best', 'close') on the
 // basis chosen: { back: the price taken, edge: the edge at the median (the
 // value signal, whatever the basis), bookEdge: the edge at the price taken,
@@ -152,7 +164,8 @@ export function prefsSummary(prefs, keys) {
   const on = keys.filter(k => ruleFor(prefs, k).on);
   const edges = new Set(on.map(k => edgeText(edgeRangeOf(prefs, k))));
   const edge = !on.length ? '' : edges.size === 1 ? ` · edge ${[...edges][0]}` : ' · edges vary';
-  return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`;
+  return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`
+    + (prefs.outliers === 'only' ? ' · outliers only' : '');
 }
 
 // The edge range spanning every market on among `keys`: where the track

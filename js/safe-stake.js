@@ -83,6 +83,31 @@ export function toBet(r, stage = 'open', basis = 'book') {
   };
 }
 
+// Outlier prices (migration 036; betfair-api outliers.py): the gaps between
+// the best price and the median of the other bookies that a threshold can be,
+// and each selection's first price at each (disc_ladder: {cut: [best price,
+// median edge, book, median]}).
+export const OUTLIER_CUTS = [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00, 1.50, 2.00, 3.00];
+export const cutKey = cut => cut.toFixed(2);
+
+// A decoded row as a bet on its outlier price: taken at the best bookie's
+// price the first time its gap reached `cut`, or null if it never did. edge
+// and back are the median's then, as toBet's; bookEdge is the model's
+// expected return at the price taken.
+export function outlierBet(r, cut) {
+  const e = r.disc_ladder?.[cutKey(cut)];
+  if (!e || e[0] == null) return null;
+  const [taken, edge, book, back] = e;
+  const prob = edge != null && back ? (1 + edge) / back : null;
+  return {
+    game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
+    edge, prob, back: back ?? taken, taken, book, bookEdge: prob == null ? null : prob * taken - 1,
+    commission: r.commission, fallback: false, win: r.win_frac, push: r.push_frac,
+    team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r), clv: null,
+    market: marketKey(r), prop: propKey(r), checks: r.n_checks, row: r,
+  };
+}
+
 // --- settings -------------------------------------------------------------------
 
 // conf: how sure the low end of a bin's return is (one-sided). ruin / drawdown:

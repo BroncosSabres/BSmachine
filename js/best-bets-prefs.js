@@ -137,6 +137,14 @@ function bodyHtml() {
         ? 'Bets taken at the best price any one bookie offers (the Betfair Exchange\'s own for its markets): odds, stakes and the track record\'s returns use it.'
         : 'Bets taken at the median price across the bookies.'} A bet needs an edge at the median price either way, and the edge ranges below are always at the median.</p>
     </div>
+    <div class="mb-4">
+      <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Outliers</div>
+      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['any', 'With the rest'], ['only', 'Outliers only']].map(([v, label]) => `
+        <button type="button" data-outliers="${v}" aria-pressed="${prefs.outliers === v}"
+                class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.outliers === v
+                  ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
+      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">⚡ An outlier is one bookie far above the median of the others, by at least its market's threshold: the most profitable gap among the market's settled outlier bets, +25% until there are enough of them to judge, none where they haven't paid. Outliers are listed whatever their edge, in the markets switched on below and the odds range.</p>
+    </div>
     ${sports.map(s => `
       <section class="mb-3">
         <div class="flex items-center justify-between gap-2 mb-1">
@@ -201,7 +209,9 @@ function build() {
     const b = e.target.closest('button');
     if (!b) return;
     const key = b.closest('[data-key]')?.dataset.key;
-    if (b.dataset.basis) {
+    if (b.dataset.outliers) {
+      change(p => { p.outliers = b.dataset.outliers === 'only' ? 'only' : 'any'; });
+    } else if (b.dataset.basis) {
       state.report = null;   // read at the other price
       change(p => { p.basis = b.dataset.basis; });
     } else if (b.hasAttribute('data-optimise')) optimise();
@@ -213,7 +223,7 @@ function build() {
       change(p => state.keys.forEach(k => setRule(p, k, { edge: [...edge] })));
     } else if (b.hasAttribute('data-reset')) {
       state.report = null;
-      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; });
+      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; });
     }
   });
   overlay.addEventListener('change', e => {

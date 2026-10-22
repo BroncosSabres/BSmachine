@@ -316,6 +316,56 @@
           </div>
         </section>
 
+        <section class="card mb-4" aria-labelledby="out-title">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="min-w-0">
+              <h2 id="out-title" class="text-sm font-bold text-gray-100">Outlier prices</h2>
+              <p id="out-sub" class="text-[11px] text-gray-500"></p>
+            </div>
+            <label class="flex items-center gap-1.5 text-xs text-gray-400">Gap at least
+              <select id="out-cut" class="bg-gray-900 border border-gray-700 rounded px-1.5 py-1 text-xs text-gray-200"></select>
+            </label>
+          </div>
+          <div class="mt-3 overflow-x-auto -mx-1">
+            <table class="w-full text-sm sm:min-w-[52rem]">
+              <thead>
+                <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                  <th class="px-2 py-2 text-left font-semibold">Sport · market</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Settled games the market's thresholds are fitted on">Games</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="The gap where a bet at the best price breaks even, if the other bookies' median price is right: 1 / h − 1, where h is what a unit bet at that median price has returned over every settled selection of the market (h under 1 is the bookies' margin)">Break-even</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="The gap that makes a price an outlier in this market: the most profitable gap (with at least 15 settled bets and 5 winners) at or above a cautious break-even; +25% until a gap has that many to judge; none where none has paid.">Threshold</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Settled selections whose gap reached the one chosen above, each taken at the best bookie's price the first time it did">Bets</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="How many of them won. A half-win counts as half.">Won</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Return per unit at the outlier price, with the 90% range (resampling whole games)">ROI</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="The ones the model also rated: a positive edge at the median price then">Model edge &gt; 0</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="The ones the model did not rate: listed only because of the gap">Edge ≤ 0</th>
+                </tr>
+              </thead>
+              <tbody id="out-markets"></tbody>
+            </table>
+          </div>
+          <h3 id="out-gap-title" class="mt-5 text-xs font-semibold text-gray-300"></h3>
+          <p id="out-gap-sub" class="text-[11px] text-gray-500 mb-2"></p>
+          <div class="overflow-x-auto -mx-1">
+            <table class="w-full text-sm sm:min-w-[44rem]">
+              <thead>
+                <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                  <th class="px-2 py-2 text-left font-semibold">Gap at least</th>
+                  <th class="px-2 py-2 text-right font-semibold">Bets</th>
+                  <th class="px-2 py-2 text-right font-semibold">Won</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Profit in units, 1 unit a bet">Units</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Return per unit, with the 90% range">ROI</th>
+                  <th class="px-2 py-2 font-semibold w-1/4 min-w-[8rem]" title="The return as a bar out from zero, its 90% range as a whisker, and what the model expected at those prices as the amber tick"><span class="sr-only">Return</span></th>
+                  <th class="px-2 py-2 text-right font-semibold">Model edge &gt; 0</th>
+                  <th class="px-2 py-2 text-right font-semibold">Edge ≤ 0</th>
+                </tr>
+              </thead>
+              <tbody id="out-gaps"></tbody>
+            </table>
+          </div>
+          <p id="out-note" class="mt-3 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
+
         <section class="card" aria-labelledby="breakdown-title">
           <h2 id="breakdown-title" class="text-sm font-bold text-gray-100">By sport and market</h2>
           <p id="breakdown-sub" class="text-[11px] text-gray-500 mb-3"></p>

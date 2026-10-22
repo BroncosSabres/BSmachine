@@ -93,6 +93,61 @@ export function bestBookHtml(r, median = null) {
     : `<div class="text-[11px] text-gray-400" title="${esc(title)}">At <span class="font-semibold text-gray-200">${esc(r.best_book)}</span> · avg <span class="tabular-nums">${odds(median)}</span></div>`;
 }
 
+// Outlier prices (migration 036): one bookie far above the consensus of the
+// others (the median of the rest; books on one price feed count once). gap =
+// best / consensus - 1. /api/best_bets rows carry `outlier` when the gap is
+// worth showing; a market's threshold is its most profitable gap among its
+// settled outliers, +25% until it has enough of them to judge, none where
+// they haven't paid (betfair-api outliers.py), and an outlier is listed
+// whatever its edge. Picks carry outlier_* once they were one.
+const OUTLIER_WHY = {
+  unprofitable: 'no gap has paid in this market yet',
+};
+
+// The chip: a button that shows the details when tapped (tap-tips.js).
+// o: {disc, cons, best, book, nBooks, isOutlier, threshold, method, nGames,
+// record, market, at}.
+function outlierChipHtml(o) {
+  const gap = signedPct(o.disc, 0);
+  const lines = [`${o.book || 'One bookie'} ${odds(o.best)} vs ${odds(o.cons)}`
+    + (o.nBooks ? `, the median of the other ${o.nBooks - 1} bookie${o.nBooks === 2 ? '' : 's'}` : ' (the others)')
+    + ` — ${gap}.`];
+  if (o.at) lines.push(`An outlier when it was flagged (${o.at}).`);
+  else if (o.isOutlier) lines.push(`Outlier: ${o.market} counts a gap of ${signedPct(o.threshold, 0)} or more, `
+    + (o.method === 'optimised' ? 'the most profitable gap for its settled outlier bets.'
+      : 'the default until it has enough settled outlier bets and winners to judge.'));
+  else if (o.threshold != null) lines.push(`Not an outlier: ${o.market} needs a gap of ${signedPct(o.threshold, 0)}.`);
+  else lines.push(`Not an outlier: ${o.market} has none — ${OUTLIER_WHY[o.method] || 'its outliers have not paid'}.`);
+  const rec = o.record;
+  if (rec && rec.n) lines.push(`Settled bets here at a gap of ${signedPct(rec.cut, 0)}+: ${rec.n}, ${wonCount(rec.wins)} won, ${signedPct(rec.roi, 0)} ROI at the outlier price.`);
+  const cls = o.isOutlier || o.at
+    ? 'border-amber-500/50 text-amber-300 bg-amber-900/30'
+    : 'border-gray-600 text-gray-300 bg-gray-800/60';
+  return `<button type="button" class="ml-1 inline-flex items-center gap-0.5 rounded border px-1 py-px text-[10px] font-semibold leading-tight whitespace-nowrap align-middle ${cls}"
+    data-tip="${esc(lines.join('\n'))}" aria-label="${esc(lines.join(' '))}">${o.isOutlier || o.at ? '⚡ Outlier' : 'Gap'} ${gap}</button>`;
+}
+
+const marketText = r => `${SPORT_LABELS[r.sport] || r.sport} ${(KIND_LABELS[r.market_kind] || r.market_kind).toLowerCase()}`;
+
+// An /api/best_bets row's chip ('' when it has no gap worth showing).
+export function outlierHtml(r) {
+  const o = r.outlier;
+  if (!o) return '';
+  return outlierChipHtml({ disc: o.disc, cons: o.cons, best: r.best_book_back, book: o.book, nBooks: o.n_books,
+                           isOutlier: o.is_outlier, threshold: o.threshold, method: o.method, nGames: o.n_games,
+                           record: o.record, market: marketText(r) });
+}
+
+// A pick's chip ('' unless it was an outlier): Live rows, results.
+export function pickOutlierHtml(p) {
+  if (!p.outlier_at) return '';
+  const at = new Date(p.outlier_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return outlierChipHtml({ disc: p.outlier_disc, cons: p.outlier_cons_back, best: p.outlier_book_back,
+                           book: p.outlier_book, at, market: marketText(p) });
+}
+
+export const isOutlierRow = r => !!r.outlier?.is_outlier;
+
 // Betfair names the line in most runner names ("Roosters -4.5"); Asian-handicap
 // style runners and bookmaker rows are just the team / Over / Under, so add it.
 // A number inside a word ("49ers", "76ers") is part of the name, not a line.

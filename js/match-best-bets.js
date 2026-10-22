@@ -1,7 +1,7 @@
 // match-best-bets.js — the Best Bets panel at the top of each Multi Builder.
 //
 // For accounts with Best Bets access it lists the selected game's
-// positive-edge selections (/api/best_bets?sport=&game_id=), best edge first,
+// positive-edge selections and outlier prices (/api/best_bets?sport=&game_id=), best edge first,
 // in the markets switched on in the Best Bets page's Filters and at the price
 // chosen there (the best bookie's or the average; best-bets-prefs.js).
 // Everyone else gets nothing: the panel stays hidden and no bets are asked for.
@@ -17,11 +17,13 @@
 //                          the betslip, and adding / removing it
 import { BACKEND } from './api-config.js';
 import { getSession, hasBestBetsAccess } from './supabase-client.js';
-import { esc, odds, pct, signedPct, selectionText, bestBookHtml } from './best-bets-shared.js';
+import { esc, odds, pct, signedPct, signCls, selectionText, bestBookHtml, outlierHtml } from './best-bets-shared.js';
+import { installTapTips } from './tap-tips.js';
 import { marketOf, ruleFor } from './best-bets-filters.js';
 import { localPrefs } from './best-bets-prefs.js';
 
 const panel = document.getElementById('match-best-bets');
+installTapTips(panel);   // the outlier chip's details, on a tap
 const TOP = 5;             // rows before "Show all"
 const CACHE_MS = 60000;    // as long as the backend keeps its own copy
 
@@ -65,9 +67,11 @@ async function load(sel) {
   if (mine !== seq) return;
   const prefs = localPrefs();
   // Alternate lines and totals win and lose with the standard one, so only
-  // the bookies' standard line is listed (as on the Best Bets page).
+  // the bookies' standard line is listed (as on the Best Bets page). An
+  // outlier price is listed whatever its edge (Filters → Outliers only: alone).
+  const only = prefs.outliers === 'only';
   rows = found.filter(r => !r.alternate && ruleFor(prefs, marketOf(r)).on).map(r => at(r, prefs.basis))
-    .filter(r => r.shownEdge > 0).sort((a, b) => b.shownEdge - a.shownEdge);
+    .filter(r => r.outlier?.is_outlier || (!only && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
   render();
 }
 
@@ -112,12 +116,13 @@ function render() {
                 <span class="font-semibold text-gray-100">${esc(selectionText(r))}</span>
                 <span class="block text-[11px] text-gray-500">${esc(r.market_name)}</span>
                 ${bestBookHtml(r, r.atBook ? r.median : null)}
+                ${r.outlier ? `<div class="mt-0.5">${outlierHtml(r)}</div>` : ''}
               </td>
               <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.shownBack)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${odds(r.fair_odds)}</td>
-              <td class="px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.shownEdge)}</td>
-              <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums font-bold text-green-400">${signedPct(r.best_book_edge ?? r.edge)}</td>
+              <td class="px-2 py-1.5 text-right tabular-nums font-bold ${signCls(r.shownEdge)}">${signedPct(r.shownEdge)}</td>
+              <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums font-bold ${signCls(r.best_book_edge ?? r.edge)}">${signedPct(r.best_book_edge ?? r.edge)}</td>
               ${addCell(r, i)}
             </tr>`).join('')}
           </tbody>

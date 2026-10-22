@@ -17,16 +17,20 @@
 // edge each needs, the odds range), on top of Sport and Market, so selecting
 // a market below still narrows to it; Edit opens the same Filters modal,
 // "Most profitable" and all. Same access rules as the Best Bets page.
+// "Outlier prices" is apart from all that: bets on one bookie far above the
+// median of the others, at the price when the gap first reached a cut, and
+// each market's threshold (betfair-api outliers.py).
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
-         dropEmptyMarkets, onePerMarket, ruleRows, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+         dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary } from './best-bets-filters.js';
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
-import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
+import { installTapTips } from './tap-tips.js';
+import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, outlierBet, OUTLIER_CUTS, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
 const $ = id => document.getElementById(id);
@@ -615,13 +619,14 @@ function renderBets() {
     return `<tr class="border-t border-gray-700/60 tabular-nums text-gray-300 align-top">
       <td class="px-2 py-1.5 whitespace-nowrap">${dayText(b.date)}</td>
       <td class="px-2 py-1.5">${esc(r.home_team)} v ${esc(r.away_team)}${manySports ? `<span class="block text-[10px] text-gray-500">${esc(SPORT_LABELS[b.sport] || b.sport)}</span>` : ''}</td>
-      <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.source === 'book' ? 'bookmakers' : 'Betfair'}</span></td>
+      <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.book ? esc(b.book) : b.source === 'book' ? 'bookmakers' : 'Betfair'}</span></td>
       <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}</td>
       <td class="px-2 py-1.5 text-right">${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span></td>
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">None of these.</td></tr>';
-  $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}Odds and edge are as ${stageOf()[1]}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}. Profit is on 1 unit, after commission where it applies.`;
+  $('bets-note').textContent = `${bets.length > BETS_MAX ? `The latest ${BETS_MAX} of ${bets.length.toLocaleString()}. ` : ''}${betsOpen.note
+    || `Odds and edge are as ${stageOf()[1]}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}.`} Profit is on 1 unit, after commission where it applies.`;
 }
 
 // list: { title, bets }, the rule panel's row by default
@@ -966,6 +971,120 @@ function renderBreakdown(base) {
     + 'Small samples swing a lot: read the range, not the point.';
 }
 
+// --- outlier prices -----------------------------------------------------------
+// One bookie far above the median of the others (betfair-api outliers.py).
+// Every settled selection keeps its first price at each gap of OUTLIER_CUTS,
+// so the bets at any gap are exact. Read from every bookmaker row: an outlier
+// is taken at the best bookie's price when the gap first got there, so Odds
+// from / taken / count / odds range don't apply; Sport and Market do.
+
+let outlierMarkets = {};   // 'sport|kind' -> { band: outlier_thresholds row }
+let outLists = {};         // cut (as the option value) -> { title, bets, note } behind the gap table's rows
+const OUT_DEFAULT_CUT = '0.25';
+// A market's threshold before it can be judged (outliers.DEFAULT_CUT), also
+// where nothing is settled yet
+const OUT_DEFAULT = 0.25;
+
+const outThreshold = g => outlierMarkets[g]?.all ? outlierMarkets[g].all.threshold : OUT_DEFAULT;
+const outCutFor = g => $('out-cut').value === 'market' ? outThreshold(g) : +$('out-cut').value;
+const outBets = (rows, cut) => cut == null ? [] : rows.map(r => outlierBet(r, cut)).filter(Boolean);
+const meanOf = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
+const gapText = cut => signedPct(cut, 0);
+
+function outSplit(bets) {
+  if (!bets.length) return '<span class="text-gray-600">–</span>';
+  const st = ruleStats(bets, { thinRange: true });
+  return `<span class="font-semibold ${signCls(st.roi)}">${signedPct(st.roi, 0)}</span><span class="block text-[10px] text-gray-500">${count(st.n, 'bet')} · ${wonCount(st.wins)} won</span>`;
+}
+
+function outRoi(st) {
+  if (!st.n) return '<span class="text-gray-600">–</span>';
+  return `<span class="font-bold ${signCls(st.roi)}">${signedPct(st.roi, 0)}</span>${st.roiCI ? `<span class="block text-[10px] text-gray-500">${range(st.roiCI)}</span>` : ''}`;
+}
+
+function outThresholdCell(g) {
+  const m = outlierMarkets[g]?.all;
+  if (!m || m.method === 'default') {
+    return `<span class="font-semibold text-amber-300">${gapText(m?.threshold ?? OUT_DEFAULT)}</span><span class="block text-[10px] text-gray-500">default: too few to judge</span>`;
+  }
+  if (m.threshold != null) {
+    return `<span class="font-semibold text-amber-300">${gapText(m.threshold)}</span><span class="block text-[10px] text-gray-500">${m.opt_n} bets, ${signedPct(m.opt_roi, 0)}</span>`;
+  }
+  const best = m.cut != null ? `Best gap with enough bets and winners: ${gapText(m.cut)}, ${signedPct(m.opt_roi, 0)} on ${m.opt_n} bets` : '';
+  return `<span class="text-gray-400"${best ? ` title="${esc(best)}"` : ''}>none</span><span class="block text-[10px] text-gray-500">no gap has paid</span>`;
+}
+
+function renderOutliers() {
+  const rows = raw.filter(r => sourceKey(r) === 'book');
+  const groups = [...new Set([...rows.filter(r => r.disc_ladder).map(r => r.group), ...Object.keys(outlierMarkets)])].sort();
+  const marketMode = $('out-cut').value === 'market';
+  $('out-sub').textContent = 'One bookie well above the median of the others, bet at that price the first time the gap got '
+    + `${marketMode ? "to the market's threshold" : `to ${gapText(+$('out-cut').value)}`}. Select a market to see it by gap.`;
+  if (!rows.some(r => r.disc_ladder)) {
+    $('out-markets').innerHTML = '<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">No outlier prices recorded yet.</td></tr>';
+    $('out-gaps').innerHTML = '';
+    $('out-gap-title').textContent = '';
+    $('out-gap-sub').textContent = '';
+    $('out-note').textContent = '';
+    return;
+  }
+  const current = $('f-sport').value !== 'all' && $('f-market').value !== 'all' ? `${$('f-sport').value}|${$('f-market').value}` : null;
+  $('out-markets').innerHTML = groups.map(g => {
+    const m = outlierMarkets[g]?.all;
+    const bets = outBets(rows.filter(r => r.group === g), outCutFor(g));
+    const st = ruleStats(bets, { thinRange: true });
+    return `<tr data-group="${esc(g)}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${g === current ? 'bg-gray-700/30' : ''}">
+      <td class="px-2 py-2 text-left font-semibold text-gray-100">${esc(groupLabel(g))}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${m ? m.n_games.toLocaleString() : '–'}</td>
+      <td class="px-2 py-2 text-right text-gray-300"${m?.h != null ? ` title="${esc(`A unit bet at the others' median price returned ${m.h.toFixed(3)} over ${m.n.toLocaleString()} settled selections`)}"` : ''}>${m?.breakeven != null ? gapText(m.breakeven) : '–'}</td>
+      <td class="px-2 py-2 text-right">${outThresholdCell(g)}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${st.n ? st.n.toLocaleString() : '–'}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${st.n ? wonCount(st.wins) : '–'}</td>
+      <td class="px-2 py-2 text-right">${outRoi(st)}</td>
+      <td class="px-2 py-2 text-right">${outSplit(bets.filter(b => b.edge > 0))}</td>
+      <td class="px-2 py-2 text-right">${outSplit(bets.filter(b => !(b.edge > 0)))}</td>
+    </tr>`;
+  }).join('');
+
+  // By gap, for the Sport and Market chosen
+  const sel = rows.filter(r => ($('f-sport').value === 'all' || r.sport === $('f-sport').value)
+    && ($('f-market').value === 'all' || r.kind === $('f-market').value));
+  const threshold = current ? outThreshold(current) : null;
+  const scope = marketText().replace(' · my filters', '');
+  outLists = {};
+  const lines = OUTLIER_CUTS.map(cut => {
+    const bets = outBets(sel, cut);
+    if (!bets.length) return null;
+    outLists[cut] = { title: `${scope} · gap ${gapText(cut)} and over`, bets,
+                      note: `Odds are the best bookie's the first time the gap reached ${gapText(cut)}; edge and model chance are the model's at the median price then.` };
+    return { cut, bets, st: ruleStats(bets, { thinRange: true }), expected: meanOf(bets.map(b => b.bookEdge).filter(x => x != null)) };
+  }).filter(Boolean);
+  const reach = Math.max(0.2, ...lines.flatMap(l => [Math.abs(l.st.roi), Math.abs(l.expected ?? 0)]));
+  $('out-gap-title').textContent = `By gap · ${scope}`;
+  $('out-gap-sub').textContent = 'Each row: every bet whose gap reached it, so the rows overlap. Select one to list its bets.'
+    + (threshold != null ? ` The market's threshold is ${gapText(threshold)} (highlighted).` : '');
+  $('out-gaps').innerHTML = lines.map(l => `
+    <tr data-cut="${l.cut}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${l.cut === threshold ? 'bg-amber-900/20' : ''}">
+      <td class="px-2 py-2 text-left font-semibold ${l.cut === threshold ? 'text-amber-300' : 'text-gray-100'}">${gapText(l.cut)}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${l.st.n.toLocaleString()}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${wonCount(l.st.wins)}</td>
+      <td class="px-2 py-2 text-right ${signCls(l.st.units)}">${l.st.units > 0 ? '+' : ''}${l.st.units.toFixed(1)}</td>
+      <td class="px-2 py-2 text-right">${outRoi(l.st)}</td>
+      <td class="px-2 py-2">${returnBar({ ...l.st, edge: l.expected ?? 0 }, reach)}</td>
+      <td class="px-2 py-2 text-right">${outSplit(l.bets.filter(b => b.edge > 0))}</td>
+      <td class="px-2 py-2 text-right">${outSplit(l.bets.filter(b => !(b.edge > 0)))}</td>
+    </tr>`).join('') || '<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">No settled outlier prices here.</td></tr>';
+  $('out-note').textContent = 'Gap: the best price over the median of the other bookies, minus 1 (Ladbrokes $17 against $7.50 is +127%); '
+    + 'only with 3 or more bookies, and Ladbrokes / Neds and TABtouch / Unibet, which share price feeds, count as one. '
+    + "Break-even: the gap a bet needs if the others' median were right after their margin, measured on every settled selection "
+    + "of the market. A market's threshold is the gap, at or above a cautious version of that, whose outlier bets have returned the "
+    + 'most, once one has at least 15 settled bets and 5 winners and is in profit (the market has none if no such gap is); '
+    + 'until a gap has that many to judge, it is +25%. '
+    + 'The rows by gap are exactly what betting at each gap would have got, but picking the best of them is fitted to these results: '
+    + 'expect less from it. Games more than 14 days old kept only their first and last prices before kickoff, so a gap that came and '
+    + 'went in between is missing there. These bets are in every other table on the page too, by their own edge and odds.';
+}
+
 // --- wiring -------------------------------------------------------------------
 
 // The Filters button's summary, and the modal's markets: every one of the
@@ -995,6 +1114,7 @@ function render() {
   renderRoiChart(bets, fit, pooled);
   renderCalChart(bets);
   renderTeams(s.every);
+  renderOutliers();
   renderBreakdown(base);
 }
 
@@ -1066,6 +1186,22 @@ function showGroup(key) {
   $('f-market').value = k;
 }
 
+$('out-cut').innerHTML = [['market', "Each market's threshold"], ...OUTLIER_CUTS.map(c => [String(c), gapText(c)])]
+  .map(([v, label]) => `<option value="${v}">${esc(label)}</option>`).join('');
+$('out-cut').value = OUT_DEFAULT_CUT;
+$('out-cut').addEventListener('change', renderOutliers);
+$('out-markets').addEventListener('click', e => {
+  const key = e.target.closest('tr[data-group]')?.dataset.group;
+  if (!key) return;
+  showGroup(key);
+  render();
+});
+$('out-gaps').addEventListener('click', e => {
+  const cut = e.target.closest('tr[data-cut]')?.dataset.cut;
+  if (cut != null && outLists[cut]) openBets(outLists[cut]);
+});
+installTapTips(document.body);
+
 $('breakdown-body').addEventListener('click', e => {
   const key = e.target.closest('tr[data-group]')?.dataset.group;
   if (!key) return;
@@ -1119,6 +1255,8 @@ async function init() {
   const data = await res.json();
   raw = decodeRows(data);
   pending = data.pending;
+  outlierMarkets = {};
+  for (const o of data.outliers || []) (outlierMarkets[`${o.sport}|${o.kind}`] ||= {})[o.band] = o;
   fillSelect('f-sport', [['all', 'All'], ...Object.keys(SPORT_LABELS).filter(s => raw.some(r => r.sport === s)).map(s => [s, SPORT_LABELS[s]])]);
   fillSelect('f-market', [['all', 'All'], ...[...new Set(raw.map(r => r.kind))].sort().map(k => [k, kindLabel(k)])]);
   // Repeats can only be told apart once the backend says which market a selection is in
