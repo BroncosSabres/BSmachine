@@ -1394,6 +1394,9 @@ function bestBetLeg(r) {
   if (r.side !== 'home' && r.side !== 'away' && r.side !== 'over' && r.side !== 'under') return null;
   if (r.market_kind === 'match_odds' && !r.three_way) return { lines: { marginTeam: r.side, marginL: -0.5 } };
   if (r.market_kind === 'handicap' && halfPoint && Math.abs(r.line) <= 10.5) return { lines: { marginTeam: r.side, marginL: r.line } };
+  // The builder's total is the final score: a bookie total settled on 60 minutes
+  // (market_id ending ':reg') is a different bet, so it isn't offered as a leg
+  if (r.market_kind === 'total' && /:reg$/.test(r.market_id || '')) return null;
   if (r.market_kind === 'total' && halfPoint && r.line > 0 && r.line + 0.5 <= 15) return { lines: { totalDir: r.side, totalN: r.line + 0.5 } };
   return null;
 }

@@ -76,29 +76,22 @@
                 Edit <span id="f-mine-summary" class="text-xs text-gray-400"></span>
               </button>
             </div>
-            <label class="flex items-center gap-1.5" title="Where the odds came from: the Betfair exchange, or bookmakers (the median price across them). Betfair's scorer markets have very little money in them.">Odds from
-              <select id="f-source" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                <option value="all">All</option>
-                <option value="book">Bookmakers</option>
-                <option value="betfair">Betfair</option>
-              </select>
-            </label>
-            <label class="flex items-center gap-1.5" title="First priced: the odds and model price the first time we saw the selection. Closing: the last check before the start, only for selections priced more than once.">Odds taken
+            <label class="flex items-center gap-1.5" title="Average while showing value (the default): the time-weighted average price while the selection's median edge was positive, what betting it whenever it was listed got; only selections that showed value. First priced: the odds and model price the first time we saw the selection. Closing: the last check before the start, only for selections priced more than once.">Odds taken
               <select id="f-stage" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                <option value="avg" selected>Average while showing value</option>
+                <option value="first">First showing value</option>
+                <option value="peak">Peak while showing value (ceiling)</option>
                 <option value="open">When first priced</option>
                 <option value="close">Closing</option>
-                <option value="first">First showing value</option>
-                <option value="avg">Average while showing value</option>
-                <option value="peak">Peak while showing value (ceiling)</option>
               </select>
             </label>
-            <label class="flex items-center gap-1.5" title="Best bookie: every bet at the best price any one bookie offered (the price you would take betting with whoever is best; Betfair markets at the exchange's price). Average bookie: at the median across the bookies. Shared with the Best Bets page's Filters.">Price
+            <label class="flex items-center gap-1.5" title="Best bookie: every bet at the best price any one bookie offered (the price you would take betting with whoever is best). Average bookie: at the median across the bookies. Shared with the Best Bets page's Filters.">Price
               <select id="f-price" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="book" selected>Best bookie</option>
                 <option value="avg">Average bookie</option>
               </select>
             </label>
-            <label class="flex items-center gap-1.5" title="One bet per market: of a game's head-to-head, line and total, only the main line and the side the model likes best, and a scorer priced by both Betfair and the bookmakers once. Every selection counts both sides of a market, each alternate line and each source, so one result shows up several times.">Count
+            <label class="flex items-center gap-1.5" title="One bet per market: of a game's head-to-head, line and total, only the main line and the side the model likes best, and a scorer once. Every selection counts both sides of a market and each alternate line, so one result shows up several times.">Count
               <select id="f-count" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="one" selected>One bet per market</option>
                 <option value="all">Every selection</option>
@@ -229,6 +222,11 @@
               <h2 id="grid-title" class="text-sm font-bold text-gray-100">Where to bet: edge by odds</h2>
               <p id="grid-sub" class="text-[11px] text-gray-500"></p>
             </div>
+            <div id="grid-show" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="What the cells show"
+                 title="Actual return: what the cell's settled bets returned. Calibrated edge: the edge the Model vs market fit gives them, a smooth surface rather than a patch picked from the grid.">
+              <button type="button" data-show="roi">Actual return</button>
+              <button type="button" data-show="cal">Calibrated edge</button>
+            </div>
             <div id="grid-detail" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="How finely the bins are cut"
                  title="How finely edge and odds are cut. The Best Bets page stakes from the same bins.">
               <button type="button" data-detail="coarse">Coarse</button>
@@ -277,6 +275,33 @@
             <p id="cal-chart-note" class="mt-3 text-[11px] text-gray-500 leading-snug"></p>
           </section>
         </div>
+        
+        <!-- How far to trust the model against the price, per market (calibrate.js) -->
+        <section class="card mb-4" aria-labelledby="mvm-title">
+          <h2 id="mvm-title" class="text-sm font-bold text-gray-100">Model vs market</h2>
+          <p id="mvm-sub" class="text-[11px] text-gray-500 mb-2"></p>
+          <p id="mvm-summary" class="text-xs text-gray-300 mb-3 leading-snug"></p>
+          <div class="overflow-x-auto -mx-1">
+            <table class="w-full text-xs tabular-nums sm:min-w-[54rem]">
+              <thead>
+                <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+                  <th class="px-2 py-1.5 text-left font-semibold">Market</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Settled selections fitted (one side of each two-way market, at the closing price) and the games they are in">Bets</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="How much of the model's disagreement with the bookies' price (margin out) has been worth: 0 = none of it (the price was right), 1 = all of it. 90% range below, from the fit's spread with bets in one game counted together.">Model weight</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="How much of the fit is this market's own bets; the rest leans on its sport's (and the sport's on all markets'), as much as the held-out days said to">Own data</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Out of sample: each day scored by a fit on the days before it. Log loss per bet of the blend minus a fit on the price alone, x1000: below 0, the model added information the price didn't have. 90% range from resampling games.">Beats the price?</th>
+                  <th class="px-2 py-1.5 text-left font-semibold">Verdict</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Out of sample, one bet per market, 1 unit each at the average price while it showed value (the price chosen above): the bets whose calibrated edge at the price taken was above 0">Calibrated &gt; 0</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="The same for every bet that showed value: the model's own edge above 0">Model &gt; 0</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="The same for the bets your Best Bets filters (market switches, the model's edge ranges, the odds range) would have listed">Your filters</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Closing line value of the bets that showed value: the average price taken against the closing price with the margin out (scorers against the raw close, which flatters the close)">CLV</th>
+                </tr>
+              </thead>
+              <tbody id="mvm-body"></tbody>
+            </table>
+          </div>
+          <p id="mvm-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
+        </section>
 
         <section class="card mb-4" aria-labelledby="team-title">
           <h2 id="team-title" class="text-sm font-bold text-gray-100">By team</h2>

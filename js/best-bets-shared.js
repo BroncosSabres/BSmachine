@@ -49,16 +49,17 @@ export const isNhlThreeWay = r => r.sport === 'nhl' && r.market_kind === 'match_
 // wide bands while the sample is small, more and finer ones as it grows.
 // Bands never straddle either end of `[lo, hi]` (the page's Edge filter, hi
 // Infinity for no top), so the ones outside it can be dimmed. Ends typed
-// between steps become cuts of their own. picks: settled picks with
-// flagged_edge and result. -> [{ lo, hi, label, picks }] in edge order.
+// between steps become cuts of their own. picks: settled picks with result;
+// edgeOf: the edge a pick is banded by (default the one it was flagged at).
+// -> [{ lo, hi, label, picks }] in edge order.
 export const EDGE_STEPS = [0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1, 1.5, Infinity];
 
-export function edgeBands(picks, [minEdge, maxEdge] = [0, Infinity], minBets = 10) {
+export function edgeBands(picks, [minEdge, maxEdge] = [0, Infinity], minBets = 10, edgeOf = p => p.flagged_edge) {
   const live = p => p.result !== 'void';
   const steps = [...new Set([...EDGE_STEPS, minEdge, maxEdge].filter(x => x >= 0))].sort((a, b) => a - b);
   const fine = steps.slice(0, -1).map((lo, i) => {
     const hi = steps[i + 1];
-    const inBand = picks.filter(p => p.flagged_edge >= lo && p.flagged_edge < hi);
+    const inBand = picks.filter(p => edgeOf(p) >= lo && edgeOf(p) < hi);
     return { lo, hi, picks: inBand, n: inBand.filter(live).length };
   });
   const join = (a, b) => ({ lo: a.lo, hi: b.hi, picks: a.picks.concat(b.picks), n: a.n + b.n });
@@ -106,13 +107,15 @@ const OUTLIER_WHY = {
 
 // The chip: a button that shows the details when tapped (tap-tips.js).
 // o: {disc, cons, best, book, nBooks, isOutlier, threshold, method, nGames,
-// record, market, at}.
+// record, market, at, off}. at: a pick's, when it was flagged as one; off: its
+// market's outliers have turned out not to pay since (outlier_on false).
 function outlierChipHtml(o) {
   const gap = signedPct(o.disc, 0);
   const lines = [`${o.book || 'One bookie'} ${odds(o.best)} vs ${odds(o.cons)}`
     + (o.nBooks ? `, the median of the other ${o.nBooks - 1} bookie${o.nBooks === 2 ? '' : 's'}` : ' (the others)')
     + ` — ${gap}.`];
-  if (o.at) lines.push(`An outlier when it was flagged (${o.at}).`);
+  if (o.at && o.off) lines.push(`An outlier when it was flagged (${o.at}); ${o.market} outliers have not paid since, so it no longer counts as one.`);
+  else if (o.at) lines.push(`An outlier when it was flagged (${o.at}).`);
   else if (o.isOutlier) lines.push(`Outlier: ${o.market} counts a gap of ${signedPct(o.threshold, 0)} or more, `
     + (o.method === 'optimised' ? 'the most profitable gap for its settled outlier bets.'
       : 'the default until it has enough settled outlier bets and winners to judge.'));
@@ -120,11 +123,12 @@ function outlierChipHtml(o) {
   else lines.push(`Not an outlier: ${o.market} has none — ${OUTLIER_WHY[o.method] || 'its outliers have not paid'}.`);
   const rec = o.record;
   if (rec && rec.n) lines.push(`Settled bets here at a gap of ${signedPct(rec.cut, 0)}+: ${rec.n}, ${wonCount(rec.wins)} won, ${signedPct(rec.roi, 0)} ROI at the outlier price.`);
-  const cls = o.isOutlier || o.at
+  const lit = o.isOutlier || (o.at && !o.off);
+  const cls = lit
     ? 'border-amber-500/50 text-amber-300 bg-amber-900/30'
     : 'border-gray-600 text-gray-300 bg-gray-800/60';
   return `<button type="button" class="ml-1 inline-flex items-center gap-0.5 rounded border px-1 py-px text-[10px] font-semibold leading-tight whitespace-nowrap align-middle ${cls}"
-    data-tip="${esc(lines.join('\n'))}" aria-label="${esc(lines.join(' '))}">${o.isOutlier || o.at ? '⚡ Outlier' : 'Gap'} ${gap}</button>`;
+    data-tip="${esc(lines.join('\n'))}" aria-label="${esc(lines.join(' '))}">${lit ? '⚡ Outlier' : 'Gap'} ${gap}</button>`;
 }
 
 const marketText = r => `${SPORT_LABELS[r.sport] || r.sport} ${(KIND_LABELS[r.market_kind] || r.market_kind).toLowerCase()}`;
@@ -138,12 +142,13 @@ export function outlierHtml(r) {
                            record: o.record, market: marketText(r) });
 }
 
-// A pick's chip ('' unless it was an outlier): Live rows, results.
+// A pick's chip ('' unless it was an outlier): Live rows, results. Lit only
+// while its market's outliers are on (outlier_on), else a plain Gap chip.
 export function pickOutlierHtml(p) {
   if (!p.outlier_at) return '';
   const at = new Date(p.outlier_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   return outlierChipHtml({ disc: p.outlier_disc, cons: p.outlier_cons_back, best: p.outlier_book_back,
-                           book: p.outlier_book, at, market: marketText(p) });
+                           book: p.outlier_book, at, off: p.outlier_on === false, market: marketText(p) });
 }
 
 export const isOutlierRow = r => !!r.outlier?.is_outlier;

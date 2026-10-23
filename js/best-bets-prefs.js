@@ -10,8 +10,8 @@
 // browser's. The bank balance is not part of them: it stays in the browser.
 import { supabase, getSession } from './supabase-client.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, signedPct } from './best-bets-shared.js';
-import { MARKETS, BASES, normalizePrefs, migrateOldPrefs, defaultPrefs, defaultRule, ruleFor,
-         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf } from './best-bets-filters.js';
+import { MARKETS, BASES, OUTLIER_MODES, normalizePrefs, migrateOldPrefs, defaultPrefs, defaultRule, ruleFor,
+         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf, edgeField } from './best-bets-filters.js';
 import { applyOptimised, OPT_MIN_BETS } from './best-bets-optimise.js';
 
 const KEY = 'bsm_best_bets_filters';
@@ -51,6 +51,8 @@ export async function syncPrefs(local) {
     return null;
   }
   const remote = normalizePrefs(data.best_bets_prefs);
+  // Settings from before a version change go back migrated, once
+  if ((+data.best_bets_prefs.v || 1) < remote.v) pushProfile(remote).catch(() => {});
   if (JSON.stringify(remote) === JSON.stringify(local)) return null;
   storeLocal(remote);
   return remote;
@@ -73,6 +75,7 @@ const inputCls = 'w-14 bg-gray-900 border border-gray-600 rounded px-1.5 py-1 te
 
 function rowHtml(key) {
   const rule = ruleFor(state.prefs, key);
+  const edge = rule[edgeField(state.prefs)] || ['', ''];
   const n = state.counts?.[key];
   return `
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 border-t border-gray-700/60 first:border-t-0 ${rule.on ? '' : 'opacity-60'}" data-key="${esc(key)}">
@@ -82,10 +85,10 @@ function rowHtml(key) {
         <span data-count class="text-[11px] tabular-nums text-gray-500 shrink-0">${countText(n)}</span>
       </label>
       <span class="ml-auto flex items-center gap-1 text-xs text-gray-400 shrink-0" role="group" aria-label="${esc(marketLabel(key))} edge range">
-        <input data-edge="0" type="number" min="0" step="any" inputmode="decimal" placeholder="any" value="${esc(rule.edge[0])}"
+        <input data-edge="0" type="number" step="any" inputmode="decimal" placeholder="any" value="${esc(edge[0])}"
                aria-label="Lowest edge, percent" class="${inputCls}">
         <span aria-hidden="true">–</span>
-        <input data-edge="1" type="number" min="0" step="any" inputmode="decimal" placeholder="any" value="${esc(rule.edge[1])}"
+        <input data-edge="1" type="number" step="any" inputmode="decimal" placeholder="any" value="${esc(edge[1])}"
                aria-label="Highest edge, percent" class="${inputCls}">%
         <button type="button" data-copy title="Use this edge range for every market"
                 class="ml-1 px-1.5 py-1 rounded border border-gray-700 text-[11px] text-gray-400 hover:text-gray-100 hover:border-gray-500">All</button>
@@ -138,12 +141,27 @@ function bodyHtml() {
         : 'Bets taken at the median price across the bookies.'} A bet needs an edge at the median price either way, and the edge ranges below are always at the median.</p>
     </div>
     <div class="mb-4">
+      <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Judge by</div>
+      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['model', 'Model edge'], ['cal', 'Calibrated edge']].map(([v, label]) => `
+        <button type="button" data-judge="${v}" aria-pressed="${prefs.judge === v}"
+                class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.judge === v
+                  ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
+      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.judge === 'cal'
+        ? "Calibrated: the model's chance blended with the bookies' (their margin taken out) by how far each market's settled bets have trusted the model - the analysis page's Model vs market. It is judged at the price you take (the best bookie's, with Price on Best bookie), not the median: the edge ranges below are of it there, and stakes are Kelly on its low end."
+        : "The model's own edge. Calibrated blends it with the bookies' chance by how far each market's settled bets have trusted the model (the analysis page's Model vs market says how that has done out of sample)."
+      } Each has its own edge ranges.</p>
+    </div>
+    <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Outliers</div>
-      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['any', 'With the rest'], ['only', 'Outliers only']].map(([v, label]) => `
+      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['off', 'Off'], ['any', "Where they've paid"], ['only', 'Outliers only']].map(([v, label]) => `
         <button type="button" data-outliers="${v}" aria-pressed="${prefs.outliers === v}"
                 class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.outliers === v
                   ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
-      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">⚡ An outlier is one bookie far above the median of the others, by at least its market's threshold: the most profitable gap among the market's settled outlier bets, +25% until there are enough of them to judge, none where they haven't paid. Outliers are listed whatever their edge, in the markets switched on below and the odds range.</p>
+      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">⚡ An outlier is one bookie far above the median of the others, by at least its market's threshold: the most profitable gap among the market's settled outlier bets, +25% while there are too few of them to judge, none where they haven't paid. ${
+        prefs.outliers === 'off' ? 'Off: an outlier price is listed only when it has an edge, like any other bet.'
+        : prefs.outliers === 'only' ? 'Only outliers are listed, whatever their edge, in the markets switched on below and the odds range.'
+        : "Where they've paid: outliers are listed whatever their edge, in the markets switched on below and the odds range, in each market whose threshold is on."
+      } The same goes for the Live tab and the track record's ⚡ line.</p>
     </div>
     ${sports.map(s => `
       <section class="mb-3">
@@ -209,8 +227,11 @@ function build() {
     const b = e.target.closest('button');
     if (!b) return;
     const key = b.closest('[data-key]')?.dataset.key;
-    if (b.dataset.outliers) {
-      change(p => { p.outliers = b.dataset.outliers === 'only' ? 'only' : 'any'; });
+    if (b.dataset.judge) {
+      state.report = null;   // fitted to the other edge
+      change(p => { p.judge = b.dataset.judge === 'cal' ? 'cal' : 'model'; });
+    } else if (b.dataset.outliers) {
+      change(p => { p.outliers = OUTLIER_MODES.includes(b.dataset.outliers) ? b.dataset.outliers : 'any'; });
     } else if (b.dataset.basis) {
       state.report = null;   // read at the other price
       change(p => { p.basis = b.dataset.basis; });
@@ -219,11 +240,12 @@ function build() {
       const s = b.dataset.allOn || b.dataset.allOff;
       change(p => state.keys.filter(k => k.startsWith(`${s}|`)).forEach(k => setRule(p, k, { on: !!b.dataset.allOn })));
     } else if (b.hasAttribute('data-copy') && key) {
-      const edge = [...ruleFor(state.prefs, key).edge];
-      change(p => state.keys.forEach(k => setRule(p, k, { edge: [...edge] })));
+      const field = edgeField(state.prefs);
+      const edge = [...(ruleFor(state.prefs, key)[field] || ['', ''])];
+      change(p => state.keys.forEach(k => setRule(p, k, { [field]: [...edge] })));
     } else if (b.hasAttribute('data-reset')) {
       state.report = null;
-      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; });
+      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; p.judge = 'model'; });
     }
   });
   overlay.addEventListener('change', e => {
@@ -234,7 +256,12 @@ function build() {
       change(p => setRule(p, key, { on: e.target.checked }), false);
     } else if (e.target.dataset.edge != null) {
       const i = +e.target.dataset.edge;
-      change(p => { const edge = [...ruleFor(p, key).edge]; edge[i] = e.target.value.trim(); setRule(p, key, { edge }); }, false);
+      change(p => {
+        const field = edgeField(p);
+        const edge = [...(ruleFor(p, key)[field] || ['', ''])];
+        edge[i] = e.target.value.trim();
+        setRule(p, key, { [field]: edge });
+      }, false);
     }
   });
   document.addEventListener('keydown', e => {

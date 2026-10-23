@@ -30,6 +30,8 @@ import { BASES, passesMarket, passesEdge, prefsSummary } from './best-bets-filte
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
+import { loadCalibration, calibrateBet } from './calibrate-client.js';
+import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, outlierBet, OUTLIER_CUTS, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
@@ -43,9 +45,13 @@ const GRID = 'rgba(255,255,255,0.06)';
 const C_UP = '#22c55e', C_DOWN = '#ef4444';
 
 let raw = [];        // decoded rows
+let dataVersion = null;   // /api/best_bets/analysis version (what the calibration is cached by)
+let calib = null;    // calibrate-client.js result: null while fitting, false if it couldn't be
+let rawOverrounds = null;
 let pending = 0;
 let roiChart = null, calChart = null, leanChart = null, timeChart = null, ruleChart = null;
 let teamKey = null;  // 'sport|team' of the team charted over time, or null for all of them
+let gridShow = 'roi';     // the edge × odds grid's cells: 'roi' actual return / 'cal' calibrated edge
 let gridMode = 'rule';   // 'rule' / 'band': rows of the rule table take an edge and over, or up to the next
 let selEdge = 0;         // the low edge of the row in the detail panel
 let listed = null;       // { title, bets } of that row, for the window that lists its bets
@@ -69,7 +75,7 @@ const STAGES = {
   avg: ['average odds while showing value', 'averaged over the time it showed value'],
   peak: ['peak odds while showing value (not achievable)', 'at the best price while it showed value, a ceiling no one can time'],
 };
-const stageOf = () => STAGES[$('f-stage').value] || STAGES.open;
+const stageOf = () => STAGES[$('f-stage').value] || STAGES.avg;
 // "odds when first priced · best bookie"
 function stageText(capital = false) {
   const t = `${stageOf()[0]} · ${BASES[basis()].toLowerCase()}`;
@@ -82,8 +88,18 @@ const riskOf = () => RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
 const MINE_KEY = 'bsm_best_bets_analysis_mine';
 const mine = () => $('f-mine').checked;
 // The bets the Best Bets filters let through: the market on, its edge range
-// and (odds: false leaves it out) the odds range, all at the median price
-const passesMine = (b, odds = true) => odds ? passesMarket(prefs, b.group, b.edge, b.back) : passesEdge(prefs, b.group, b.edge);
+// and (odds: false leaves it out) the odds range, all at the median price.
+// The edge is the one Filters judges by: the calibrated one once it is in.
+const minePrefs = () => (prefs.judge === 'cal' && !calib ? { ...prefs, judge: 'model' } : prefs);
+function calEdgeOfBet(b) {
+  if (!calib) return null;
+  rawOverrounds ??= overrounds(raw, 'close');
+  const c = calibrateBet(calib, { ...b.row, mkt_sum: rawOverrounds.get(b.row) }, { modelProb: b.prob, median: b.back, taken: b.taken });
+  return c ? c.bookEdge : null;
+}
+const judgedEdge = b => (minePrefs().judge === 'cal' ? calEdgeOfBet(b) : b.edge);
+const passesMine = (b, odds = true) => odds ? passesMarket(minePrefs(), b.group, judgedEdge(b), b.back)
+  : passesEdge(minePrefs(), b.group, judgedEdge(b));
 
 // --- access states (as best-bets.js) ------------------------------------------
 
@@ -106,12 +122,10 @@ function showSignIn() {
 
 // --- data ---------------------------------------------------------------------
 
-const SOURCE_LABELS = { book: 'bookmaker odds', betfair: 'Betfair odds' };
-
 // Stops of the odds slider: close together where most prices are, wide apart
 // up the long end. The last is "any price".
 const ODDS_STOPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity];
-const ODDS_DEFAULT = [1, 10];
+const ODDS_DEFAULT = [1, Infinity];   // any odds
 const oddsRange = () => [ODDS_STOPS[+$('f-odds-min').value], ODDS_STOPS[+$('f-odds-max').value]];
 // "odds under $10", "odds $2 to $10", "odds $2 and over"; null when every price is in
 function oddsText() {
@@ -133,7 +147,7 @@ function syncOdds(moved) {
   $('odds-readout').textContent = `$${a} – ${isFinite(b) ? `$${b}` : 'any'}`;
 }
 
-// The bets under the "odds from", "odds taken", "count" and odds choices. A
+// The bets under the "odds taken", "count" and odds choices. A
 // selection priced once has no closing price: it has no CLV and is left out of
 // the closing view. Markets with no real prices are always left out.
 //   base   what the tiles, rules, charts and breakdown read
@@ -141,10 +155,9 @@ function syncOdds(moved) {
 //          two sides of a head-to-head itself
 //   anyOdds as base at every price: the grid's columns are the odds
 function scopes(withMine = mine()) {
-  const stage = $('f-stage').value, source = $('f-source').value, [oddsLo, oddsHi] = oddsRange();
+  const stage = $('f-stage').value, [oddsLo, oddsHi] = oddsRange();
   const out = [];
   for (const r of raw) {
-    if (source !== 'all' && sourceKey(r) !== source) continue;
     if (stage === 'close' && !(r.n_checks > 1)) continue;
     if (r[`${stage}_back`] == null) continue;   // never showed value (or not recorded)
     out.push(toBet(r, stage, basis()));
@@ -177,8 +190,7 @@ const marketText = () => {
 };
 
 function scopeText() {
-  return [marketText(), SOURCE_LABELS[$('f-source').value],
-          stageText(), oddsText()].filter(Boolean).join(' · ');
+  return [marketText(), stageText(), oddsText()].filter(Boolean).join(' · ');
 }
 
 function renderCountNote(s) {
@@ -200,14 +212,35 @@ function tile(label, value, sub, title = '') {
   </div>`;
 }
 
+// The calibration's model weight for the sport / market selected, as the
+// model's share of the weight (b / (b + market's)) with its 90% range:
+// a market priced from both sources reads its bigger one
+function calShare() {
+  if (!calib) return null;
+  const s = $('f-sport').value, k = $('f-market').value;
+  let w = calib.rootWeights, label = 'all markets';
+  if (s !== 'all' && k !== 'all') {
+    const m = calib.markets.filter(x => x.key.startsWith(`${s}|${k}|`)).sort((a, b) => b.n - a.n)[0];
+    if (m) { w = m.weights; label = 'this market'; }
+  } else if (s !== 'all' && calib.sportWeights[s]) { w = calib.sportWeights[s]; label = SPORT_LABELS[s]; }
+  const total = w.bModel + w.bMarket;
+  if (!(total > 0)) return null;
+  const c = x => Math.min(1, Math.max(0, x / total));
+  return { share: c(w.bModel), lo: c(w.lo), hi: c(w.hi), label };
+}
+
 function renderTiles(bets, fit, pooled) {
   const all = summarise(bets), pos = summarise(bets.filter(b => b.edge > 0));
+  const cs = calShare();
   $('tiles').innerHTML = [
     tile('Settled selections', all.n.toLocaleString(), `${count(all.games, 'game')} · ${pending.toLocaleString()} more awaiting a result`),
     tile('Return at edge above 0', pos.n ? `<span class="${signCls(pos.roi)}">${signedPct(pos.roi)}</span>` : '–',
       pos.n ? `${count(pos.n, 'bet')}, ${wonCount(pos.wins)} won · model expected ${signedPct(pos.edge)} · 90% range ${range(pos.roiCI)}` : 'No positive-edge bets settled yet',
       'One unit on every selection the model rated above 0%, at the bookie odds'),
-    tile('Model weight', fit?.weight != null ? pct(fit.weight, 0) : '–',
+    cs ? tile('Model weight', pct(cs.share, 0),
+      `90% range ${pct(cs.lo, 0)} to ${pct(cs.hi, 0)} · ${cs.label}, from Model vs market below`,
+      "The model's share when its chance and the bookies' (margin out) are fitted to results together, every settled selection at the close, each market leaning on its sport as far as the held-out days said to. 100% = the model's chance is the truth; 0% = the bookies' is.")
+    : tile('Model weight', fit?.weight != null ? pct(fit.weight, 0) : '–',
       fit ? `${fit.weightCI ? `90% range ${pct(fit.weightCI[0], 0)} to ${pct(fit.weightCI[1], 0)} · ` : ''}against the bookie price${pooled ? ' · all sports and markets pooled (too few here)' : ''}`
           : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`,
       "The model's share when its probability and the bookie's are fitted to results together. 100% = the model's price is the truth; 0% = the bookie's is."),
@@ -619,7 +652,7 @@ function renderBets() {
     return `<tr class="border-t border-gray-700/60 tabular-nums text-gray-300 align-top">
       <td class="px-2 py-1.5 whitespace-nowrap">${dayText(b.date)}</td>
       <td class="px-2 py-1.5">${esc(r.home_team)} v ${esc(r.away_team)}${manySports ? `<span class="block text-[10px] text-gray-500">${esc(SPORT_LABELS[b.sport] || b.sport)}</span>` : ''}</td>
-      <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.book ? esc(b.book) : b.source === 'book' ? 'bookmakers' : 'Betfair'}</span></td>
+      <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.book ? esc(b.book) : 'bookmakers'}</span></td>
       <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}</td>
       <td class="px-2 py-1.5 text-right">${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span></td>
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
@@ -660,9 +693,9 @@ document.addEventListener('keydown', e => {
 });
 
 // One row per sport and market: its best-supported rule, whatever Sport and
-// Market are set to. Only the odds source, stage, count, odds range and risk change it.
+// Market are set to. Only the stage, count, odds range and risk change it.
 function renderBestRules(base) {
-  const key = [$('f-source').value, $('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length,
+  const key = [$('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length,
                mine() && JSON.stringify([prefs.markets, prefs.odds])].join('|');
   if (bestCache.key !== key) {
     const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
@@ -690,8 +723,7 @@ function renderBestRules(base) {
         <td class="px-2 py-2 text-right text-gray-300" title="${best.clvN} of ${best.n} with a closing price">${clvText(best)}</td>
         <td class="px-2 py-2 text-right font-semibold text-gray-100 whitespace-nowrap" title="${esc(stakeSub(stake))}">${stakeText(stake)}</td></tr>`;
     }).join('');
-  const source = SOURCE_LABELS[$('f-source').value];
-  $('best-rules-sub').textContent = `${stageText(true)}${source ? ` · ${source}` : ''} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
+  $('best-rules-sub').textContent = `${stageText(true)} · ${oddsText() ?? 'any odds'} · rules with at least ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games · select a row to open it above`;
   $('best-rules-note').textContent = 'Each row is the best of several rules, one for each edge its bets are cut at, and the best of several always flatters. Trust one more when the rows around it agree, '
     + 'when it holds up without its best game, and when the closing price moved its way. Its safe stake flatters it for the same reason.';
 }
@@ -699,8 +731,7 @@ function renderBestRules(base) {
 function renderRules(base) {
   const bets = selected(base);
   const fit = fitBlend(bets) || fitBlend(base);
-  $('rules-sub').textContent = [marketText(), SOURCE_LABELS[$('f-source').value],
-    stageText(), oddsText() ?? 'any odds', '1 unit on every bet in the row'].filter(Boolean).join(' · ');
+  $('rules-sub').textContent = [marketText(), stageText(), oddsText() ?? 'any odds', '1 unit on every bet in the row'].filter(Boolean).join(' · ');
   for (const b of $('rules-mode').children) {
     const on = b.dataset.mode === gridMode;
     b.className = `px-2.5 py-1 ${b.dataset.mode === 'band' ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
@@ -739,10 +770,23 @@ function renderGrid(anyOdds) {
   const edgeName = i => edgeBandLabel(E, i).replace('edge ', '');
   gridLists = new Map();
 
+  const showCal = gridShow === 'cal' && !!calib;
   const cell = (st, key, label, { strong = false, top = false, left = false } = {}) => {
     const lines = [`${label}: ${st.n ? `${signedPct(st.roi)} on ${count(st.n, 'bet')} over ${count(st.games, 'game')}` : 'no settled bets'}`];
     const borders = `${top ? 'border-top:2px dashed rgba(239,68,68,0.8);' : ''}${left ? 'border-left:2px dashed rgba(239,68,68,0.8);' : ''}`;
     if (!st.n) return `<td class="px-1.5 py-1 text-center text-gray-700" style="${borders}">·</td>`;
+    if (showCal) {
+      const edges = st.bets.map(calEdgeOfBet).filter(x => x != null);
+      const ce = edges.length ? edges.reduce((a, x) => a + x, 0) / edges.length : null;
+      const alpha = ce == null ? 0 : Math.min(0.55, Math.abs(ce) / 0.1 * 0.55);
+      const bg = ce == null ? '' : `background:${ce > 0 ? `rgba(34,197,94,${alpha.toFixed(2)})` : `rgba(239,68,68,${alpha.toFixed(2)})`};`;
+      lines.push(`Calibrated edge at the price taken, on average: ${signedPct(ce)} (${count(edges.length, 'bet')})`, 'Select to list the bets');
+      gridLists.set(key, { title: `${marketText()}: ${label}`, bets: st.bets });
+      return `<td data-cell="${key}" class="px-1.5 py-1 text-center cursor-pointer hover:outline hover:outline-1 hover:outline-gray-400 tabular-nums ${strong ? 'border-l border-gray-700' : ''}"
+        style="${bg}${borders}" title="${esc(lines.join('\n'))}">
+        <div class="font-semibold text-gray-100">${signedPct(ce, 1)}</div>
+        <div class="text-[10px] text-gray-400">${signedPct(st.roi, 0)}</div></td>`;
+    }
     const s = st.verdict === 'ahead' ? kellyStake(st.low, st.odds, st.commission, risk) : null;
     lines.push(`${capital(GRID_VERDICT[st.verdict])}${st.low != null ? `: ${signedPct(st.low)} to ${signedPct(st.high)}, each end ${Math.round(risk.conf * 100)}% sure (${risk.label} risk)` : ''}`);
     if (s) lines.push(`Safe stake ${share(s.frac)}${stakePrefs.balance ? ` (${money(stakePrefs.balance * s.frac)})` : ''} at ${odds(st.odds)}, about ${s.betsToSure.toLocaleString()} bets to be 99% sure of a profit`);
@@ -768,12 +812,17 @@ function renderGrid(anyOdds) {
       ${cell(total, '*:*', 'edge 0%+ · any odds', { strong: true })}</tr>`;
   $('grid-table').innerHTML = head + `<tbody>${body}</tbody>`;
 
-  const source = SOURCE_LABELS[$('f-source').value];
-  $('grid-sub').textContent = [marketText(), source, stageText(),
+  $('grid-sub').textContent = [marketText(), stageText(),
     'every price (the odds slider is left out: the columns are the odds)', `${risk.label} risk`].filter(Boolean).join(' · ');
   for (const b of $('grid-detail').children) {
     const on = b.dataset.detail === stakePrefs.detail;
     b.className = `px-2.5 py-1 ${b.previousElementSibling ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
+    b.setAttribute('aria-pressed', on);
+  }
+  for (const b of $('grid-show').children) {
+    const on = b.dataset.show === gridShow;
+    b.disabled = b.dataset.show === 'cal' && !calib;
+    b.className = `px-2.5 py-1 disabled:opacity-40 ${b.previousElementSibling ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
     b.setAttribute('aria-pressed', on);
   }
 
@@ -785,6 +834,11 @@ function renderGrid(anyOdds) {
     : `No edge or odds yet past which bets have turned to losing, clear of luck. That takes every band from there up (with ${CEILING_MIN_BETS} bets over ${CEILING_MIN_GAMES} games) losing, `
       + `and the bets from there up together losing at the high end of their ${conf} range. Long odds win rarely, so a few without a winner yet is no sign of a loss.`;
 
+  if (showCal) {
+    $('grid-note').textContent = "Each cell's bets judged by the calibrated edge at the price taken (Model vs market): green where the fit says there is value, red where it says the model's edge is mostly its own error; the cell's actual return below. "
+      + 'A smooth surface fitted to all markets at once rather than a patch picked from the grid, so it moves little with luck. It is fitted on these same results, so it flatters them a little: the out-of-sample columns above are the honest test.';
+    return;
+  }
   const called = grid.cells.flat().filter(st => st.verdict !== 'thin');
   const proven = called.filter(st => st.verdict === 'ahead').length;
   const byLuck = called.length * (1 - risk.conf);
@@ -794,7 +848,7 @@ function renderGrid(anyOdds) {
       + 'Finer bins look closer but each needs longer to prove anything, and more of them look good by luck. '
       + "The Best Bets page doesn't stake from these cells but from each bet's own pool: settled bets in its market at an edge no higher than its own, "
       + 'at odds from half its own to the next step up (all markets where its own market has proven nothing either way), '
-      + 'at odds when first priced (at the price chosen here, which the Best Bets page shares), every source, one bet per market. The outlier lines here apply to it.';
+      + 'at the average price while showing value (at the price chosen here, which the Best Bets page shares), every source, one bet per market. The outlier lines here apply to it.';
 }
 
 // --- by team ------------------------------------------------------------------
@@ -913,8 +967,7 @@ function renderTeams(base) {
   const sport = $('f-sport').value;
   const tgs = teamGames(base.filter(b => sport === 'all' || b.sport === sport));
   if (teamKey && !tgs.some(g => g.key === teamKey && g.n)) teamKey = null;
-  $('team-sub').textContent = [sport === 'all' ? 'All sports' : SPORT_LABELS[sport], SOURCE_LABELS[$('f-source').value],
-    stageText(),
+  $('team-sub').textContent = [sport === 'all' ? 'All sports' : SPORT_LABELS[sport], stageText(),
     oddsText(), 'not narrowed by Market'].filter(Boolean).join(' · ');
   const none = !tgs.length;
   $('team-empty').classList.toggle('hidden', !none);
@@ -929,11 +982,95 @@ function renderTeams(base) {
   renderTeamTable(tgs, levels);
 }
 
+// --- model vs market ---------------------------------------------------------------
+// calibrate.js per market (in a Worker): the model's weight against the
+// price, whether it beat the price out of sample, what betting the calibrated
+// edge returned on the held-out days, and closing line value.
+
+const VERDICTS = {
+  adds: ['Adds information', 'text-green-400', "Its weight is clear of 0 and the blend beat the price out of sample: the model's edges here carry information the price doesn't."],
+  none: ['No evidence yet', 'text-gray-300', "Not shown either way: the model's edges here haven't beaten the price clearly (yet)."],
+  hurts: ['Hurts', 'text-red-400', "Its weight is below 0, or the blend did worse than the price out of sample beyond luck: the model's edges here are noise or worse."],
+  thin: ['Too few to judge', 'text-gray-500', `Under ${MIN_JUDGE_BETS} settled selections or ${MIN_JUDGE_GAMES} games: it leans on its sport's fit.`],
+};
+
+function startCalibration() {
+  const b = basis();
+  loadCalibration(raw, { version: dataVersion, basis: b, prefs }).then(c => {
+    if (b !== basis()) return;
+    calib = c || false;
+    render();
+  });
+}
+
+const roiCell = r => (r && r.n ? `${signedPct(r.roi, 0)}<span class="block text-[10px] text-gray-500">${r.n} bet${r.n === 1 ? '' : 's'}</span>` : '<span class="text-gray-600">–</span>');
+
+function renderModelVsMarket() {
+  if (!calib) {
+    $('mvm-sub').textContent = calib === false ? 'Could not be fitted in this browser.' : 'Fitting each market against the price…';
+    $('mvm-summary').innerHTML = '';
+    $('mvm-body').innerHTML = calib === false ? '' : Array.from({ length: 4 }, () =>
+      '<tr><td colspan="10" class="px-2 py-1.5"><span class="bsm-skeleton h-5 w-full block"></span></td></tr>').join('');
+    $('mvm-note').textContent = '';
+    return;
+  }
+  const s = $('f-sport').value, k = $('f-market').value;
+  const rows = calib.markets.filter(m => (s === 'all' || m.key.startsWith(`${s}|`)) && (k === 'all' || m.key.split('|')[1] === k))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const fitted = calib.markets.reduce((a, m) => a + m.n, 0);
+  const days = calib.days || [];
+  const a = calib.all || {};
+  const rule = (r, text) => (r && r.n ? `${text} <span class="${signCls(r.roi)} font-semibold">${signedPct(r.roi)}</span> on ${count(r.n, 'bet')}` : null);
+  $('mvm-sub').textContent = `${count(fitted, 'settled selection')} at the close · ${calib.basis === 'book' ? 'best bookie' : 'average bookie'} price for the returns`;
+  $('mvm-summary').innerHTML = !days.length ? 'Too few days settled yet to hold any out: the out-of-sample columns fill in from the 8th day.'
+    : `Held out ${count(days.length, 'day')} (${dayText(days[0])} to ${dayText(days.at(-1))}), each scored by a fit on the days before it. One bet per market, at the average price while it showed value: `
+      + [rule(a.cal, 'calibrated edge above 0'), rule(a.model, 'every bet that showed value'), rule(a.mine, 'your filters')].filter(Boolean).join(' · ') + '.';
+  $('mvm-body').innerHTML = rows.map(m => {
+    const [sport, kind] = m.key.split('|');
+    const w = m.weights, v = VERDICTS[m.verdict] || VERDICTS.thin;
+    const gap = m.gap;
+    return `<tr class="border-t border-gray-700/60">
+      <td class="px-2 py-1.5 text-left font-semibold text-gray-100">${esc(`${SPORT_LABELS[sport] || sport} · ${kindLabel(kind)}`)}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${m.n.toLocaleString()}<span class="block text-[10px] text-gray-500">${count(m.games, 'game')}</span></td>
+      <td class="px-2 py-1.5 text-right"><span class="font-semibold text-gray-100">${w.bModel.toFixed(2)}</span><span class="block text-[10px] text-gray-500">${w.lo == null ? '' : `${w.lo.toFixed(2)} to ${w.hi.toFixed(2)}`}</span></td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${pct(m.own, 0)}</td>
+      <td class="px-2 py-1.5 text-right">${gap ? `<span class="font-semibold ${gap.gap < 0 ? 'text-green-400' : gap.gap > 0 ? 'text-red-400' : 'text-gray-300'}">${(gap.gap * 1000).toFixed(1)}</span><span class="block text-[10px] text-gray-500">${gap.lo == null ? `${count(gap.games, 'game')}` : `${(gap.lo * 1000).toFixed(1)} to ${(gap.hi * 1000).toFixed(1)}`}</span>` : '<span class="text-gray-600">–</span>'}</td>
+      <td class="px-2 py-1.5 text-left font-semibold ${v[1]}" title="${esc(v[2])}">${v[0]}</td>
+      <td class="px-2 py-1.5 text-right">${roiCell(m.returns?.cal)}</td>
+      <td class="px-2 py-1.5 text-right">${roiCell(m.returns?.model)}</td>
+      <td class="px-2 py-1.5 text-right">${roiCell(m.returns?.mine)}</td>
+      <td class="px-2 py-1.5 text-right">${m.clv ? `<span class="${signCls(m.clv.mean)}">${signedPct(m.clv.mean)}</span><span class="block text-[10px] text-gray-500">${m.clv.n}</span>` : '<span class="text-gray-600">–</span>'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" class="px-2 py-6 text-center text-sm text-gray-500">No settled selections in this market yet.</td></tr>';
+  $('mvm-note').textContent = 'Instead of hunting the edge × odds grid for a profitable patch (with dozens of patches to choose from, the best one is mostly luck), '
+    + "this fits each market's results on the model's chance and the bookies' (their margin taken out) together: the model weight says how much of the model's disagreement with the price has been worth. "
+    + `Thin markets lean on their sport, and sports on all markets, as much as the held-out days said to (${typeof calib.n0 === 'number' ? `worth ${calib.n0.toLocaleString()} of its bets each`
+        : `a sport worth ${calib.n0.sport.toLocaleString()} of all markets' bets, a market ${calib.n0.leaf.toLocaleString()} of its sport's`}). `
+    + "The calibrated edge it gives every bet - the model's chance moved toward the price by that much - is what Filters → Judge by: Calibrated edge lists and stakes. "
+    + 'Fitted at the close, where the price is sharpest, so earlier prices are if anything judged harshly. Few days are settled yet: read the ranges, not the points.';
+}
+
 // --- breakdown ----------------------------------------------------------------
+
+// The calibration's weight for a breakdown row: its market's (the bigger
+// source's), its sport's or all markets'
+function calWeightFor(key) {
+  if (!calib) return null;
+  let w = calib.rootWeights;
+  if (key !== 'all') {
+    const m = calib.markets.filter(x => x.key.startsWith(`${key}|`)).sort((a, b) => b.n - a.n)[0];
+    if (m) w = m.weights;
+  }
+  const total = w.bModel + w.bMarket;
+  if (!(total > 0)) return null;
+  const c = x => Math.min(1, Math.max(0, x / total));
+  return { share: c(w.bModel), lo: c(w.lo), hi: c(w.hi), w };
+}
 
 function breakdownRow(label, bets, key, active) {
   const all = summarise(bets), posBets = bets.filter(b => b.edge > 0), pos = summarise(posBets);
   const fit = fitBlend(bets);
+  const cw = calWeightFor(key);
   const exp = expectedWins(bets);
   const from = profitableFrom(bets);
   const fromText = from ? (from.minEdge ? `${signedPct(from.minEdge, 0)} edge and over` : 'any edge above 0%') : posBets.length < 50 ? 'not enough bets' : 'not shown yet';
@@ -944,7 +1081,8 @@ function breakdownRow(label, bets, key, active) {
     <td class="px-2 py-2 text-right text-gray-300">${all.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${all.games.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300 whitespace-nowrap" title="${exp.n ? `${wonCount(exp.wins)} of ${exp.n.toLocaleString()} won. The model expected ${exp.model.toFixed(1)}, the bookie odds ${exp.bookie.toFixed(1)} (margin included).` : ''}"><span class="font-semibold text-gray-100">${exp.n ? wonCount(exp.wins) : '–'}</span>${exp.n ? `<span class="block text-[10px] text-gray-500">model ${exp.model.toFixed(1)} · bookie ${exp.bookie.toFixed(1)}</span>` : ''}</td>
-    <td class="px-2 py-2 text-right text-gray-300" title="${fit ? `logit(win) = ${fit.a.toFixed(2)} + ${fit.bModel.toFixed(2)} × model + ${fit.bMarket.toFixed(2)} × bookie` : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`}"><span class="font-semibold text-gray-100">${fit?.weight != null ? pct(fit.weight, 0) : '–'}</span>${fit?.weightCI ? `<span class="block text-[10px] text-gray-500">${pct(fit.weightCI[0], 0)} to ${pct(fit.weightCI[1], 0)}</span>` : ''}</td>
+    ${cw ? `<td class="px-2 py-2 text-right text-gray-300" title="From Model vs market: model weight ${cw.w.bModel.toFixed(2)}, the bookies' ${cw.w.bMarket.toFixed(2)} (every settled selection at the close, leaning on its sport)"><span class="font-semibold text-gray-100">${pct(cw.share, 0)}</span><span class="block text-[10px] text-gray-500">${pct(cw.lo, 0)} to ${pct(cw.hi, 0)}</span></td>`
+    : `<td class="px-2 py-2 text-right text-gray-300" title="${fit ? `logit(win) = ${fit.a.toFixed(2)} + ${fit.bModel.toFixed(2)} × model + ${fit.bMarket.toFixed(2)} × bookie` : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`}"><span class="font-semibold text-gray-100">${fit?.weight != null ? pct(fit.weight, 0) : '–'}</span>${fit?.weightCI ? `<span class="block text-[10px] text-gray-500">${pct(fit.weightCI[0], 0)} to ${pct(fit.weightCI[1], 0)}</span>` : ''}</td>`}
     <td class="px-2 py-2 text-right text-gray-300">${pos.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${pos.n ? wonCount(pos.wins) : '–'}</td>
     <td class="px-2 py-2 text-right text-gray-300">${pos.n ? signedPct(pos.edge) : '–'}</td>
@@ -959,8 +1097,7 @@ function renderBreakdown(base) {
   const current = $('f-sport').value === 'all' || $('f-market').value === 'all'
     ? ($('f-sport').value === 'all' && $('f-market').value === 'all' ? 'all' : null)
     : `${$('f-sport').value}|${$('f-market').value}`;
-  const source = SOURCE_LABELS[$('f-source').value];
-  $('breakdown-sub').textContent = `${stageText(true)}${source ? ` · ${source}` : ''}${oddsText() ? ` · ${oddsText()}` : ''} · select a row to chart it`;
+  $('breakdown-sub').textContent = `${stageText(true)}${oddsText() ? ` · ${oddsText()}` : ''} · select a row to chart it`;
   $('breakdown-body').innerHTML = !base.length
     ? '<tr><td colspan="11" class="px-2 py-8 text-center text-sm text-gray-500">No settled selections yet.</td></tr>'
     : breakdownRow('All sports and markets', base, 'all', current === 'all')
@@ -1103,6 +1240,7 @@ function mineCounts() {
 
 function render() {
   renderMine();
+  renderModelVsMarket();
   const s = scopes(), base = s.base;
   const bets = selected(base);
   let fit = fitBlend(bets), pooled = false;
@@ -1122,7 +1260,7 @@ function fillSelect(id, options) {
   $(id).innerHTML = options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
 }
 
-['f-sport', 'f-market', 'f-source', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+['f-sport', 'f-market', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
 try { $('f-mine').checked = localStorage.getItem(MINE_KEY) === '1'; } catch { /* storage unavailable */ }
 $('f-mine').addEventListener('change', () => {
   try { localStorage.setItem(MINE_KEY, mine() ? '1' : '0'); } catch { /* storage unavailable */ }
@@ -1147,6 +1285,7 @@ $('f-price').addEventListener('change', () => {
   prefs = { ...prefs, basis: basis() };
   savePrefs(prefs);
   render();
+  if (calib !== null) { calib = null; startCalibration(); render(); }
 });
 
 // Risk, bank and bin detail are shared with the Best Bets page
@@ -1158,6 +1297,12 @@ $('f-balance').addEventListener('change', e => {
   stakePrefs.balance = v > 0 ? v : null;
   saveStakePrefs(stakePrefs);
   render();
+});
+$('grid-show').addEventListener('click', e => {
+  const b = e.target.closest('[data-show]');
+  if (!b || b.disabled || b.dataset.show === gridShow) return;
+  gridShow = b.dataset.show;
+  renderGrid(scopes().anyOdds);
 });
 $('grid-detail').addEventListener('click', e => {
   const d = e.target.closest('button[data-detail]')?.dataset.detail;
@@ -1253,7 +1398,11 @@ async function init() {
   if (res?.status === 403) { gateCard('Restricted', "This page is restricted. Your account doesn't have access to Best Bets."); return; }
   if (!res?.ok) { gateCard('Could not load the analysis', 'Try again in a moment.'); return; }
   const data = await res.json();
-  raw = decodeRows(data);
+  // Bookmaker odds only: Betfair is no longer used (the backend leaves its
+  // rows out too; this covers a response from before it did)
+  raw = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));
+  dataVersion = data.version ?? null;
+  rawOverrounds = null;
   pending = data.pending;
   outlierMarkets = {};
   for (const o of data.outliers || []) (outlierMarkets[`${o.sport}|${o.kind}`] ||= {})[o.band] = o;
@@ -1264,6 +1413,7 @@ async function init() {
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   render();
+  startCalibration();
   // The account's filters and price basis, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;

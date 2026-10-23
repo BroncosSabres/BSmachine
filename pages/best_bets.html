@@ -58,7 +58,7 @@
                 <input id="odds-min" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Lowest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 <span aria-hidden="true">–</span> $
-                <input id="odds-max" type="number" min="1" step="any" inputmode="decimal" placeholder="any" value="10" aria-label="Highest odds"
+                <input id="odds-max" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Highest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
               </div>
               <label id="basis-wrap" class="hidden flex items-center gap-1.5" title="Which price the Live tab's odds filter, edges, expected returns and projected ROI use: the average while the bet showed value before kickoff (weighted by time: what taking it whenever it was listed got), the first price recorded, the best seen before kickoff, or the closing price">Odds at
@@ -89,6 +89,11 @@
               <label id="my-teams-wrap" class="hidden flex items-center gap-1.5 cursor-pointer" title="Only games involving a team in My Teams">
                 <input id="my-teams-only" type="checkbox" class="accent-amber-400"> My Teams
               </label>
+              <button id="alerts-btn" type="button" aria-pressed="false"
+                      title="A browser notification when a new bet passes your filters, while this page is open (checked every 2 minutes, even in a background tab). This browser only."
+                      class="hidden flex items-center gap-1 bg-gray-800 border border-gray-600 hover:border-gray-400 rounded px-2 py-1 text-sm text-gray-300">
+                <span aria-hidden="true">&#128276;</span> <span id="alerts-label">Alerts off</span>
+              </button>
             </div>
           </div>
 
@@ -109,11 +114,33 @@
                 <tbody id="bets-body"></tbody>
               </table>
             </div>
+
+            <!-- Listed before, not now: what the Live tab would show that the list no longer does -->
+            <details id="dropped-wrap" class="hidden mt-5 border-t border-gray-700 pt-3">
+              <summary class="cursor-pointer select-none text-sm font-semibold text-gray-200">No longer value
+                <span id="dropped-count" class="ml-1 text-xs font-normal text-gray-500"></span></summary>
+              <p class="mt-1 text-[11px] text-gray-500 leading-snug">Bets on games that haven't started, listed under your filters at an earlier check and not now: the price came in, the edge fell out of your range, or the bookies took the market down. Bet one only at a price that still gives an edge.</p>
+              <div class="overflow-x-auto -mx-1 mt-2">
+                <table class="w-full text-sm sm:min-w-[40rem]">
+                  <thead>
+                    <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                      <th class="hidden sm:table-cell px-2 py-2 text-left font-semibold">Game</th>
+                      <th class="px-2 py-2 text-left font-semibold">Selection</th>
+                      <th class="px-2 py-2 text-right font-semibold" title="Top: the price now (at the price basis chosen in Filters). Below: the price when it was last listed under your filters.">Odds</th>
+                      <th class="px-2 py-2 text-right font-semibold" title="Top: the edge now at the average (median) price. Below: when it was last listed.">Edge</th>
+                      <th class="px-2 py-2 text-right font-semibold" title="How long it was listed under your filters, when that ended, and why it isn't now">Listed</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dropped-body"></tbody>
+                </table>
+              </div>
+            </details>
           </div>
 
           <!-- Live: tracked bets whose game has started, until they settle -->
           <div id="live-view" class="hidden">
             <div id="live-summary" class="mb-4"></div>
+            <div id="live-unlisted" class="hidden -mt-2 mb-3 text-[11px] text-gray-500"></div>
             <div class="overflow-x-auto -mx-1">
               <table class="w-full text-sm sm:min-w-[40rem]">
                 <thead>

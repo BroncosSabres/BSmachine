@@ -1,0 +1,58 @@
+// best-bets-history.js — what a bet's price history says about when the page
+// listed it under the viewer's filters: the "No longer value" section and the
+// Live tab's "listed" test. No DOM, so it can be exercised under Node.
+//
+// A history point (/api/best_bets rows and dropped, /api/best_bets/live picks):
+//   [unix seconds, median price, best bookie's price (null: Betfair),
+//    median edge, flags]
+// flags: HIST_OUTLIER - an outlier price under today's thresholds;
+//        HIST_UNLISTED - a check the page never lists (Betfair's closing runs).
+// A point holds from its check until the next one, the last until the end
+// given (now, or kickoff). Runs at the same price and edge are cut to their
+// first and last point by the backend, which this reads the same way.
+import { passesBet } from './best-bets-filters.js';
+
+export const HIST_OUTLIER = 1;
+export const HIST_UNLISTED = 2;
+
+// Whether the page listed the bet at this check under these settings: its
+// market switched on, the edge that market needs (at the median), the odds
+// range (median price), or an outlier price where outliers are listed.
+// edgeOf(point): the edge that judges, where it isn't the model's (the
+// calibrated one, with Filters judging by it).
+export function pointPasses(prefs, key, p, edgeOf = null) {
+  if (!Array.isArray(p) || p.length < 5 || p[1] == null || (p[4] & HIST_UNLISTED)) return false;
+  return passesBet(prefs, key, edgeOf ? edgeOf(p) : p[3], p[1], !!(p[4] & HIST_OUTLIER));
+}
+
+// Over points (oldest first) and pass(point): { ever, secs, firstAt,
+// lastPoint, lastEnd } - whether any check listed it, for how long in all
+// (seconds), when it first was, the last listed point and when that listing
+// ended (the next check, or `end`, unix seconds).
+export function listedInfo(points, pass, end) {
+  let secs = 0, firstAt = null, lastPoint = null, lastEnd = null;
+  const list = Array.isArray(points) ? points : [];
+  list.forEach((p, i) => {
+    if (!pass(p)) return;
+    const next = i + 1 < list.length ? list[i + 1][0] : end;
+    const until = Math.max(p[0], Math.min(next ?? p[0], end ?? Infinity));
+    secs += until - p[0];
+    if (firstAt == null) firstAt = p[0];
+    lastPoint = p;
+    lastEnd = until;
+  });
+  return { ever: !!lastPoint, secs, firstAt, lastPoint, lastEnd };
+}
+
+// Whether the backend sent a history this module can read (older backends
+// sent [t, median, book] points, or none)
+export const hasHistory = points => Array.isArray(points) && points.some(p => Array.isArray(p) && p.length >= 5);
+
+// "2h 40m", "35 min", "under a minute"
+export function spanText(secs) {
+  if (secs < 60) return 'under a minute';
+  const m = Math.round(secs / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60), r = m % 60;
+  return h < 48 ? `${h}h${r ? ` ${r}m` : ''}` : `${Math.round(h / 24)} days`;
+}

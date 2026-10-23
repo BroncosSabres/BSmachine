@@ -14,18 +14,21 @@
 // units won. It is fitted to the past, so it flatters what comes next.
 import { toBet } from './safe-stake.js';
 import { profit, dropEmptyMarkets, onePerMarket, edgeCuts } from './roi-stats.js';
-import { oddsRangeOf, inRange, ruleFor } from './best-bets-filters.js';
+import { oddsRangeOf, inRange, ruleFor, edgeField } from './best-bets-filters.js';
 
 export const OPT_STAGE = 'avg';
 // A market with fewer settled bets than this is left as it is, and a range
 // needs this many in it
 export const OPT_MIN_BETS = 10;
 
-// Settled rows -> the bets the optimiser reads, at the prefs' basis and odds range
-export function optimiseBets(rows, prefs) {
+// Settled rows -> the bets the optimiser reads, at the prefs' basis and odds
+// range. edgeOf(row): the edge that judges (the calibrated one, with Filters
+// judging by it), else the model's at the stage.
+export function optimiseBets(rows, prefs, edgeOf = null) {
   const at = rows.filter(r => r[`${OPT_STAGE}_back`] != null).map(r => toBet(r, OPT_STAGE, prefs.basis));
+  if (edgeOf) for (const b of at) b.edge = edgeOf(b.row);
   const odds = oddsRangeOf(prefs);
-  return onePerMarket(dropEmptyMarkets(at).kept).filter(b => b.edge > 0 && inRange(b.back, odds));
+  return onePerMarket(dropEmptyMarkets(at.filter(b => b.edge != null)).kept).filter(b => b.edge > 0 && inRange(b.back, odds));
 }
 
 // The run of neighbouring edge bands with the most units won (ties: more
@@ -59,8 +62,8 @@ const typedPct = x => (isFinite(x) && x > 0 ? String(+(x * 100).toFixed(1)) : ''
 //   on    a range has made money: switch on at it
 //   off   it has enough settled bets and no range made money
 //   thin  under OPT_MIN_BETS settled bets: left as it is
-export function optimiseMarkets(rows, prefs, keys) {
-  const bets = optimiseBets(rows, prefs);
+export function optimiseMarkets(rows, prefs, keys, edgeOf = null) {
+  const bets = optimiseBets(rows, prefs, edgeOf);
   const out = {};
   for (const key of keys) {
     const mine = bets.filter(b => b.group === key);
@@ -74,12 +77,14 @@ export function optimiseMarkets(rows, prefs, keys) {
   return out;
 }
 
-// Settings with the report's markets applied: 'on' switched on at its range,
-// 'off' switched off (its range kept), 'thin' untouched
+// Settings with the report's markets applied: 'on' switched on at its range
+// (of the edge that judges), 'off' switched off (its range kept), 'thin'
+// untouched
 export function applyOptimised(prefs, report) {
   const markets = { ...prefs.markets };
+  const field = edgeField(prefs);
   for (const [key, r] of Object.entries(report)) {
-    if (r.status === 'on') markets[key] = { on: true, edge: [...r.edge] };
+    if (r.status === 'on') markets[key] = { ...ruleFor(prefs, key), on: true, [field]: [...r.edge] };
     else if (r.status === 'off') markets[key] = { ...ruleFor(prefs, key), on: false };
   }
   return { ...prefs, markets };

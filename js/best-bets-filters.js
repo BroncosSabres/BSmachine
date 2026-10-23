@@ -9,15 +9,26 @@
 //             what the edge filters and bands read - is the edge at the median:
 //             one generous bookmaker can't make a bet worth having.
 //   odds      [min, max] as typed, '' for no limit: one range for every market
-//   markets   { 'sport|kind': { on, edge: [min, max] } }, edge typed in percent
+//   markets   { 'sport|kind': { on, edge: [min, max], calEdge: [min, max] } },
+//             edges typed in percent: edge for the model's edge, calEdge for
+//             the calibrated edge (calibrate.js), whichever judge says
+//   judge     'model' | 'cal': which edge says a bet has value - the model's
+//             own (the default), or the calibrated one (the model's chance
+//             blended with the market's by how far each market's settled bets
+//             have trusted it), both at the median price
 //   liveStage 'avg' | 'open' | 'best' | 'close': which of a live bet's prices
 //             it is judged at. 'avg' (the default): the time-weighted average
 //             while its median edge was positive, what betting it at a random
 //             moment while it showed value would have got
-//   outliers  'any' | 'only': outlier prices (one bookie far above the others,
-//             betfair-api outliers.py) are listed whatever their edge, in the
-//             markets switched on and the odds range; 'only' lists nothing else
-//   v         2 since the 'avg' stage: settings saved before it move to it once
+//   outliers  'any' | 'only' | 'off': outlier prices (one bookie far above the
+//             others, by at least its market's threshold - the gap its settled
+//             outlier bets have paid at, +25% until they can be judged, none
+//             where they haven't paid: betfair-api outliers.py) are listed
+//             whatever their edge ('any', where they've paid), in the markets
+//             switched on and the odds range; 'only' lists nothing else; 'off'
+//             lists them only when they have an edge too
+//   v         3: 2 moved the Live stage to 'avg' once; 3 dropped the old $10
+//             odds cap (saved as ['', '10'], the old default) once
 import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
 
 // kind as safe-stake.js kindKey: the NHL 60-minute (3-way) result apart from the moneyline
@@ -35,9 +46,11 @@ export const MARKETS = [
 export const BASES = { book: 'Best bookie', avg: 'Average bookie' };
 export const LIVE_STAGES = ['avg', 'open', 'best', 'close'];
 export const LIVE_STAGE_LABELS = { avg: 'average with value', open: 'opening', best: 'best', close: 'closing' };
-const PREFS_VERSION = 2;
+const PREFS_VERSION = 3;
 const DEFAULT_EDGE = ['10', ''];
-const DEFAULT_ODDS = ['', '10'];
+const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
+const DEFAULT_ODDS = ['', ''];
+export const OUTLIER_MODES = ['any', 'only', 'off'];
 // Off unless switched on: the moneyline is the NHL head-to-head shown by default
 const OFF_BY_DEFAULT = new Set(['nhl|match_odds:3']);
 
@@ -52,7 +65,7 @@ export function marketLabel(key) {
 }
 export const marketTitle = key => `${SPORT_LABELS[key.split('|')[0]] || key.split('|')[0]} · ${marketLabel(key)}`;
 
-export const defaultRule = key => ({ on: !OFF_BY_DEFAULT.has(key), edge: [...DEFAULT_EDGE] });
+export const defaultRule = key => ({ on: !OFF_BY_DEFAULT.has(key), edge: [...DEFAULT_EDGE], calEdge: [...DEFAULT_CAL_EDGE] });
 
 // A typed limit: a number (as typed) or '' for none
 const typed = x => { const s = String(x ?? '').trim(); return s !== '' && Number.isFinite(+s) ? s : ''; };
@@ -60,7 +73,7 @@ const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]),
 
 export function defaultPrefs() {
   return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg',
-           outliers: 'any' };
+           outliers: 'any', judge: 'model' };
 }
 
 // Anything (saved JSON, a profile column) -> valid settings
@@ -70,17 +83,21 @@ export function normalizePrefs(p) {
   const markets = {};
   for (const [key, rule] of Object.entries(p.markets && typeof p.markets === 'object' ? p.markets : {})) {
     if (!/^[a-z]+\|[a-z_]+(:3)?$/.test(key) || !rule || typeof rule !== 'object') continue;
-    markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE) };
+    markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE), calEdge: pair(rule.calEdge, DEFAULT_CAL_EDGE) };
   }
+  const v = +p.v || 1;
+  const odds = pair(p.odds, DEFAULT_ODDS);
   return {
     v: PREFS_VERSION,
     basis: p.basis === 'avg' ? 'avg' : 'book',
-    odds: pair(p.odds, DEFAULT_ODDS),
+    // The old default cap ($10) goes once; a range typed since stays
+    odds: v < 3 && odds[0] === '' && odds[1] === '10' ? ['', ''] : odds,
     markets,
     sort: p.sort === 'time' ? 'time' : 'edge',
     myTeams: !!p.myTeams,
-    liveStage: (p.v ?? 1) >= PREFS_VERSION && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
-    outliers: p.outliers === 'only' ? 'only' : 'any',
+    liveStage: v >= 2 && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
+    outliers: OUTLIER_MODES.includes(p.outliers) ? p.outliers : 'any',
+    judge: p.judge === 'cal' ? 'cal' : 'model',
   };
 }
 
@@ -109,7 +126,10 @@ export function typedRange([a, b], scale = 1) {
   const lo = read(a, 0), hi = read(b, Infinity);
   return lo <= hi ? [lo, hi] : [hi, lo];
 }
-export const edgeRangeOf = (prefs, key) => typedRange(ruleFor(prefs, key).edge, 0.01);
+// The edge range a market needs, of the edge that judges (prefs.judge)
+export const edgeField = prefs => (prefs.judge === 'cal' ? 'calEdge' : 'edge');
+export const edgeRangeOf = (prefs, key) =>
+  typedRange(ruleFor(prefs, key)[edgeField(prefs)] ?? (prefs.judge === 'cal' ? DEFAULT_CAL_EDGE : DEFAULT_EDGE), 0.01);
 export const oddsRangeOf = prefs => typedRange(prefs.odds);
 export const oddsTyped = prefs => { const [lo, hi] = oddsRangeOf(prefs); return lo > 0 || isFinite(hi); };
 // A hair of slack so 10% typed still takes an edge stored as 0.09999...
@@ -126,10 +146,12 @@ export function passesEdge(prefs, key, edge) {
 }
 
 // An outlier price passes on its market's switch and the odds range alone: its
-// edge doesn't decide it. outlier: whether the bet is one; back: at the median.
+// edge doesn't decide it (outliers 'off': it passes on its edge like any bet).
+// outlier: whether the bet is one; back: at the median.
 export function passesBet(prefs, key, edge, back, outlier) {
-  if (prefs.outliers === 'only' && !outlier) return false;
-  return passesMarket(prefs, key, edge, back) || (!!outlier && ruleFor(prefs, key).on && inRange(back, oddsRangeOf(prefs)));
+  const out = prefs.outliers !== 'off' && !!outlier;
+  if (prefs.outliers === 'only' && !out) return false;
+  return passesMarket(prefs, key, edge, back) || (out && ruleFor(prefs, key).on && inRange(back, oddsRangeOf(prefs)));
 }
 
 // A tracked row at one stage ('open', 'flagged', 'best', 'close') on the
@@ -159,13 +181,16 @@ export function oddsText([lo, hi]) {
   return isFinite(hi) ? (lo > 1 ? `odds ${d(lo)}–${d(hi)}` : `odds up to ${d(hi)}`) : lo > 1 ? `odds ${d(lo)}+` : null;
 }
 
-// For the Filters button: "9 of 16 markets · edge 10%+" (or "edges vary")
+// For the Filters button: "9 of 16 markets · edge 10%+" (or "edges vary",
+// "any calibrated edge", "calibrated edge 2%+")
 export function prefsSummary(prefs, keys) {
   const on = keys.filter(k => ruleFor(prefs, k).on);
   const edges = new Set(on.map(k => edgeText(edgeRangeOf(prefs, k))));
-  const edge = !on.length ? '' : edges.size === 1 ? ` · edge ${[...edges][0]}` : ' · edges vary';
+  const label = prefs.judge === 'cal' ? 'calibrated edge' : 'edge';
+  const text = edges.size === 1 ? [...edges][0] : null;
+  const edge = !on.length ? '' : text == null ? ` · ${label}s vary` : text === 'any edge' ? ` · any ${label}` : ` · ${label} ${text}`;
   return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`
-    + (prefs.outliers === 'only' ? ' · outliers only' : '');
+    + (prefs.outliers === 'only' ? ' · outliers only' : prefs.outliers === 'off' ? ' · outliers off' : '');
 }
 
 // The edge range spanning every market on among `keys`: where the track

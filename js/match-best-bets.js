@@ -68,10 +68,11 @@ async function load(sel) {
   const prefs = localPrefs();
   // Alternate lines and totals win and lose with the standard one, so only
   // the bookies' standard line is listed (as on the Best Bets page). An
-  // outlier price is listed whatever its edge (Filters → Outliers only: alone).
-  const only = prefs.outliers === 'only';
+  // outlier price is listed whatever its edge (Filters → Outliers: only
+  // outliers alone; off: an outlier only with an edge, like any bet).
+  const only = prefs.outliers === 'only', outliers = prefs.outliers !== 'off';
   rows = found.filter(r => !r.alternate && ruleFor(prefs, marketOf(r)).on).map(r => at(r, prefs.basis))
-    .filter(r => r.outlier?.is_outlier || (!only && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
+    .filter(r => (outliers && r.outlier?.is_outlier) || (!only && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
   render();
 }
 

@@ -32,12 +32,15 @@ import { SPORT_LABELS, SPORT_COLORS, esc, odds, pct, signedPct, signCls, wonCoun
          selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
-import { decodeRows, toBet, stakeModel, stakeFor, liveBet } from './safe-stake.js';
+import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
-         BASES, LIVE_STAGES, LIVE_STAGE_LABELS } from './best-bets-filters.js';
+         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS } from './best-bets-filters.js';
+import { listedInfo, pointPasses, hasHistory, spanText } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
+import { logit, sigmoid, overrounds, edgeAt as edgeAtOdds } from './calibrate.js';
+import { loadCalibration, calibrateBet, calEdgeAtPoint, commissionOf } from './calibrate-client.js';
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -53,6 +56,9 @@ const MIN_BAND_BETS = 10;
 const $ = id => document.getElementById(id);
 
 let bets = [];             // /api/best_bets rows
+let dropped = [];          // /api/best_bets dropped: tracked bets listed at an earlier check, not now
+let checkedAt = null;      // when the odds were last fetched (/api/best_bets checked_at)
+let calib = null;          // calibrate-client.js: the model-vs-market fit per market (null until in)
 let shown = [];            // the rows in the table, in order (data-row indexes it)
 let results = null;        // /api/best_bets/results, loaded on first open
 let tab = 'all';
@@ -94,9 +100,20 @@ function passes(r) {
 // Its market switched on, the edge that market needs and the odds range, both
 // at the median: the same bets pass whichever price they are taken at. An
 // outlier price (upcoming: its market's threshold met now; live: it was one
-// before kickoff) needs no edge.
-const isOutlierBet = r => !!(r.outlier?.is_outlier || r.outlier_at);
-const passesFilters = r => passesBet(prefs, marketOf(r), r.avgEdge ?? r.edge, r.avgBack ?? r.median ?? r.back, isOutlierBet(r));
+// before kickoff, and its market's outliers are still on - outlier_on) needs
+// no edge, unless Filters has outliers off.
+const isOutlierBet = r => !!(r.outlier ? r.outlier.is_outlier : (r.outlier_on ?? r.outlier_at));
+// Filters can judge by the calibrated edge (r.cal, calibrate-client.js): once
+// the calibration is in. Until then, by the model's edge and its ranges. The
+// calibrated edge is at the price the bet is taken at (the best bookie's, with
+// Price on best bookie), not the median.
+const fprefs = () => (prefs.judge === 'cal' && !calib ? { ...prefs, judge: 'model' } : prefs);
+const judging = () => fprefs().judge === 'cal';
+const judgedEdge = r => (judging() ? (r.cal ? r.cal.bookEdge : null) : (r.avgEdge ?? r.edge));
+const passesFilters = r => passesBet(fprefs(), marketOf(r), judgedEdge(r), r.avgBack ?? r.median ?? r.back, isOutlierBet(r));
+// A price-history point judged as the filters judge (best-bets-history.js)
+const pointEdge = r => (judging() ? (pt => calEdgeAtPoint(calib, r, pt, bookBasis())) : null);
+const listingOf = (r, end) => listedInfo(r.history, pt => pointPasses(fprefs(), marketOf(r), pt, pointEdge(r)), end);
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 
@@ -333,13 +350,15 @@ function historyHtml(r) {
   }).join('')}</div>`;
 }
 
-function selectionCell(r) {
+// fresh: listed since the last time the page looked (a "New" chip)
+function selectionCell(r, { fresh = false } = {}) {
   const name = esc(selectionText(r));
   const team = hasStats(r) ? teamOf(r) : null;
   return `<td class="px-2 py-2">
     <div class="font-semibold text-gray-100">${hasStats(r)
       ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
-      : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
+      : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}${fresh
+      ? ' <span class="ml-1 rounded bg-green-500/15 border border-green-500/40 px-1 text-[10px] font-semibold text-green-300 align-middle" title="Listed in the last half hour">New</span>' : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${gameLine(r, esc(kickoffText(r.kickoff)))}
     ${bestBookHtml(r, r.atBook ? r.median : null)}
@@ -392,33 +411,74 @@ function renderDayFilter() {
 }
 
 // --- stakes -----------------------------------------------------------------
-// Settled selections as the analysis page counts them by default: odds when
-// first priced, every source, one bet per market.
+// Settled selections as the analysis page counts them by default: at the
+// average price while they showed value (the 'avg' stage - only selections
+// that did), every source, one bet per market.
+const STAKE_STAGE = 'avg';
 
 const VERDICT_TEXT = { thin: 'too few to call', open: 'unproven', ahead: 'proven profit', behind: 'proven loss' };
 
 let settledRows = null;    // decoded /api/best_bets/analysis rows
 let settledBasis = null;   // the price basis `settled` was read at
+let modelKey = null;       // what `model` was built from
 
+// The stake model, rebuilt only when what it reads changes (the basis, the
+// risk level, the detail): it bootstraps every market's grid
 function buildModel() {
   if (settledRows && settledBasis !== prefs.basis) {
-    settled = onePerMarket(dropEmptyMarkets(settledRows.map(r => toBet(r, 'open', prefs.basis))).kept);
+    // A selection that never showed value has no avg price: left out (as the
+    // analysis page's avg stage leaves it), not counted at an edge of zero
+    settled = onePerMarket(dropEmptyMarkets(settledRows.filter(r => r[`${STAKE_STAGE}_back`] != null)
+      .map(r => toBet(r, STAKE_STAGE, prefs.basis))).kept);
     settledBasis = prefs.basis;
   }
+  const key = settled && [prefs.basis, stakePrefs.risk, stakePrefs.detail].join('|');
+  if (key && key === modelKey) return;
+  modelKey = key;
   model = settled && stakeModel(settled, stakePrefs.risk, stakePrefs.detail);
 }
+
+let settledVersion = null;  // /api/best_bets/analysis version (what the calibration is cached by)
+let settledOverrounds = null;
 
 async function loadStakes() {
   try {
     const data = await api('best_bets/analysis');
     if (!data) return;
-    settledRows = decodeRows(data);
+    settledRows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
+    settledVersion = data.version ?? null;
+    settledBasis = modelKey = null;
+    settledOverrounds = null;
     buildModel();
     filtersDataReady();
+    startCalibration();
   } catch {
     stakesFailed = true;
   }
   renderView();
+}
+
+// The calibration (calibrate-client.js): from this browser's cache, else
+// fitted in a Worker; the page redraws when it lands
+function startCalibration() {
+  if (!settledRows) return;
+  const basisNow = prefs.basis;
+  loadCalibration(settledRows, { version: settledVersion, basis: basisNow, prefs }).then(c => {
+    if (!c || basisNow !== prefs.basis) return;
+    calib = c;
+    render();
+  });
+}
+
+// A settled selection's calibrated edge at the average price while it showed
+// value (the "Most profitable" button, judging by the calibrated edge)
+function settledCalEdge(row) {
+  if (!calib || row.avg_back == null) return null;
+  settledOverrounds ??= overrounds(settledRows, 'close');
+  const c = calibrateBet(calib, { ...row, mkt_sum: settledOverrounds.get(row) },
+                         { modelProb: row.avg_prob, median: row.avg_back,
+                           taken: (bookBasis() ? row.avg_book_back : null) ?? row.avg_back });
+  return c ? c.bookEdge : null;
 }
 
 function stakeTitle(s) {
@@ -445,8 +505,27 @@ function stakeTitle(s) {
   return lines.join('\n');
 }
 
+// Judging by the calibrated edge: fractional Kelly (the Risk level's) on its
+// 90% low end at the price taken - the calibration has the doubt about the
+// model in it already, and the low end the doubt about the calibration
+function calStakeCell(r, td) {
+  const risk = RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
+  const s = r.cal && kellyStake(r.cal.bookEdgeLo, r.back, commissionOf(r), risk);
+  if (!s) return td('<span class="text-gray-500">–</span>', r.cal
+    ? `No stake: the calibrated edge's 90% low end at the price taken is ${signedPct(r.cal.bookEdgeLo)}`
+    : 'No calibration for this bet');
+  const share = pct(s.frac, s.frac < 0.01 ? 2 : 1);
+  const title = [`Stake ${pct(s.frac, 2)} of the bank`, '',
+    `${s.k.toFixed(2)} × Kelly on the calibrated edge's 90% low end at the price taken, ${signedPct(s.edge)} (full Kelly ${pct(s.kelly)})`,
+    `About ${s.betsToSure.toLocaleString()} bets at this edge to be 99% sure of a profit`, '', `${risk.label} risk: ${risk.text}.`].join('\n');
+  return td(stakePrefs.balance
+    ? `<div class="font-bold text-gray-100">${money(s.frac * stakePrefs.balance)}</div><div class="text-[11px] text-gray-500">${share}</div>`
+    : `<span class="font-bold text-gray-100">${share}</span>`, title);
+}
+
 function stakeCell(r) {
   const td = (inner, title = '') => `<td class="px-2 py-2 text-right tabular-nums whitespace-nowrap"${title ? ` title="${esc(title)}"` : ''}>${inner}</td>`;
+  if (judging()) return calStakeCell(r, td);
   if (!model) return td(stakesFailed ? '<span class="text-gray-600">–</span>' : '<span class="bsm-skeleton h-3 w-10 inline-block"></span>',
     stakesFailed ? 'Could not load the settled bets the stake is worked out from' : '');
   const s = stakeFor(liveBet(r), model, stakePrefs.balance);
@@ -467,12 +546,26 @@ function stakeCell(r) {
 // At the best bookie's price where the bookies name one; Betfair rows (and
 // checks from before the best price was kept) at their own. edge stays the
 // median's (the value signal the filters read); bookEdge is at the price taken.
+// cal: its calibrated chance and edges (calibrate-client.js), once in.
 function upcomingAt(r) {
   const book = bookBasis() && r.best_book_back != null && r.best_book_edge != null;
-  return book
+  const out = book
     ? { ...r, back: r.best_book_back, bestEdge: r.best_book_edge, open: r.open_book_odds ?? r.open_odds,
         best: r.best_book_odds ?? r.best_odds, median: r.back, atBook: true }
     : { ...r, bestEdge: r.best_book_edge ?? r.edge, open: r.open_odds, best: r.best_odds, median: r.back };
+  out.cal = calibrateBet(calib, out, { median: out.median, taken: out.back });
+  return out;
+}
+
+// The calibrated edge's line under a bet's edges, and what it is made of
+function calLine(r) {
+  if (!r.cal) return '';
+  const c = r.cal, w = c.fit.beta[2];
+  const title = [`Calibrated edge at the price taken (${odds(r.back)}): ${signedPct(c.bookEdge)} (90% range ${signedPct(c.bookEdgeLo)} to ${signedPct(edgeAtOdds(c.hi, r.back, commissionOf(r)))})`,
+    `At the median price: ${signedPct(c.edge)}`,
+    `Chance ${pct(c.p)} (90%: ${pct(c.lo)} to ${pct(c.hi)}): the model's ${pct(r.model_prob)} blended with the bookies' (margin out) `
+    + `by how far this market's settled bets have trusted the model: weight ${w.toFixed(2)} (0: the bookies' chance; 1: the model's).`].join('\n');
+  return `<div class="text-[11px] leading-snug" title="${esc(title)}"><span class="text-gray-500">cal</span> <span class="font-semibold ${signCls(c.bookEdge)}">${signedPct(c.bookEdge)}</span></div>`;
 }
 
 // Prices, model and edges each stacked in one cell: the selection cell is
@@ -482,7 +575,7 @@ function betRow(r, i) {
   const mv = lastMove(series);
   return `
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
-      ${gameCell(r)}${selectionCell(r)}
+      ${gameCell(r)}${selectionCell(r, { fresh: isNew(r) })}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(historyTitle(r, series, mv))}">
         <div class="font-bold text-amber-400">${odds(r.back)}${moveArrow(mv)}</div>
         <div class="text-[11px] text-gray-400 leading-snug">Open ${odds(r.open)}</div>
@@ -496,6 +589,7 @@ function betRow(r, i) {
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold ${signCls(r.edge)}" title="At the average (median) price">${signedPct(r.edge)}</div>
         <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+        ${calLine(r)}
         <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
       </td>
       ${stakeCell(r)}
@@ -524,10 +618,44 @@ function oneLinePerSide(rows, oddsTyped) {
   return rows.filter(r => !r.alternate || shownAlts.has(r));
 }
 
+// The list refreshes every couple of minutes; a game that has started since
+// drops out at once
+const notStarted = r => Date.parse(r.kickoff) > Date.now();
+
 // The upcoming bets that pass the sport / day / My Teams / market filters, at
 // the price chosen, one line per side (any tab)
-const upcomingRows = () => oneLinePerSide(bets.map(upcomingAt).filter(r => passes(r) && passesDay(r) && passesFilters(r)),
-                                          oddsTyped(prefs));
+const upcomingRows = () => oneLinePerSide(bets.map(upcomingAt).filter(r => notStarted(r) && passes(r) && passesDay(r)
+                                          && passesFilters(r)), oddsTyped(prefs));
+
+// --- new since last looked ------------------------------------------------------
+// Every bet that passed the filters, with when it first did (this browser):
+// a "New" chip for half an hour, and an alert (when switched on) for one
+// that appears at a refresh. A bet that starts passing because the filters
+// changed isn't new.
+const SEEN_KEY = 'bsm_bb_seen';
+const NEW_MS = 30 * 60_000;
+const rowKey = r => `${r.market_id}|${r.selection_id}|${r.line ?? ''}`;
+let seen = (() => { try { return JSON.parse(localStorage.getItem(SEEN_KEY)) || {}; } catch { return {}; } })();
+
+// Marks rows as seen -> the ones not seen before (none when silent, or the
+// very first time this browser looks)
+function noteSeen(rows, silent = false) {
+  const now = Date.now();
+  const first = !Object.keys(seen).length;
+  const fresh = [];
+  let changed = false;
+  for (const r of rows) {
+    const k = rowKey(r);
+    if (seen[k]) continue;
+    seen[k] = [silent || first ? 0 : now, Date.parse(r.kickoff) || 0];
+    changed = true;
+    if (!silent && !first) fresh.push(r);
+  }
+  for (const [k, [, ko]] of Object.entries(seen)) if (ko < now) { delete seen[k]; changed = true; }
+  if (changed) try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* storage unavailable */ }
+  return fresh;
+}
+const isNew = r => { const s = seen[rowKey(r)]; return !!(s && s[0] && Date.now() - s[0] < NEW_MS); };
 
 function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
@@ -569,7 +697,73 @@ function renderBets() {
   const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
   $('method-note').textContent = tab === 'scorers' || tab === 'props' ? bookNote : `${bookNote} ${exchangeNote}`;
-  $('method-note').textContent += stakeNote;
+  $('method-note').textContent += stakeNote + ' The list refreshes every 2 minutes while the page is open; New marks a bet listed '
+    + 'in the last half hour. Below the list, No longer value: bets you could have seen listed under your filters earlier that '
+    + "aren't now.";
+  renderDropped();
+}
+
+// --- no longer value ----------------------------------------------------------
+// Tracked bets of games not started that the list showed under the current
+// filters at an earlier check and doesn't now: /api/best_bets rows that fail
+// the filters now, and its dropped list (median edge gone, or no longer
+// priced). Each check in a bet's history is judged as the list judged it.
+function droppedRows() {
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  const listedNow = new Set(upcomingRows().map(rowKey));
+  const now = Date.now() / 1000;
+  const out = [];
+  for (const r of [...bets.filter(b => !b.alternate && !listedNow.has(rowKey(b))), ...dropped]) {
+    if (!notStarted(r) || !kinds.includes(r.market_kind) || !passes(r) || !passesDay(r)) continue;
+    const end = Math.min(now, r.gone_at ? Date.parse(r.gone_at) / 1000 : Infinity);
+    const listing = listingOf(r, end);
+    if (listing.ever) out.push({ ...upcomingAt(r), listing });
+  }
+  return out.sort(byTime);
+}
+
+// [chip, why]: what keeps it off the list now
+function droppedReason(r) {
+  const key = marketOf(r);
+  if (r.gone_at) return ['Off the board', `Not in the latest check since ${kickoffText(r.gone_at)}: the bookies took it down or moved the line`];
+  const edge = judgedEdge(r);
+  if (!(edge > 0)) return ['No edge now', judging() ? 'Its calibrated edge at the price taken is no longer positive'
+                                                      : 'Its edge at the median price is no longer positive'];
+  if (!inRange(r.median ?? r.back, oddsRangeOf(prefs))) return ['Odds out of range', 'Its median price is outside your odds range'];
+  if (!inRange(edge, edgeRangeOf(fprefs(), key))) return ['Edge out of range', 'Its edge is outside the range you set for this market'];
+  return ['Off your filters', ''];
+}
+
+function droppedRow(r) {
+  const was = r.listing.lastPoint;
+  const wasPrice = bookBasis() ? (was[2] ?? was[1]) : was[1];
+  const [chip, why] = droppedReason(r);
+  const gone = !!r.gone_at;
+  return `
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top">
+      ${gameCell(r)}${selectionCell(r)}
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-semibold ${gone ? 'text-gray-500' : 'text-gray-200'}">${gone ? '–' : odds(r.back)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">was ${odds(wasPrice)}</div>
+        ${sparkline(seriesOf(r))}
+      </td>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-semibold ${gone ? 'text-gray-500' : signCls(r.edge)}">${gone ? '–' : signedPct(r.edge)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">was <span class="${signCls(was[3])}">${signedPct(was[3])}</span></div>
+      </td>
+      <td class="px-2 py-2 text-right text-[11px] leading-snug whitespace-nowrap">
+        <div class="text-gray-300">${spanText(r.listing.secs)}</div>
+        <div class="text-gray-500">until ${agoText(r.listing.lastEnd)}</div>
+        <span class="mt-0.5 inline-block rounded border border-gray-600 px-1 text-[10px] font-semibold text-gray-300" title="${esc(why)}">${esc(chip)}</span>
+      </td>
+    </tr>`;
+}
+
+function renderDropped() {
+  const rows = droppedRows();
+  $('dropped-wrap').classList.toggle('hidden', !rows.length);
+  $('dropped-count').textContent = rows.length ? `${rows.length} bet${rows.length === 1 ? '' : 's'}` : '';
+  $('dropped-body').innerHTML = rows.map(droppedRow).join('');
 }
 
 function openStats(r) {
@@ -634,6 +828,7 @@ const LIVE_STATUS = {
   needs:        ['Needs', 'text-amber-300 border-amber-500/40'],
   void:         ['Void', 'text-gray-400 border-gray-600'],
   pending:      ['Not started', 'text-gray-400 border-gray-700'],
+  snaps:        ['Snap counts?', 'text-amber-300 border-amber-500/40'],
   unknown:      ['No live data', 'text-gray-500 border-gray-700'],
 };
 const LOCKED = new Set(['won', 'lost', 'push', 'half_won', 'half_lost']);
@@ -657,15 +852,51 @@ function liveBetAt(p) {
   const avgBack = p[`${basis()}_back`] ?? p.flagged_back;
   const avgEdge = edgeAt(avgBack);
   const bestEdge = edgeAt(p[`${basis()}_book_back`] ?? avgBack);
-  const { p_win: w, p_lose: l } = p.live;
+  // Calibrated: the stage's price judged by the calibrated chance at kickoff,
+  // and (judging by it) the live chance moved by the same amount the
+  // calibration moved the model's at kickoff
+  const cal = calibrateBet(calib, p, { modelProb: p.model_prob, median: avgBack, taken: back });
+  let { p_win: w, p_lose: l } = p.live;
+  if (judging() && cal && w != null && l != null && w > 0 && l > 0 && !LOCKED.has(p.live.status)) {
+    const push = p.live.p_push || 0;
+    const q = sigmoid(logit(w / (1 - push)) + logit(cal.p) - logit(p.model_prob));
+    w = (1 - push) * q;
+    l = (1 - push) * (1 - q);
+  }
   const ev = w == null ? null : w * net - l;
   const sd = w == null ? null : Math.sqrt(Math.max(0, w * net * net + l - ev * ev));
-  return { ...p, prices, back, edge, avgBack, avgEdge, bestEdge, ev, sd };
+  return { ...p, prices, back, edge, avgBack, avgEdge, bestEdge, cal, ev, sd, chance: w };
 }
 
-// The live rows that pass the sport / My Teams / market filters, one line per side (any tab)
-const liveAll = () => liveData ? oneLinePerSide(liveData.rows.map(liveBetAt).filter(r => passes(r) && passesFilters(r)),
-                                                oddsTyped(prefs)) : [];
+// Whether a live pick was listed under the current filters at a check before
+// kickoff, judged as the list judged it then (best-bets-history.js
+// listedInfo), or null when it has no history to tell by
+const liveListing = p => !hasHistory(p.history) ? null
+  : listingOf(p, Math.min(Date.parse(p.kickoff), p.gone_at ? Date.parse(p.gone_at) : Infinity) / 1000);
+
+const LIVE_ALL_KEY = 'bsm_bb_live_all';
+let liveShowAll = (() => { try { return sessionStorage.getItem(LIVE_ALL_KEY) === '1'; } catch { return false; } })();
+
+// The live picks that pass the sport / My Teams filters, each with whether it
+// was listed under the market filters before kickoff (a pick with no history:
+// whether it passes them at the Odds at stage)
+const liveCandidates = () => liveData ? liveData.rows.map(liveBetAt).filter(passes).map(r => {
+  const listing = liveListing(r);
+  return { ...r, listing, listed: listing ? listing.ever : passesFilters(r) };
+}) : [];
+
+// The live rows on show, one line per side (any tab): those listed before
+// kickoff, and with "show all" the rest too
+const liveAll = () => oneLinePerSide(liveCandidates().filter(r => r.listed || liveShowAll), oddsTyped(prefs));
+
+// "Listed 2h 40m · until 35 min before the start"
+function listingHtml(r) {
+  if (!r.listing) return '';
+  if (!r.listing.ever) return '<div class="text-[11px] text-red-300/80">Not listed under your filters before kickoff</div>';
+  const before = Date.parse(r.kickoff) / 1000 - r.listing.lastEnd;
+  const until = before <= 90 ? 'up to the start' : `until ${spanText(before)} before the start`;
+  return `<div class="text-[11px] text-gray-500" title="How long the list showed it under your filters before kickoff, all told">Listed ${spanText(r.listing.secs)} · ${until}</div>`;
+}
 
 // The live rows that pass the view's tab and filters, sorted
 function liveRows() {
@@ -700,6 +931,7 @@ function liveSelectionCell(r) {
       ? `<button type="button" class="text-left font-semibold group-hover:underline decoration-gray-500 decoration-dotted underline-offset-2" title="Show player stats">${name}</button>`
       : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
+    ${listingHtml(r)}
     ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}`)}
     <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
       <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
@@ -709,7 +941,7 @@ function liveSelectionCell(r) {
 }
 
 function liveRow(r, i) {
-  const ch = r.live.p_win, m = r.model_prob;
+  const ch = r.chance ?? r.live.p_win, m = judging() && r.cal ? r.cal.p : r.model_prob;
   const move = ch == null || m == null || LOCKED.has(r.live.status) || Math.abs(ch - m) < 0.005 ? ''
     : ch > m ? '<span class="text-green-400 text-[10px] mr-0.5">▲</span>' : '<span class="text-red-400 text-[10px] mr-0.5">▼</span>';
   const chTitle = ch == null ? 'No estimate' : `Chance it wins from here; ${pct(m)} at kickoff`
@@ -726,6 +958,7 @@ function liveRow(r, i) {
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
         <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+        ${calLine({ ...r, median: r.avgBack })}
       </td>
       <td class="px-2 py-2 text-right tabular-nums text-gray-100 whitespace-nowrap" title="${esc(chTitle)}">${move}${pct(ch, 0)}</td>
       <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}</td>
@@ -785,10 +1018,22 @@ function renderLiveSummary(rows) {
     </div>`;
 }
 
+// The picks in play hidden for never having been listed under the filters
+function renderLiveUnlisted() {
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  const n = liveCandidates().filter(r => !r.listed && kinds.includes(r.market_kind)).length;
+  const el = $('live-unlisted');
+  el.classList.toggle('hidden', !n);
+  el.innerHTML = !n ? '' : `${liveShowAll ? `Showing ${n} tracked bet${n === 1 ? '' : 's'} the list never showed under your filters.`
+    : `${n} more tracked bet${n === 1 ? '' : 's'} in play the list never showed under your filters.`}
+    <button type="button" data-live-all class="ml-1 text-gray-300 underline decoration-dotted hover:text-white">${liveShowAll ? 'Hide them' : 'Show them'}</button>`;
+}
+
 function renderLive() {
   const body = $('live-body');
   const rows = liveRows();
   liveShown = rows;
+  renderLiveUnlisted();
   let summary = '';
   if (!liveData) {
     $('live-summary').innerHTML = '';
@@ -806,8 +1051,8 @@ function renderLive() {
     summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} in play · sorted by ${$('sort-by').value !== 'time' ? 'edge' : 'start time'}`;
   }
   $('status').textContent = summary;
-  $('method-note').textContent = 'Every bet tracked before kickoff with value at the average price, from the start of its game until it '
-    + 'settles. Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
+  $('method-note').textContent = 'Every bet the list showed under your filters at some check before kickoff (Show them for the other '
+    + 'tracked ones), from the start of its game until it settles, with how long it was listed. Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
     + 'marked won the moment they land; anything else at full time shows its result as provisional until it settles (usually within '
     + 'the hour; NFL scorers can wait on snap counts). Chance: from the current score and the time left on the pre-game model (the sim\'s '
     + 'score spread shrunk to the time left; scorers from the chance the model gave them), so at kickoff it is the model\'s own. '
@@ -815,7 +1060,9 @@ function renderLive() {
     + 'Odds at Avg (the default): the average price over the time the bet showed value before kickoff, weighted by time, at the price '
     + 'chosen in Filters (the best bookie\'s by default): what taking it whenever it was listed got on average. Filters and the Odds range '
     + 'read the median price at the odds chosen, as for upcoming bets. A player not in the line-up (NHL) or listed inactive (NFL) shows as void. '
-    + 'NHL totals are settled by each bookie\'s rule: 60 minutes only, or the final score (overtime and the shootout\'s +1 in).';
+    + 'NHL totals are settled by each bookie\'s rule: Unibet and TABtouch\'s main totals on 60 minutes, the rest on the final score '
+    + '(overtime and the shootout\'s +1 in). An NFL player bet waits, after full time, for the snap counts to show he took the field '
+    + '(any snap: a loss if he didn\'t score) or didn\'t (void), unless he touched the ball.';
 }
 
 function scheduleLive() {
@@ -861,12 +1108,12 @@ function summarise(picks) {
   return {
     n,
     wins:     live.reduce((a, p) => a + p.win_frac, 0),   // a half-win counts as half
-    roi:      mean(p => profit(p, p.takeFlagged)),
-    roiAvg:   mean(p => profit(p, p.flagged_back)),
-    roiBook:  mean(p => profit(p, p.bookFlagged)),
+    roi:      mean(p => profit(p, p.takeAt)),
+    roiAvg:   mean(p => profit(p, p.backAt)),
+    roiBook:  mean(p => profit(p, p.bookAt)),
     roiBest:  mean(p => profit(p, p.takeBest)),
     roiClose: mean(p => profit(p, p.takeClose)),
-    clv:      mean(p => p.takeFlagged / p.takeClose - 1),
+    clv:      mean(p => p.takeAt / p.takeClose - 1),
   };
 }
 
@@ -888,13 +1135,21 @@ function roiBar(label, st, scale, dim) {
   </div>`;
 }
 
-// A settled pick at the price chosen in Filters: the flagged / best / close
-// odds it is taken at, the best bookie's (where recorded) or the median. It
-// is chosen (edge, odds range) at the median either way. fallback: the best
-// bookie's price was not recorded for it.
+// A settled pick at the price chosen in Filters, at the stage the track
+// record reads: the average while its median edge was positive ('avg', as
+// Live, the stakes and the analysis page), else - no window kept - when it
+// was first flagged. takeAt: the price it is taken at (the best bookie's
+// where recorded, or the median); backAt / edgeAt: the median's price and
+// edge there, what the filters and bands read; bookAt: the best bookie's.
+// fallback: the best bookie's price was not recorded for it.
 function trackAt(p) {
-  const f = priceAt(p, 'flagged', prefs.basis);
-  return { ...p, takeFlagged: f.back, fallback: f.fallback, bookFlagged: priceAt(p, 'flagged', 'book').back,
+  const stage = p.avg_back != null ? 'avg' : 'flagged';
+  const at = priceAt(p, stage, prefs.basis);
+  const backAt = p[`${stage}_back`];
+  const cal = calibrateBet(calib, p, { modelProb: p[`${stage}_prob`] ?? p.close_prob, median: backAt, taken: at.back });
+  return { ...p, stage, takeAt: at.back, fallback: at.fallback, backAt,
+           edgeAt: judging() ? (cal ? cal.bookEdge : null) : p[`${stage}_edge`],
+           bookAt: priceAt(p, stage, 'book').back,
            takeBest: priceAt(p, 'best', prefs.basis).back, takeClose: priceAt(p, 'close', prefs.basis).back };
 }
 
@@ -902,18 +1157,21 @@ function renderTrackRecord() {
   const t = TABS.find(x => x.key === tab);
   const at = bookBasis() ? 'best bookie odds' : 'average odds';
   const oddsLabel = oddsText(oddsRangeOf(prefs));
-  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsLabel ? ` · ${oddsLabel}` : ''} · your filters · settled bets, 1 unit each at the ${at} when flagged`;
+  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsLabel ? ` · ${oddsLabel}` : ''} · your filters · settled bets, 1 unit each at the ${at} averaged while they showed value`;
   if (!results) {
     $('roi-headline').innerHTML = '';
     $('roi-bars').innerHTML = resultsFailed ? '' : Array.from({ length: 5 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
     $('roi-note').textContent = resultsFailed ? 'Could not load results. Try again in a moment.' : '';
     return;
   }
-  // Each pick judged by its own market's filter at the median price when flagged
+  // Each pick judged by its own market's filter at the median price of its stage
   const picks = results.picks.map(trackAt).filter(p => t.kinds.includes(p.market_kind) && passes(p)
-    && passesMarket(prefs, marketOf(p), p.flagged_edge, p.flagged_back));
-  // Outlier picks apart, edge or not, at the outlier price they were picked at
-  const outs = results.picks.filter(p => p.outlier_at && p.result !== 'void' && t.kinds.includes(p.market_kind) && passes(p)
+    && passesMarket(fprefs(), marketOf(p), p.edgeAt, p.backAt));
+  // Outlier picks apart, edge or not, at the outlier price they were picked at:
+  // those of markets whose outliers are still on (outlier_on), unless Filters
+  // has outliers off
+  const outs = prefs.outliers === 'off' ? [] : results.picks.filter(p => p.outlier_at && (p.outlier_on ?? true)
+    && p.result !== 'void' && t.kinds.includes(p.market_kind) && passes(p)
     && passesBet({ ...prefs, outliers: 'any' }, marketOf(p), p.flagged_edge, p.flagged_back, true));
   const outUnits = outs.reduce((a, p) => a + profit(p, p.outlier_book_back ?? p.flagged_back), 0);
   const outWins = outs.reduce((a, p) => a + p.win_frac, 0);
@@ -921,7 +1179,7 @@ function renderTrackRecord() {
     <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="Picks made for an outlier price (one bookie far above the rest), with or without a model edge, 1 unit each at that bookie's price when it became an outlier. Not in the numbers above unless they also had an edge.">
       ⚡ Outlier picks <span class="font-semibold ${signCls(outUnits)}">${signedPct(outUnits / outs.length)}</span> · ${outs.length} bet${outs.length === 1 ? '' : 's'}, ${wonCount(outWins)} won</div>` : '';
   const keys = modalKeys().filter(k => t.kinds.includes(k.split('|')[1].replace(':3', '')));
-  const bands = edgeBands(picks, spanRange(prefs, keys), MIN_BAND_BETS).filter(b => b.picks.length)
+  const bands = edgeBands(picks, spanRange(fprefs(), keys), MIN_BAND_BETS, p => p.edgeAt).filter(b => b.picks.length)
     .map(b => ({ ...b, st: summarise(b.picks) }));
   const sel = summarise(picks);
   const fallbacks = picks.filter(p => p.fallback && p.result !== 'void').length;
@@ -932,9 +1190,9 @@ function renderTrackRecord() {
       <span class="text-xs font-semibold ${signCls(sel.roi)}">${sel.roi > 0 ? 'profit' : sel.roi < 0 ? 'loss' : ''}</span>
     </div>
     <div class="text-[11px] text-gray-500">ROI at your filters · ${sel.n} bet${sel.n === 1 ? '' : 's'}, ${wonCount(sel.wins)} won</div>
-    <div class="mt-1.5 text-xs tabular-nums text-gray-300" title="The same bets, 1 unit each when flagged, at the average price across the bookies and at the best price any one bookie offered">
+    <div class="mt-1.5 text-xs tabular-nums text-gray-300" title="The same bets, 1 unit each at their average price while they showed value, at the median across the bookies and at the best price any one bookie offered">
       Average odds <span class="font-semibold ${signCls(sel.roiAvg)}">${signedPct(sel.roiAvg)}</span> · Best bookie <span class="font-semibold ${signCls(sel.roiBook)}">${signedPct(sel.roiBook)}</span></div>
-    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds before kickoff; CLV compares flagged odds with closing odds. All at the ${at}.">
+    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds before kickoff; CLV compares the average odds while they showed value with the closing odds. All at the ${at}.">
       best seen ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>${outLine}`
     : `<div class="text-xs text-gray-500">No settled bets at these filters yet.</div>${outLine}`;
 
@@ -1007,6 +1265,7 @@ function renderHeads() {
 }
 
 function render() {
+  noteSeen(upcomingRows(), true);
   const isLive = view === 'live';
   renderViewSwitch();
   renderTabs();
@@ -1059,14 +1318,17 @@ $('sport-pills').addEventListener('click', e => {
 $('day-filter').addEventListener('change', e => { day = e.target.value; render(); });
 ['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
 // "Most profitable" in the modal: from the settled bets the stakes load
-const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys()),
+const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys(),
+                                                                     next.judge === 'cal' && calib ? settledCalEdge : null),
                                { ready: () => !!settledRows });
 $('filters-btn').addEventListener('click', () => openFilters({
   prefs, keys: modalKeys(), counts: marketCounts(), opener: $('filters-btn'), optimise,
   onChange: next => {
+    const basisChanged = next.basis !== prefs.basis;
     prefs = next;
     storePrefs(prefs);
     buildModel();   // the stakes follow the price basis
+    if (basisChanged) startCalibration();
     render();
     return marketCounts();
   },
@@ -1099,6 +1361,112 @@ window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.co
 
 installTapTips(document.body);
 
+// --- keeping the list current -------------------------------------------------
+// /api/best_bets again every BETS_MS while the page is in view (the backend
+// caches a minute; the odds are checked every 15 minutes, every 15 near the
+// start): new bets appear and started games go without a reload. In a
+// background tab only while alerts are on, else again on coming back.
+const BETS_MS = 120_000;
+let betsLoadedAt = 0;
+let betsTimer = 0;
+let betsLoading = false;
+
+function renderUpdated() {
+  if (!checkedAt) return;
+  const mins = Math.max(0, Math.round((Date.now() - new Date(checkedAt)) / 60000));
+  const ago = mins < 60 ? `${mins} min` : mins < 2880 ? `${Math.round(mins / 60)} h` : `${Math.round(mins / 1440)} days`;
+  $('updated').textContent = `Odds checked ${ago} ago`;
+  $('updated').classList.remove('hidden');
+}
+
+function applyBets(data, initial = false) {
+  bets = data.rows || [];
+  dropped = data.dropped || [];
+  checkedAt = data.checked_at || null;
+  betsLoadedAt = Date.now();
+  renderUpdated();
+  const fresh = noteSeen(upcomingRows());
+  if (!initial) notifyNew(fresh);
+}
+
+async function loadBets() {
+  clearTimeout(betsTimer);
+  if (betsLoading) return;
+  betsLoading = true;
+  let ok = true;
+  try {
+    const data = await api('best_bets');
+    ok = !!data;                 // null: signed out or restricted, the gate card is up
+    if (data) {
+      applyBets(data);
+      render();
+    }
+  } catch { /* keep what is on show: the next tick tries again */ }
+  betsLoading = false;
+  if (ok) scheduleBets();
+}
+
+function scheduleBets() {
+  clearTimeout(betsTimer);
+  if (document.hidden && !alertsOn()) return;
+  betsTimer = setTimeout(loadBets, BETS_MS);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !betsLoadedAt) return;
+  if (Date.now() - betsLoadedAt > 60_000) loadBets(); else scheduleBets();
+});
+setInterval(renderUpdated, 30_000);
+
+// --- alerts ---------------------------------------------------------------------
+// A browser notification for bets that start passing the filters at a
+// refresh, while a tab with the page is open. This browser only.
+const ALERTS_KEY = 'bsm_bb_alerts';
+const canNotify = () => typeof Notification !== 'undefined';
+const alertsOn = () => {
+  try { return canNotify() && Notification.permission === 'granted' && localStorage.getItem(ALERTS_KEY) === '1'; } catch { return false; }
+};
+
+function renderAlerts() {
+  const b = $('alerts-btn');
+  b.classList.toggle('hidden', !canNotify());
+  const on = alertsOn();
+  b.setAttribute('aria-pressed', String(on));
+  b.classList.toggle('border-amber-400', on);
+  b.classList.toggle('text-amber-300', on);
+  if (canNotify() && Notification.permission === 'denied') $('alerts-label').textContent = 'Alerts blocked';
+  else $('alerts-label').textContent = on ? 'Alerts on' : 'Alerts off';
+}
+
+function notifyNew(rows) {
+  if (!rows.length || !alertsOn()) return;
+  const top = [...rows].sort((a, b) => b.edge - a.edge).slice(0, 3);
+  const body = top.map(r => `${selectionText(r)} (${r.home_team} v ${r.away_team}) ${odds(r.back)}, edge ${signedPct(r.edge)}`).join('\n')
+    + (rows.length > top.length ? `\nand ${rows.length - top.length} more` : '');
+  try {
+    const n = new Notification(`Best Bets: ${rows.length} new bet${rows.length === 1 ? '' : 's'}`, { body, tag: 'bsm-best-bets' });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch { /* some browsers only notify from a service worker */ }
+}
+
+$('alerts-btn').addEventListener('click', async () => {
+  if (alertsOn()) {
+    try { localStorage.setItem(ALERTS_KEY, '0'); } catch { /* storage unavailable */ }
+  } else if (canNotify()) {
+    const perm = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
+    if (perm === 'granted') try { localStorage.setItem(ALERTS_KEY, '1'); } catch { /* storage unavailable */ }
+  }
+  renderAlerts();
+  scheduleBets();
+});
+
+$('live-unlisted').addEventListener('click', e => {
+  if (!e.target.closest('[data-live-all]')) return;
+  liveShowAll = !liveShowAll;
+  try { sessionStorage.setItem(LIVE_ALL_KEY, liveShowAll ? '1' : '0'); } catch { /* storage unavailable */ }
+  render();
+});
+
 async function init() {
   let data;
   try {
@@ -1108,13 +1476,8 @@ async function init() {
     return;
   }
   if (!data) return;   // sign-in / restricted card is showing
-  bets = data.rows;
-  if (data.checked_at) {
-    const mins = Math.max(0, Math.round((Date.now() - new Date(data.checked_at)) / 60000));
-    const ago = mins < 60 ? `${mins} min` : mins < 2880 ? `${Math.round(mins / 60)} h` : `${Math.round(mins / 1440)} days`;
-    $('updated').textContent = `Odds checked ${ago} ago`;
-    $('updated').classList.remove('hidden');
-  }
+  applyBets(data, true);
+  renderAlerts();
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   applyPrefs();
@@ -1125,6 +1488,7 @@ async function init() {
   tab = TABS.some(t => t.key === wanted) ? wanted : 'all';
   view = new URLSearchParams(location.search).get('view') === 'live' ? 'live' : 'upcoming';
   render();
+  scheduleBets();  // and keeps itself current
   loadResults();   // the track record fills in when it arrives
   loadStakes();    // and the Stake column
   loadLive();      // and the bets in play (the Live tab's count too)
