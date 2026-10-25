@@ -35,7 +35,7 @@ import { installTapTips } from './tap-tips.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
-         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS } from './best-bets-filters.js';
+         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, LIVE_SORTS, LIVE_FINALS } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
@@ -81,6 +81,8 @@ function applyPrefs() {
   $('sort-by').value = prefs.sort;
   $('my-teams-only').checked = prefs.myTeams;
   $('odds-basis').value = prefs.liveStage;
+  $('live-sort').value = prefs.liveSort;
+  $('live-final').value = prefs.liveFinal;
   $('odds-min').value = prefs.odds[0];
   $('odds-max').value = prefs.odds[1];
 }
@@ -88,6 +90,8 @@ function applyPrefs() {
 function savePrefs() {
   prefs = { ...prefs, sort: $('sort-by').value === 'time' ? 'time' : 'edge', myTeams: $('my-teams-only').checked,
             liveStage: LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'avg',
+            liveSort: LIVE_SORTS.includes($('live-sort').value) ? $('live-sort').value : 'edge',
+            liveFinal: LIVE_FINALS.includes($('live-final').value) ? $('live-final').value : 'any',
             odds: [$('odds-min').value.trim(), $('odds-max').value.trim()] };
   storePrefs(prefs);
 }
@@ -936,15 +940,37 @@ function listingHtml(r) {
   return `<div class="text-[11px] text-gray-500" title="How long the list showed it under your filters before kickoff, all told">Listed ${spanText(r.listing.secs)} · ${until}</div>`;
 }
 
-// The live rows that pass the view's tab and filters, sorted
-function liveRows() {
+// Finished: the game is over but the bet hasn't settled (its result provisional)
+const isFinished = r => r.game?.state === 'final';
+const LIVE_SORT_LABELS = { edge: 'edge', time: 'start time', result: 'result', ev: 'live EV', chance: 'chance' };
+// Result order: won first, lost last, the undecided by how they stand
+const RESULT_RANK = Object.fromEntries(['won', 'half_won', 'winning', 'half_winning', 'needs', 'level', 'push', 'snaps',
+  'pending', 'unknown', 'void', 'half_losing', 'losing', 'half_lost', 'lost'].map((st, i) => [st, i]));
+const resultRank = r => RESULT_RANK[r.live.status] ?? RESULT_RANK.unknown;
+// Descending, nothing to go on last
+const desc = (x, y) => (y ?? -Infinity) - (x ?? -Infinity);
+
+// The live rows in the view's tab under the filters, before Finished
+function liveInTab() {
   if (!liveData) return [];
   const kinds = TABS.find(t => t.key === tab).kinds;
-  const rows = liveAll().filter(r => kinds.includes(r.market_kind));
-  const byEdge = $('sort-by').value !== 'time';
+  return liveAll().filter(r => kinds.includes(r.market_kind));
+}
+
+// The live rows that pass the view's tab, filters and Finished, sorted
+function liveRows() {
+  const final = prefs.liveFinal;
+  const rows = liveInTab().filter(r => final === 'any' || (final === 'only') === isFinished(r));
   const game = r => `${r.sport}:${r.game_id}`;
-  return rows.sort((a, b) => byEdge ? b.avgEdge - a.avgEdge
-    : byTime(a, b) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge);
+  const chanceOf = r => r.chance ?? r.live.p_win;
+  const by = {
+    edge: (a, b) => b.avgEdge - a.avgEdge,
+    time: (a, b) => byTime(a, b) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge,
+    result: (a, b) => resultRank(a) - resultRank(b) || desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
+    ev: (a, b) => desc(a.ev, b.ev) || b.avgEdge - a.avgEdge,
+    chance: (a, b) => desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
+  }[prefs.liveSort] || ((a, b) => b.avgEdge - a.avgEdge);
+  return rows.sort(by);
 }
 
 function liveGameCell(r) {
@@ -1081,12 +1107,19 @@ function renderLive() {
   } else if (!rows.length) {
     $('live-summary').innerHTML = '';
     body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
-      liveData.rows.length ? 'No bets in play match these filters.' : 'Nothing in play right now.'}</td></tr>`;
+      !liveData.rows.length ? 'Nothing in play right now.'
+      : prefs.liveFinal === 'only' ? 'No finished bets awaiting settlement match these filters.'
+      : 'No bets in play match these filters.'}</td></tr>`;
   } else {
     loadLogs(rows);
     renderLiveSummary(rows);
     body.innerHTML = rows.map(liveRow).join('');
-    summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} in play · sorted by ${$('sort-by').value !== 'time' ? 'edge' : 'start time'}`;
+    const finished = rows.filter(isFinished).length;
+    const hidden = prefs.liveFinal === 'hide' ? liveInTab().filter(isFinished).length : 0;
+    summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} ${prefs.liveFinal === 'only' ? 'finished, awaiting settlement' : 'in play'}`
+      + (prefs.liveFinal === 'any' && finished ? ` (${finished} finished, awaiting settlement)` : '')
+      + (hidden ? ` · ${hidden} finished hidden` : '')
+      + ` · sorted by ${LIVE_SORT_LABELS[prefs.liveSort] || 'edge'}`;
   }
   $('status').textContent = summary;
   $('method-note').textContent = 'Every bet the list showed under your filters at some check before kickoff (Show them for the other '
@@ -1329,6 +1362,9 @@ function render() {
   $('risk-wrap').classList.toggle('hidden', isLive);
   $('bank-wrap').classList.toggle('hidden', isLive);
   $('basis-wrap').classList.toggle('hidden', !isLive);
+  $('sort-wrap').classList.toggle('hidden', isLive);
+  $('live-sort-wrap').classList.toggle('hidden', !isLive);
+  $('live-final-wrap').classList.toggle('hidden', !isLive);
   $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams());
   renderHeads();
   renderSportPills();
@@ -1411,7 +1447,7 @@ $('stake-balance').addEventListener('input', e => {
   saveStakePrefs(stakePrefs);
   renderView();
 });
-['sort-by', 'my-teams-only', 'odds-basis'].forEach(id =>
+['sort-by', 'live-sort', 'live-final', 'my-teams-only', 'odds-basis'].forEach(id =>
   $(id).addEventListener('change', () => { savePrefs(); render(); }));
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
 

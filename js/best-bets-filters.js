@@ -2,7 +2,7 @@
 // judged at. No DOM, so it can be exercised under Node; best-bets-prefs.js
 // keeps the settings (browser + the account's profile) and draws the modal.
 //
-// Settings: { v, basis, odds, markets, sort, myTeams, liveStage }
+// Settings: { v, basis, odds, markets, sort, myTeams, liveStage, liveSort, liveFinal }
 //   basis     'book': bets are taken at the best single bookmaker's price
 //             (Betfair rows: the exchange's), 'avg': at the median across the
 //             bookmakers. Either way a bet's edge - what says it has value, and
@@ -24,6 +24,11 @@
 //             it is judged at. 'avg' (the default): the time-weighted average
 //             while its median edge was positive, what betting it at a random
 //             moment while it showed value would have got
+//   liveSort  'edge' | 'time' | 'result' | 'ev' | 'chance': the Live list's
+//             order - the edge at kickoff, start time, where the bet stands
+//             (won first, lost last), the live EV or the chance from here
+//   liveFinal 'any' | 'hide' | 'only': Live bets whose game has finished but
+//             which haven't settled yet - shown, hidden, or nothing else
 //   outliers  'any' | 'only' | 'off': outlier prices (one bookie far above the
 //             others, by at least its market's threshold - the gap its settled
 //             outlier bets have paid at, +25% until they can be judged, none
@@ -55,6 +60,8 @@ const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
 const DEFAULT_ODDS = ['', ''];
 export const OUTLIER_MODES = ['any', 'only', 'off'];
+export const LIVE_SORTS = ['edge', 'time', 'result', 'ev', 'chance'];
+export const LIVE_FINALS = ['any', 'hide', 'only'];
 // Off unless switched on: the moneyline is the NHL head-to-head shown by default
 const OFF_BY_DEFAULT = new Set(['nhl|match_odds:3']);
 
@@ -79,7 +86,7 @@ const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]),
 
 export function defaultPrefs() {
   return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg',
-           outliers: 'any', judge: 'model' };
+           liveSort: 'edge', liveFinal: 'any', outliers: 'any', judge: 'model' };
 }
 
 // Anything (saved JSON, a profile column) -> valid settings
@@ -103,6 +110,8 @@ export function normalizePrefs(p) {
     sort: p.sort === 'time' ? 'time' : 'edge',
     myTeams: !!p.myTeams,
     liveStage: v >= 2 && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
+    liveSort: LIVE_SORTS.includes(p.liveSort) ? p.liveSort : 'edge',
+    liveFinal: LIVE_FINALS.includes(p.liveFinal) ? p.liveFinal : 'any',
     outliers: OUTLIER_MODES.includes(p.outliers) ? p.outliers : 'any',
     judge: JUDGES.includes(p.judge) ? p.judge : 'model',
   };

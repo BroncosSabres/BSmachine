@@ -86,6 +86,22 @@
                   <option value="time">Start time</option>
                 </select>
               </label>
+              <label id="live-sort-wrap" class="hidden flex items-center gap-1.5" title="The Live list's order. Edge: the model's edge at kickoff. Result: where each bet stands, won first and lost last. Live EV: the expected return from here. Chance: the chance it wins from here.">Sort
+                <select id="live-sort" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                  <option value="edge">Edge</option>
+                  <option value="time">Start time</option>
+                  <option value="result">Result</option>
+                  <option value="ev">Live EV</option>
+                  <option value="chance">Chance</option>
+                </select>
+              </label>
+              <label id="live-final-wrap" class="hidden flex items-center gap-1.5" title="Bets whose game has finished but which haven't settled yet (their result is provisional): shown with the rest, hidden, or on their own">Finished
+                <select id="live-final" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                  <option value="any">Show</option>
+                  <option value="hide">Hide</option>
+                  <option value="only">Only</option>
+                </select>
+              </label>
               <label id="my-teams-wrap" class="hidden flex items-center gap-1.5 cursor-pointer" title="Only games involving a team in My Teams">
                 <input id="my-teams-only" type="checkbox" class="accent-amber-400"> My Teams
               </label>
