@@ -32,11 +32,52 @@
 
       <div class="flex flex-col lg:flex-row gap-6 items-start">
 
-        <!-- Match Selection -->
-        <div class="card w-full lg:w-72 shrink-0">
-          <h2 class="text-lg font-semibold mb-3 text-gray-100">Select Match Outcomes</h2>
+        <!-- Match Selection: this week's games (default) or one team's schedule -->
+        <div class="card w-full lg:w-80 shrink-0">
+          <div id="sim-view-toggle" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5 mb-4">
+            <button id="btn-sim-week" type="button"
+                    class="flex-1 px-3 py-1.5 rounded-md bg-amber-400 text-gray-900 font-bold text-sm transition-all">This Week</button>
+            <button id="btn-sim-team" type="button"
+                    class="flex-1 px-3 py-1.5 rounded-md text-gray-400 font-semibold text-sm transition-all">Team Schedule</button>
+          </div>
           <div id="selection-chance" class="mb-4 text-sm text-gray-400 font-medium"></div>
-          <form id="simulation-form" class="space-y-2 text-sm"></form>
+
+          <!-- This week: pick a winner for each game -->
+          <div id="week-panel">
+            <h2 class="text-lg font-semibold mb-3 text-gray-100">Select Match Outcomes</h2>
+            <form id="simulation-form" class="space-y-2 text-sm"></form>
+          </div>
+
+          <!-- Team schedule: one team's remaining games -->
+          <div id="team-panel" hidden>
+            <h2 class="text-lg font-semibold mb-3 text-gray-100">Pick a Team</h2>
+            <select id="team-select" class="w-full mb-4 bg-gray-800 border border-gray-600 rounded px-2 py-1.5 text-sm text-white"></select>
+            <h2 id="team-games-heading" class="text-lg font-semibold mb-1 text-gray-100">Season Schedule</h2>
+            <p id="team-games-note" class="text-xs text-gray-500 mb-3">W = win &middot; L = loss or tie</p>
+
+            <!-- Simulate by record over the remaining games (any order) -->
+            <div id="record-section" class="mode-section rounded-lg border border-gray-600 p-3 mb-3 transition-opacity">
+              <div class="text-xs text-gray-400 mb-2">
+                <span id="expected-record-label">Expected Record</span>
+                <span class="block text-xl font-mono font-semibold text-amber-300" id="expected-record">—</span>
+                <span class="text-[0.65rem] text-gray-500 uppercase tracking-wider">W-L</span>
+              </div>
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-100 mb-2 cursor-pointer">
+                <input type="radio" name="sim-mode" value="record" class="accent-amber-400">
+                By record
+              </label>
+              <select id="record-select" class="w-full bg-gray-800 border-2 border-amber-400 rounded-lg px-3 py-2 text-lg font-bold text-amber-300 font-mono"></select>
+            </div>
+
+            <!-- Simulate game by game (default) -->
+            <div id="games-section" class="mode-section rounded-lg border border-gray-600 p-3 transition-opacity">
+              <label class="flex items-center gap-2 text-sm font-semibold text-gray-100 mb-2 cursor-pointer">
+                <input type="radio" name="sim-mode" value="games" class="accent-amber-400" checked>
+                Game by game
+              </label>
+              <form id="team-form" class="space-y-2 text-sm"></form>
+            </div>
+          </div>
         </div>
 
         <div class="flex-1 min-w-0 flex flex-col gap-6">

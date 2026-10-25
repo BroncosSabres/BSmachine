@@ -28,6 +28,9 @@ const COLUMNS = [
   { label: 'Conf Champ Game', key: 'percent_conf_championship' },
   { label: 'Reach SB',       key: 'percent_super_bowl_appearance' },
   { label: 'Win SB',         key: 'percent_super_bowl_champion' },
+  { label: 'Proj. Pick',     key: 'projected_draft_pick', fmt: 'pick' },
+  { label: '#1 Pick',        key: 'percent_first_pick' },
+  { label: 'Top-5 Pick',     key: 'percent_top5_pick' },
 ];
 
 function formatPercent(val) {
@@ -55,6 +58,19 @@ function pctCell(val, prevVal) {
     </td>`;
 }
 
+// Expected draft position (1 = first overall). A later pick than last week
+// means the team's outlook improved, so the badge is green on a rise -- the
+// same "good for the team" colouring as every other column.
+function pickCell(val, prevVal) {
+  const delta = (val != null && prevVal != null) ? parseFloat(val) - parseFloat(prevVal) : null;
+  const badge = deltaBadge(delta, { suffix: '', digits: 1, threshold: 0.05 });
+  return `
+    <td class="text-center font-mono leading-tight">
+      <div>${val != null ? parseFloat(val).toFixed(1) : '—'}</div>
+      ${badge ? `<div class="text-[0.65rem] leading-tight">${badge}</div>` : ''}
+    </td>`;
+}
+
 function rowHtml(r) {
   const prevRow = prevRowByTeam[r.team];
   const wc = r.weekly_change;
@@ -69,7 +85,8 @@ function rowHtml(r) {
     ? `${Math.round(r.projected_wins)}-${Math.round(r.projected_losses)}${Math.round(r.projected_ties) > 0 ? `-${Math.round(r.projected_ties)}` : ''}`
     : '—';
   const rankBadge = rankChangeBadge(r.rank, prevRankByTeam[r.team]);
-  const pctCols = COLUMNS.slice(4).map(c => pctCell(r[c.key], prevRow?.[c.key])).join('');
+  const pctCols = COLUMNS.slice(4)
+    .map(c => (c.fmt === 'pick' ? pickCell : pctCell)(r[c.key], prevRow?.[c.key])).join('');
 
   return `
     <tr>
