@@ -66,6 +66,16 @@
             <label class="flex items-center gap-1.5">Market
               <select id="f-market" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white"></select>
             </label>
+            <label class="flex items-center gap-1.5" title="Settled bets whose game started in this period, by your own calendar. Model vs market and Predicted close always learn from every settled bet.">Period
+              <select id="f-period" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                <option value="all" selected>All time</option>
+                <option value="year">This year</option>
+                <option value="month">This month</option>
+                <option value="d14">Last 14 days</option>
+                <option value="d7">Last 7 days</option>
+                <option value="today">Today</option>
+              </select>
+            </label>
             <div class="flex items-center gap-1.5" role="group" aria-label="My filters">
               <label class="flex items-center gap-1.5 cursor-pointer" title="Only the bets your Best Bets filters let through: the markets switched on, the edge each needs and the odds range, on top of Sport and Market (selecting a market below still narrows to it). Saved to your account, shared with the Best Bets page.">
                 <input id="f-mine" type="checkbox" class="accent-amber-400"> My filters

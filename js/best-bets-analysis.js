@@ -26,7 +26,7 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionTe
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
-import { BASES, passesMarket, passesEdge, prefsSummary } from './best-bets-filters.js';
+import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText } from './best-bets-filters.js';
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
@@ -176,7 +176,9 @@ function syncOdds(moved) {
 function scopes(withMine = mine()) {
   const stage = $('f-stage').value, [oddsLo, oddsHi] = oddsRange();
   const out = [];
+  const when = periodTest();
   for (const r of raw) {
+    if (when && !when(r)) continue;
     if (stage === 'close' && !(r.n_checks > 1)) continue;
     if (r[`${stage}_back`] == null) continue;   // never showed value (or not recorded)
     out.push(toBet(r, stage, basis()));
@@ -187,9 +189,28 @@ function scopes(withMine = mine()) {
   const counted = $('f-count').value === 'one' ? onePerMarket(kept) : kept;
   const inOdds = withMine ? b => b.back >= oddsLo && b.back < oddsHi && passesMine(b) : b => b.back >= oddsLo && b.back < oddsHi;
   const base = counted.filter(inOdds);
+  // My filters' own odds range (the Best Bets page's) on top of the slider:
+  // the bets it alone leaves out
+  const bbOdds = oddsRangeOf(minePrefs());
+  const oddsCut = withMine && oddsTyped(minePrefs())
+    ? counted.filter(b => b.back >= oddsLo && b.back < oddsHi && passesMine(b, false) && !inRange(b.back, bbOdds)).length : 0;
   return { base, every: kept.filter(inOdds), anyOdds: withMine ? counted.filter(b => passesMine(b, false)) : counted,
-           empty: dropped, repeats: kept.length - counted.length, fallbacks: base.filter(b => b.fallback).length };
+           empty: dropped, repeats: kept.length - counted.length, fallbacks: base.filter(b => b.fallback).length, oddsCut };
 }
+
+// Period: the games that started in it, by the viewer's own calendar
+// (kickoff_ts; before the backend sent it, the UTC kickoff date read as a
+// local one). -> a row test, or null for all time.
+const PERIODS = { all: 'all time', year: 'this year', month: 'this month', d14: 'last 14 days', d7: 'last 7 days', today: 'today' };
+function periodTest() {
+  const p = $('f-period').value;
+  if (!PERIODS[p] || p === 'all') return null;
+  const now = new Date(), y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const from = { year: new Date(y, 0, 1), month: new Date(y, m, 1), d14: new Date(y, m, d - 13), d7: new Date(y, m, d - 6),
+                 today: new Date(y, m, d) }[p].getTime();
+  return r => (r.kickoff_ts != null ? r.kickoff_ts * 1000 : new Date(`${r.kickoff}T12:00:00`).getTime()) >= from;
+}
+const periodText = () => ($('f-period').value === 'all' ? '' : ` · ${PERIODS[$('f-period').value]}`);
 
 const selected = bets => bets.filter(b => ($('f-sport').value === 'all' || b.sport === $('f-sport').value)
   && ($('f-market').value === 'all' || b.kind === $('f-market').value));
@@ -205,7 +226,7 @@ const capital = s => s[0].toUpperCase() + s.slice(1);
 
 const marketText = () => {
   const s = $('f-sport').value, m = $('f-market').value;
-  return `${s === 'all' ? 'All sports' : SPORT_LABELS[s]} · ${m === 'all' ? 'all markets' : kindLabel(m)}${mine() ? ' · my filters' : ''}`;
+  return `${s === 'all' ? 'All sports' : SPORT_LABELS[s]} · ${m === 'all' ? 'all markets' : kindLabel(m)}${periodText()}${mine() ? ' · my filters' : ''}`;
 };
 
 function scopeText() {
@@ -216,6 +237,7 @@ function renderCountNote(s) {
   const parts = [];
   if (s.repeats) parts.push(`${count(s.repeats, 'selection')} left out as the other side, another line or a second source of a bet already counted`);
   if (s.empty) parts.push(`${s.empty.toLocaleString()} left out from markets with no real prices (the prices on offer add up to over ${Math.round(MAX_BOOK * 100)}%)`);
+  if (s.oddsCut) parts.push(`${count(s.oddsCut, 'bet')} left out by your Best Bets odds range (${rangeText(oddsRangeOf(minePrefs()))}, at the median price): My filters takes it from the Best Bets page, on top of the slider here`);
   if (s.fallbacks) parts.push(`${count(s.fallbacks, 'bet')} of ${s.base.length.toLocaleString()} priced at the average: no best bookie price was recorded for them`);
   $('count-note').textContent = !raw.some(r => r.market_id != null) ? 'Counting every selection: the data to tell repeats apart is not being returned yet.'
     : parts.length ? `${capital(parts.join('; '))}.` : '';
@@ -1222,7 +1244,8 @@ function outThresholdCell(g) {
 }
 
 function renderOutliers() {
-  const rows = raw.filter(r => sourceKey(r) === 'book');
+  const when = periodTest();
+  const rows = raw.filter(r => sourceKey(r) === 'book' && (!when || when(r)));
   const groups = [...new Set([...rows.filter(r => r.disc_ladder).map(r => r.group), ...Object.keys(outlierMarkets)])].sort();
   const marketMode = $('out-cut').value === 'market';
   $('out-sub').textContent = 'One bookie well above the median of the others, bet at that price the first time the gap got '
@@ -1298,7 +1321,10 @@ function renderOutliers() {
 // sports with settled bets
 const modalKeys = () => filterKeys(Object.keys(SPORT_LABELS).filter(sp => raw.some(r => r.sport === sp)), raw.map(r => r.group));
 function renderMine() {
-  $('f-mine-summary').textContent = prefsSummary(prefs, modalKeys());
+  // The odds range too: the Best Bets page shows it in its own top bar, so
+  // its summary leaves it out, but here it would otherwise be invisible
+  const odds = oddsTyped(prefs) ? rangeText(oddsRangeOf(prefs)) : null;
+  $('f-mine-summary').textContent = prefsSummary(prefs, modalKeys()) + (odds ? ` · ${odds}` : '');
 }
 
 // { market: settled bets my filters let through, at the scope chosen }
@@ -1331,7 +1357,7 @@ function fillSelect(id, options) {
   $(id).innerHTML = options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join('');
 }
 
-['f-sport', 'f-market', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
+['f-sport', 'f-market', 'f-period', 'f-stage', 'f-count', 'f-bins', 'f-min-bets', 'f-cal-by'].forEach(id => $(id).addEventListener('change', render));
 try { $('f-mine').checked = localStorage.getItem(MINE_KEY) === '1'; } catch { /* storage unavailable */ }
 $('f-mine').addEventListener('change', () => {
   try { localStorage.setItem(MINE_KEY, mine() ? '1' : '0'); } catch { /* storage unavailable */ }
