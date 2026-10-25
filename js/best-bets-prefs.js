@@ -11,7 +11,7 @@
 import { supabase, getSession } from './supabase-client.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, signedPct } from './best-bets-shared.js';
 import { MARKETS, BASES, OUTLIER_MODES, normalizePrefs, migrateOldPrefs, defaultPrefs, defaultRule, ruleFor,
-         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf, edgeField } from './best-bets-filters.js';
+         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf, edgeField, JUDGES } from './best-bets-filters.js';
 import { applyOptimised, OPT_MIN_BETS } from './best-bets-optimise.js';
 
 const KEY = 'bsm_best_bets_filters';
@@ -142,13 +142,15 @@ function bodyHtml() {
     </div>
     <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Judge by</div>
-      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['model', 'Model edge'], ['cal', 'Calibrated edge']].map(([v, label]) => `
+      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['model', 'Model edge'], ['cal', 'Calibrated edge'], ['close', 'Predicted close']].map(([v, label]) => `
         <button type="button" data-judge="${v}" aria-pressed="${prefs.judge === v}"
                 class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.judge === v
                   ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
-      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.judge === 'cal'
+      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.judge === 'close'
+        ? "Predicted close: where each bet's price is heading by kickoff, from how far prices have moved toward (or away from) the model in its market with that long to go, with the bookies' margin taken out. The edge is the price you take against that fair closing price, so a bet worth having now is one the market is expected to shorten past it. It learns from every priced selection's closing price, which settles far faster than results; the analysis page's Model vs market shows how its predictions have done out of sample. Stakes are Kelly on its low end."
+        : prefs.judge === 'cal'
         ? "Calibrated: the model's chance blended with the bookies' (their margin taken out) by how far each market's settled bets have trusted the model - the analysis page's Model vs market. It is judged at the price you take (the best bookie's, with Price on Best bookie), not the median: the edge ranges below are of it there, and stakes are Kelly on its low end."
-        : "The model's own edge. Calibrated blends it with the bookies' chance by how far each market's settled bets have trusted the model (the analysis page's Model vs market says how that has done out of sample)."
+        : "The model's own edge. Calibrated blends it with the bookies' chance by how far each market's settled bets have trusted the model; Predicted close judges the price against where the market is expected to close (the analysis page's Model vs market says how each has done out of sample)."
       } Each has its own edge ranges.</p>
     </div>
     <div class="mb-4">
@@ -229,7 +231,7 @@ function build() {
     const key = b.closest('[data-key]')?.dataset.key;
     if (b.dataset.judge) {
       state.report = null;   // fitted to the other edge
-      change(p => { p.judge = b.dataset.judge === 'cal' ? 'cal' : 'model'; });
+      change(p => { p.judge = JUDGES.includes(b.dataset.judge) ? b.dataset.judge : 'model'; });
     } else if (b.dataset.outliers) {
       change(p => { p.outliers = OUTLIER_MODES.includes(b.dataset.outliers) ? b.dataset.outliers : 'any'; });
     } else if (b.dataset.basis) {

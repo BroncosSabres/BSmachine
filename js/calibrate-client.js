@@ -3,8 +3,9 @@
 // version), else fitted in a Worker (calibrate-worker.js). Both Best Bets
 // pages share it.
 import { fitFor, calProb, marketChance, edgeAt, leafKey } from './calibrate.js';
+import { stateOf, predictClose } from './close-model.js';
 
-const CACHE_KEY = 'bsm_bb_calib_v4';   // v4: sport and market levels pooled apart
+const CACHE_KEY = 'bsm_bb_calib_v6';   // v6: the predicted-close model (close) with it
 
 function cached(version, basis) {
   try {
@@ -73,4 +74,32 @@ export function calEdgeAtPoint(cal, r, p, book = true) {
   const taken = (book && p[2] > 1 ? p[2] : null) ?? p[1];
   const c = calibrateBet(cal, r, { modelProb: model, median: p[1], taken });
   return c && c.bookEdge;
+}
+
+// --- predicted close (close-model.js) ---------------------------------------------
+
+const msOf = t => (typeof t === 'number' ? t * 1000 : Date.parse(t));
+
+// An upcoming bet's predicted close and the edge of taking its price now
+// against the fair close predicted (close-model.js predictClose: { edge,
+// edgeLo, fair, closeBack, move, ... }), or null: no close model (the
+// analysis endpoint not yet sending open_hrs), or kickoff passed. at: when
+// the price was seen (the check's time; seconds or ISO).
+export function closeBet(cal, r, { modelProb = r.model_prob, median = r.median ?? r.back, taken = r.back, at = r.checked_at } = {}) {
+  const cm = cal && cal.close;
+  if (!cm || !(median > 1)) return null;
+  const hrs = (Date.parse(r.kickoff) - msOf(at ?? Date.now() / 1000)) / 3.6e6;
+  const state = stateOf({ back: median, taken, prob: modelProb, overround: r.mkt_sum, hrs });
+  return predictClose(cm.moves, cm.fair, leafKey(r), state, { overround: r.mkt_sum, commission: commissionOf(r) });
+}
+
+// The predicted-close edge at one check of a bet's price history ([t, median,
+// book, edge, flags]), as calEdgeAtPoint
+export function closeEdgeAtPoint(cal, r, p, book = true) {
+  if (!cal || !cal.close || !(p[1] > 1) || p[3] == null) return null;
+  const com = commissionOf(r);
+  const model = (p[3] + 1) / ((p[1] - 1) * (1 - com) + 1);
+  const taken = (book && p[2] > 1 ? p[2] : null) ?? p[1];
+  const c = closeBet(cal, r, { modelProb: model, median: p[1], taken, at: p[0] });
+  return c && c.edge;
 }

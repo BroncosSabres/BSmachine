@@ -5,29 +5,36 @@
 //
 // Per market (sport · kind · bookies or Betfair) the result is fitted with a
 // logistic blend of the two chances:
-//     logit P(win) = a + c·lm + b·d      lm = logit(market chance)
-//                                        d  = logit(model chance) - lm
-// the same model as roi-stats.js fitBlend (its bModel = b, bMarket = c - b),
-// written so its two terms aren't nearly the same number. b is the model's
-// weight: 0 says its disagreements with the market are noise, 1 that they are
-// worth their full size, in between that they are worth b of it.
+//     logit P(win) = a + c·lm + b·d + e·d·|d|     lm = logit(market chance)
+//                                                 d  = logit(model chance) - lm
+// a and c are the market's terms (its margin and favourite-longshot lean); b
+// and e the model's. The share of the model's disagreement with the market
+// worth keeping is b + e·|d|: 0 says it is noise, 1 that it is worth its full
+// size. e lets that share change with the size of the disagreement - a model
+// 40% over the price is mostly its own error in some markets, where 5% over is
+// not - which one share for every edge (b alone) could not show: it fitted the
+// big edges by shrinking every bet's.
 //
 // A market's own bets are often few, so each level borrows from the one above
 // (all markets -> sport -> market): it is fitted with a prior centred on its
-// parent's fit and worth n0 of the parent's bets (empirical Bayes), so a thin
-// market sits near its sport's fit and moves off it as its own bets come in.
-// The sport and market levels each have their own n0 ({ sport, leaf }),
-// chosen by the walk-forward: sports differ far more than markets within one
-// (the model earns weight in NHL and not in NFL), and one n0 for both made the
-// sports one average of the two when the markets wanted heavy pooling.
+// parent's fit (empirical Bayes), so a thin market sits near its sport's fit
+// and moves off it as its own bets come in. The model's terms are pooled by
+// n0.sport and n0.leaf (worth that many of the parent's bets); the market's
+// terms by n0.market at both levels, since markets' margins differ (a scorer's
+// raw price keeps the bookies' margin, a line's has it taken out): pooled as
+// hard as the model's, every NFL market had the scorers' intercept, about 8
+// points off every even-money edge. n0 is chosen by the walk-forward's log
+// loss on the bets that showed value, the ones the calibrated edge judges.
 //
 // The market chance is the bookies' price with their margin taken out: a
 // market's sides (safe-stake.js marketKey) priced at the same stage are
 // divided by their total of 1 / price; a scorer, or a side priced alone,
-// keeps 1 / price (the intercept takes the margin up). Fitted at the close
-// (open where a selection was priced once): every selection has one, both
-// sides at once, and it is the market at its sharpest, so the model's weight
-// there is if anything an understatement earlier on.
+// keeps 1 / price (the intercept takes the margin up). A selection that showed
+// value is fitted at its average while it did (the 'avg' stage: the model's
+// chance and the price it would have been taken at); the rest at the close
+// (open where a selection was priced once). Both sides of a two-way market go
+// in at half weight each: the pair counts once, and an intercept fitted on the
+// home / over side alone was applied with the same sign to away / under bets.
 //
 // Intervals are cluster-robust by game (bets in one game win and lose
 // together). The walk-forward test fits on the days before each day and
@@ -37,11 +44,19 @@
 import { kindKey, marketKey, sourceKey, toBet } from './safe-stake.js';
 import { onePerMarket } from './roi-stats.js';
 
-export const N0_GRID = [30, 100, 300, 1000, 3000, 10000, 30000];       // the market level's
-export const N0_SPORT_GRID = [30, 300, 3000, 30000];                     // the sport level's
-export const DEFAULT_N0 = 300;
-// n0 as given (a number for both levels, or { sport, leaf }) -> { sport, leaf }
-export const n0Levels = n0 => (typeof n0 === 'number' ? { sport: n0, leaf: n0 } : { sport: n0.sport, leaf: n0.leaf });
+export const N0_SPORT_GRID = [30, 100, 300];         // the model's terms, sport level
+export const N0_GRID = [1000, 3000, 10000];           // the model's terms, market level (no higher: a
+                                                      // market clear of its sport, NFL receiving yards, was
+                                                      // held to it on a log loss 0.0005 a bet better)
+export const N0_MARKET_GRID = [300, 1000, 3000];      // the market's terms, both levels
+export const DEFAULT_N0 = { sport: 30, leaf: 3000, market: 1000 };
+// n0 as given (a number for every level, or { sport, leaf, market }) ->
+// { sport, leaf, market }
+export const n0Levels = n0 => (typeof n0 === 'number' ? { sport: n0, leaf: n0, market: n0 }
+  : { sport: n0.sport, leaf: n0.leaf, market: n0.market ?? n0.leaf });
+export const NTERMS = 4;      // [1, lm, d, d·|d|]
+const MARKET_TERMS = 2;       // the first two: a, c
+export const features = (lm, d) => [1, lm, d, d * Math.abs(d)];
 export const MIN_JUDGE_BETS = 150;   // as roi-stats.js FIT_MIN_BETS / FIT_MIN_GAMES
 export const MIN_JUDGE_GAMES = 20;
 const Z90 = 1.645;
@@ -50,33 +65,34 @@ const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 export const logit = p => { const q = clamp(p, 1e-4, 1 - 1e-4); return Math.log(q / (1 - q)); };
 export const sigmoid = z => 1 / (1 + Math.exp(-z));
 
-// --- 3x3 algebra -------------------------------------------------------------
+// --- small matrix algebra ------------------------------------------------------
 
-function solve3(A, b) {
+export function solve(A, b) {
+  const k = b.length;
   const m = A.map((row, i) => [...row, b[i]]);
-  for (let c = 0; c < 3; c++) {
+  for (let c = 0; c < k; c++) {
     let piv = c;
-    for (let r = c + 1; r < 3; r++) if (Math.abs(m[r][c]) > Math.abs(m[piv][c])) piv = r;
+    for (let r = c + 1; r < k; r++) if (Math.abs(m[r][c]) > Math.abs(m[piv][c])) piv = r;
     if (Math.abs(m[piv][c]) < 1e-12) return null;
     [m[c], m[piv]] = [m[piv], m[c]];
-    for (let r = 0; r < 3; r++) {
+    for (let r = 0; r < k; r++) {
       if (r === c) continue;
       const f = m[r][c] / m[c][c];
-      for (let k = c; k < 4; k++) m[r][k] -= f * m[c][k];
+      for (let j = c; j <= k; j++) m[r][j] -= f * m[c][j];
     }
   }
-  return m.map((row, i) => row[3] / row[i]);
+  return m.map((row, i) => row[k] / row[i]);
 }
-function inv3(A) {
-  const cols = [[1, 0, 0], [0, 1, 0], [0, 0, 1]].map(e => solve3(A, e));
+export function inv(A) {
+  const cols = A.map((_, j) => solve(A, A.map((_, i) => (i === j ? 1 : 0))));
   if (cols.some(c => !c)) return null;
-  return [0, 1, 2].map(i => [0, 1, 2].map(j => cols[j][i]));
+  return A.map((_, i) => A.map((_, j) => cols[j][i]));
 }
-const mat = (f) => [0, 1, 2].map(i => [0, 1, 2].map(j => f(i, j)));
-const mul = (A, B) => mat((i, j) => A[i][0] * B[0][j] + A[i][1] * B[1][j] + A[i][2] * B[2][j]);
-const add = (A, B) => mat((i, j) => A[i][j] + B[i][j]);
-const scale = (A, k) => mat((i, j) => A[i][j] * k);
-const quad = (x, V) => x.reduce((s, xi, i) => s + xi * (V[i][0] * x[0] + V[i][1] * x[1] + V[i][2] * x[2]), 0);
+export const mat = (f, k = NTERMS) => Array.from({ length: k }, (_, i) => Array.from({ length: k }, (_, j) => f(i, j)));
+export const mul = (A, B) => mat((i, j) => A[i].reduce((s, a, t) => s + a * B[t][j], 0), A.length);
+export const add = (A, B) => mat((i, j) => A[i][j] + B[i][j], A.length);
+export const quad = (x, V) => x.reduce((s, xi, i) => s + xi * V[i].reduce((t, v, j) => t + v * x[j], 0), 0);
+export const dot = (x, beta) => x.reduce((s, v, i) => s + v * beta[i], 0);
 
 // --- observations -------------------------------------------------------------
 
@@ -84,7 +100,6 @@ const quad = (x, V) => x.reduce((s, xi, i) => s + xi * (V[i][0] * x[0] + V[i][1]
 // priced once (no closing price apart from the opening one)
 const stageOf = (r, stage) => (stage === 'close' && !(r.n_checks > 1) ? 'open' : stage);
 const sidesOf = r => (r.market_kind === 'match_odds' && r.three_way ? 3 : 2);
-const SIDE_ORDER = ['home', 'over', 'away', 'under', 'draw'];
 
 // {row -> overround} at a stage: the market's sides' 1 / price summed, for
 // rows whose every side was priced there (and, at the close, still in the
@@ -115,29 +130,27 @@ export const marketChance = (back, overround) => (overround ? 1 / back / overrou
 
 export const leafKey = r => `${r.sport}|${kindKey(r)}|${r.source ? sourceKey(r) : (String(r.market_id || '').startsWith('oddsapi:') ? 'book' : 'betfair')}`;
 
-// Settled rows (safe-stake.js decodeRows) -> observations at the close: one
-// per decided bet, one side per two-way market (the other side is the same
-// result mirrored, so it adds nothing but a doubled count), every side of a
-// 3-way. { key, sport, game, date, x: [1, lm, d], y, w, row }.
-export function observations(rows, stage = 'close') {
-  const ovr = overrounds(rows, stage);
-  const seenPair = new Set();
+// Settled rows (safe-stake.js decodeRows) -> observations: one per decided
+// selection, at its average while it showed value (value: true) or else at
+// the close, the margin out by the close's overround. Both sides of a two-way
+// market whose overround is known at half weight (the pair is one result,
+// mirrored), every side of a 3-way at full. { key, sport, game, date, x:
+// features(lm, d), d, y, w, value, row }. atClose: every selection at the
+// close (the market-only fit of a fair closing price, close-model.js).
+export function observations(rows, { atClose = false } = {}) {
+  const ovr = overrounds(rows, 'close');
   const out = [];
-  const ordered = [...rows].sort((a, b) => SIDE_ORDER.indexOf(a.side) - SIDE_ORDER.indexOf(b.side));
-  for (const r of ordered) {
+  for (const r of rows) {
     if (r.win_frac == null || r.push_frac >= 1) continue;
-    const st = stageOf(r, stage);
+    const value = !atClose && r.avg_back > 1 && r.avg_prob > 0 && r.avg_prob < 1;
+    const st = value ? 'avg' : stageOf(r, 'close');
     const back = r[`${st}_back`], prob = r[`${st}_prob`];
     if (!(back > 1) || !(prob > 0 && prob < 1)) continue;
     const o = ovr.get(r);
-    if (o && sidesOf(r) === 2) {
-      const pair = `${r.sport}:${r.game_id}|${marketKey(r)}`;
-      if (seenPair.has(pair)) continue;
-      seenPair.add(pair);
-    }
-    const lm = logit(marketChance(back, o));
+    const lm = logit(marketChance(back, o)), d = logit(prob) - lm;
     out.push({ key: leafKey(r), sport: r.sport, game: `${r.sport}:${r.game_id}`, date: r.kickoff,
-               x: [1, lm, logit(prob) - lm], y: r.win_frac / (1 - r.push_frac), w: 1 - r.push_frac, row: r });
+               x: features(lm, d), d, y: r.win_frac / (1 - r.push_frac),
+               w: (o && sidesOf(r) === 2 ? 0.5 : 1) * (1 - r.push_frac), value, row: r });
   }
   return out;
 }
@@ -147,80 +160,95 @@ export function observations(rows, stage = 'close') {
 // Penalised logistic regression by Newton steps: maximise
 //   sum w [y log p + (1-y) log(1-p)] - 1/2 (beta - mu)' L (beta - mu)
 // -> { beta, H: the likelihood's information at beta, A: H + L, n, games }.
-// cols: which of the three terms are in (market-only: [0, 1]).
-function irls(obs, mu, L, cols = [0, 1, 2], iters = 30) {
+// cols: which terms are in (market-only: [0, 1]); the rest stay at mu.
+function irls(obs, mu, L, cols, iters = 30) {
+  const k = mu.length;
+  const out = i => !cols.includes(i);
   let beta = [...mu];
-  let H = mat(() => 0);
-  const pick = x => x.map((v, i) => (cols.includes(i) ? v : 0));
+  let H = mat(() => 0, k);
   for (let it = 0; it < iters; it++) {
-    const g = [0, 0, 0];
-    H = mat(() => 0);
+    const g = Array(k).fill(0);
+    H = mat(() => 0, k);
     for (const o of obs) {
-      const x = pick(o.x);
-      const p = sigmoid(beta[0] * x[0] + beta[1] * x[1] + beta[2] * x[2]);
+      const p = sigmoid(dot(o.x, beta));
       const v = Math.max(p * (1 - p), 1e-9) * o.w;
-      for (let i = 0; i < 3; i++) {
-        g[i] += o.w * (o.y - p) * x[i];
-        for (let j = 0; j < 3; j++) H[i][j] += v * x[i] * x[j];
+      for (let i = 0; i < k; i++) {
+        g[i] += o.w * (o.y - p) * o.x[i];
+        for (let j = 0; j < k; j++) H[i][j] += v * o.x[i] * o.x[j];
       }
     }
     const A = add(H, L);
-    for (let i = 0; i < 3; i++) g[i] -= L[i].reduce((s, l, j) => s + l * (beta[j] - mu[j]), 0);
-    const step = solve3(A, g);
+    for (let i = 0; i < k; i++) g[i] -= L[i].reduce((s, l, j) => s + l * (beta[j] - mu[j]), 0);
+    // A term left out: its row pinned so its step is 0 (left in, a prior with
+    // nothing on it made A singular, and the fit never left its parent's)
+    for (let i = 0; i < k; i++) if (out(i)) { g[i] = 0; for (let j = 0; j < k; j++) A[i][j] = A[j][i] = (i === j ? 1 : 0); }
+    const step = solve(A, g);
     if (!step) break;
     beta = beta.map((b, i) => b + step[i]);
     if (Math.max(...step.map(Math.abs)) < 1e-9) break;
   }
-  return { beta, H, A: add(H, L), n: obs.length, games: new Set(obs.map(o => o.game)).size };
+  const A = add(H, L);
+  for (let i = 0; i < k; i++) if (out(i)) for (let j = 0; j < k; j++) A[i][j] = A[j][i] = (i === j ? 1 : 0);
+  return { beta, H, A, n: obs.length, games: new Set(obs.map(o => o.game)).size, dRef: refD(obs) };
+}
+
+// The disagreement a fit's weight is quoted at: the mean d of its bets that
+// showed value (the model over the price), else of all its bets with d > 0
+function refD(obs) {
+  const pos = obs.filter(o => o.value && o.d > 0);
+  const use = pos.length ? pos : obs.filter(o => o.d > 0);
+  return use.length ? use.reduce((s, o) => s + o.d, 0) / use.length : 0;
 }
 
 // Cluster-robust covariance of a penalised fit: A^-1 (B + L Vmu L) A^-1, B the
 // games' score sums squared; Vmu the parent's covariance (the prior's centre
 // is itself an estimate)
-function sandwich(fit, obs, L, Vmu, cols = [0, 1, 2]) {
-  const Ainv = inv3(fit.A);
+function sandwich(fit, obs, L, Vmu, cols) {
+  const Ainv = inv(fit.A);
   if (!Ainv) return null;
-  const pick = x => x.map((v, i) => (cols.includes(i) ? v : 0));
+  const k = fit.beta.length;
   const byGame = new Map();
   for (const o of obs) {
-    const x = pick(o.x);
-    const p = sigmoid(fit.beta[0] * x[0] + fit.beta[1] * x[1] + fit.beta[2] * x[2]);
-    const u = byGame.get(o.game) || [0, 0, 0];
-    for (let i = 0; i < 3; i++) u[i] += o.w * (o.y - p) * x[i];
+    const p = sigmoid(dot(o.x, fit.beta));
+    const u = byGame.get(o.game) || Array(k).fill(0);
+    for (let i = 0; i < k; i++) if (cols.includes(i)) u[i] += o.w * (o.y - p) * o.x[i];
     byGame.set(o.game, u);
   }
-  let B = mat(() => 0);
-  for (const u of byGame.values()) B = add(B, mat((i, j) => u[i] * u[j]));
+  let B = mat(() => 0, k);
+  for (const u of byGame.values()) B = add(B, mat((i, j) => u[i] * u[j], k));
   if (Vmu) B = add(B, mul(mul(L, Vmu), L));
-  return mul(mul(Ainv, B), Ainv);
+  const V = mul(mul(Ainv, B), Ainv);
+  for (let i = 0; i < k; i++) if (!cols.includes(i)) for (let j = 0; j < k; j++) V[i][j] = V[j][i] = 0;
+  return V;
 }
 
 // Fits every level: all markets, each sport, each market, each pulled toward
-// the level above with a prior worth n0 of that level's bets (n0: one number
-// for both levels, or { sport, leaf }).
-// -> { root, sports: {sport: fit}, leaves: {key: fit}, n0: { sport, leaf },
-// cols }, each fit { beta, V, n, games, own: the share of its own bets in it }.
-export function fitHierarchy(obs, { n0 = DEFAULT_N0, cols = [0, 1, 2] } = {}) {
+// the level above: the model's terms with a prior worth n0.sport / n0.leaf of
+// that level's bets, the market's terms n0.market.
+// -> { root, sports: {sport: fit}, leaves: {key: fit}, n0: { sport, leaf,
+// market }, cols }, each fit { beta, V, n, games, own: the share of its own
+// bets in its model terms, dRef }.
+export function fitHierarchy(obs, { n0 = DEFAULT_N0, cols = [0, 1, 2, 3] } = {}) {
   const levels = n0Levels(n0);
   const weak = mat((i, j) => (i === j ? 1e-3 * Math.max(obs.length, 1) : 0));
-  const root = irls(obs, [0, 1, 0], weak, cols);
+  const root = irls(obs, [0, 1, 0, 0], weak, cols);
   root.V = sandwich(root, obs, weak, null, cols);
   root.own = 1;
   const child = (sub, parent, k) => {
-    const L = scale(parent.H, k / Math.max(parent.n, 1));
+    const sq = Array.from({ length: NTERMS }, (_, i) => Math.sqrt(i < MARKET_TERMS ? levels.market : k));
+    const L = mat((i, j) => parent.H[i][j] * sq[i] * sq[j] / Math.max(parent.n, 1));
     const f = irls(sub, parent.beta, L, cols);
     f.V = sandwich(f, sub, L, parent.V, cols);
     f.own = f.n / (f.n + k);
     return f;
   };
   const sports = {}, leaves = {};
-  const bySport = groupBy(obs, o => o.sport);
-  for (const [s, sub] of bySport) sports[s] = child(sub, root, levels.sport);
+  for (const [s, sub] of groupBy(obs, o => o.sport)) sports[s] = child(sub, root, levels.sport);
   for (const [k, sub] of groupBy(obs, o => o.key)) leaves[k] = child(sub, sports[k.split('|')[0]], levels.leaf);
   return { root, sports, leaves, n0: levels, cols };
 }
 
-function groupBy(xs, f) {
+export function groupBy(xs, f) {
   const m = new Map();
   for (const x of xs) {
     const k = f(x);
@@ -233,21 +261,26 @@ function groupBy(xs, f) {
 // The fit a bet is judged by: its market's, else its sport's, else all
 export const fitFor = (h, key) => h.leaves[key] || h.sports[key.split('|')[0]] || h.root;
 
-// The model's weight b (and the market's, c - b) with a 90% range
-export function weights(fit) {
-  const [, c, b] = fit.beta;
-  const se = fit.V ? Math.sqrt(Math.max(0, fit.V[2][2])) : null;
-  return { bModel: b, bMarket: c - b, lo: se == null ? null : b - Z90 * se, hi: se == null ? null : b + Z90 * se };
+// The model's weight at a disagreement d (default: the fit's typical value
+// bet's): the share of it worth keeping, b + e·|d|, with a 90% range; and the
+// market's, c - that (as roi-stats.js fitBlend's bMarket)
+export function weights(fit, d = fit.dRef ?? 0) {
+  const [, c, b, e] = fit.beta;
+  const ad = Math.abs(d), w = b + e * ad;
+  const g = [0, 0, 1, ad];
+  const se = fit.V ? Math.sqrt(Math.max(0, quad(g, fit.V))) : null;
+  return { bModel: w, bMarket: c - w, lo: se == null ? null : w - Z90 * se, hi: se == null ? null : w + Z90 * se, d };
 }
 
 // Calibrated chance of a selection: { p, lo, hi } (90%) from the model's
-// chance and the market's (margin out where it can be)
+// chance and the market's (margin out where it can be), and w: the share of
+// the model's disagreement kept at this bet's
 export function calProb(fit, pModel, pMarket) {
-  const lm = logit(pMarket);
-  const x = [1, lm, logit(pModel) - lm];
-  const z = fit.beta[0] + fit.beta[1] * x[1] + fit.beta[2] * x[2];
+  const lm = logit(pMarket), d = logit(pModel) - lm;
+  const x = features(lm, d);
+  const z = dot(x, fit.beta);
   const se = fit.V ? Math.sqrt(Math.max(0, quad(x, fit.V))) : 0;
-  return { p: sigmoid(z), lo: sigmoid(z - Z90 * se), hi: sigmoid(z + Z90 * se) };
+  return { p: sigmoid(z), lo: sigmoid(z - Z90 * se), hi: sigmoid(z + Z90 * se), w: fit.beta[2] + fit.beta[3] * Math.abs(d) };
 }
 
 // Expected return per unit at odds, after commission on winnings
@@ -261,7 +294,8 @@ const predict = (fit, x, cols) => sigmoid(cols.reduce((s, i) => s + fit.beta[i] 
 // For each kickoff day after the burn-in (minDays days, minRows bets), fits
 // on the days before it and scores it: { days, oos: [{ o, pBlend, pMarket,
 // fit }] } - the blend's and a market-only fit's out-of-sample chances
-export function walkForward(obs, { n0 = DEFAULT_N0, minDays = 7, minRows = 500 } = {}) {
+// (withMarket false: the blend's only)
+export function walkForward(obs, { n0 = DEFAULT_N0, minDays = 7, minRows = 500, withMarket = true } = {}) {
   const days = [...new Set(obs.map(o => o.date))].sort();
   const oos = [];
   const fits = {};                       // day -> the blend fitted on the days before it
@@ -269,12 +303,12 @@ export function walkForward(obs, { n0 = DEFAULT_N0, minDays = 7, minRows = 500 }
     const train = obs.filter(o => o.date < days[i]);
     if (i < minDays || train.length < minRows) continue;
     const blend = fitHierarchy(train, { n0 });
-    const market = fitHierarchy(train, { n0, cols: [0, 1] });
+    const market = withMarket ? fitHierarchy(train, { n0, cols: [0, 1] }) : null;
     fits[days[i]] = blend;
     for (const o of obs) {
       if (o.date !== days[i]) continue;
-      oos.push({ o, pBlend: predict(fitFor(blend, o.key), o.x, [0, 1, 2]),
-                 pMarket: predict(fitFor(market, o.key), o.x, [0, 1]) });
+      oos.push({ o, pBlend: predict(fitFor(blend, o.key), o.x, [0, 1, 2, 3]),
+                 pMarket: market ? predict(fitFor(market, o.key), o.x, [0, 1]) : null });
     }
   }
   return { days: Object.keys(fits), oos, fits };
@@ -355,14 +389,16 @@ export function clvByKey(rows, basis = 'book') {
   return out;
 }
 
-// The n0 with the lowest out-of-sample log loss (the blend's), with each one's
-// The { sport, leaf } n0 pair with the lowest walk-forward log loss
+// The { sport, leaf, market } n0 with the lowest walk-forward log loss on the
+// held-out bets that showed value: the bets the calibrated edge is for. Scored
+// on every selection, the pick suited the many the model dislikes, and the
+// fit's edges on the bets it liked came out well short of what they returned.
 export function chooseN0(obs, opts = {}) {
-  const scores = N0_SPORT_GRID.flatMap(sport => N0_GRID.map(leaf => {
-    const n0 = { sport, leaf };
-    const { oos } = walkForward(obs, { ...opts, n0 });
+  const scores = N0_SPORT_GRID.flatMap(sport => N0_GRID.flatMap(leaf => N0_MARKET_GRID.map(market => {
+    const n0 = { sport, leaf, market };
+    const oos = walkForward(obs, { ...opts, n0, withMarket: false }).oos.filter(x => x.o.value);
     return { n0, n: oos.length, loss: oos.reduce((s, x) => s + logLoss(x.o, x.pBlend), 0) };
-  }));
+  })));
   const usable = scores.filter(s => s.n);
   const best = usable.length ? usable.reduce((a, b) => (b.loss < a.loss ? b : a)) : { n0: n0Levels(DEFAULT_N0) };
   return { n0: best.n0, scores };

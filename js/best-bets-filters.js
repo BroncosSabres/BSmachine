@@ -9,13 +9,17 @@
 //             what the edge filters and bands read - is the edge at the median:
 //             one generous bookmaker can't make a bet worth having.
 //   odds      [min, max] as typed, '' for no limit: one range for every market
-//   markets   { 'sport|kind': { on, edge: [min, max], calEdge: [min, max] } },
-//             edges typed in percent: edge for the model's edge, calEdge for
-//             the calibrated edge (calibrate.js), whichever judge says
-//   judge     'model' | 'cal': which edge says a bet has value - the model's
-//             own (the default), or the calibrated one (the model's chance
-//             blended with the market's by how far each market's settled bets
-//             have trusted it), both at the median price
+//   markets   { 'sport|kind': { on, edge: [min, max], calEdge: [min, max],
+//             closeEdge: [min, max] } }, edges typed in percent: edge for the
+//             model's edge, calEdge for the calibrated edge (calibrate.js),
+//             closeEdge for the predicted-close edge (close-model.js),
+//             whichever judge says
+//   judge     'model' | 'cal' | 'close': which edge says a bet has value - the
+//             model's own (the default, at the median price), the calibrated
+//             one (the model's chance blended with the market's by how far
+//             each market's settled bets have trusted it), or the
+//             predicted-close one (the price taken against the fair closing
+//             price predicted), both at the price taken
 //   liveStage 'avg' | 'open' | 'best' | 'close': which of a live bet's prices
 //             it is judged at. 'avg' (the default): the time-weighted average
 //             while its median edge was positive, what betting it at a random
@@ -65,7 +69,9 @@ export function marketLabel(key) {
 }
 export const marketTitle = key => `${SPORT_LABELS[key.split('|')[0]] || key.split('|')[0]} · ${marketLabel(key)}`;
 
-export const defaultRule = key => ({ on: !OFF_BY_DEFAULT.has(key), edge: [...DEFAULT_EDGE], calEdge: [...DEFAULT_CAL_EDGE] });
+export const defaultRule = key => ({ on: !OFF_BY_DEFAULT.has(key), edge: [...DEFAULT_EDGE], calEdge: [...DEFAULT_CAL_EDGE],
+                                     closeEdge: [...DEFAULT_CAL_EDGE] });
+export const JUDGES = ['model', 'cal', 'close'];
 
 // A typed limit: a number (as typed) or '' for none
 const typed = x => { const s = String(x ?? '').trim(); return s !== '' && Number.isFinite(+s) ? s : ''; };
@@ -83,7 +89,8 @@ export function normalizePrefs(p) {
   const markets = {};
   for (const [key, rule] of Object.entries(p.markets && typeof p.markets === 'object' ? p.markets : {})) {
     if (!/^[a-z]+\|[a-z_]+(:3)?$/.test(key) || !rule || typeof rule !== 'object') continue;
-    markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE), calEdge: pair(rule.calEdge, DEFAULT_CAL_EDGE) };
+    markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE), calEdge: pair(rule.calEdge, DEFAULT_CAL_EDGE),
+                     closeEdge: pair(rule.closeEdge, DEFAULT_CAL_EDGE) };
   }
   const v = +p.v || 1;
   const odds = pair(p.odds, DEFAULT_ODDS);
@@ -97,7 +104,7 @@ export function normalizePrefs(p) {
     myTeams: !!p.myTeams,
     liveStage: v >= 2 && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
     outliers: OUTLIER_MODES.includes(p.outliers) ? p.outliers : 'any',
-    judge: p.judge === 'cal' ? 'cal' : 'model',
+    judge: JUDGES.includes(p.judge) ? p.judge : 'model',
   };
 }
 
@@ -127,9 +134,11 @@ export function typedRange([a, b], scale = 1) {
   return lo <= hi ? [lo, hi] : [hi, lo];
 }
 // The edge range a market needs, of the edge that judges (prefs.judge)
-export const edgeField = prefs => (prefs.judge === 'cal' ? 'calEdge' : 'edge');
+export const edgeField = prefs => ({ cal: 'calEdge', close: 'closeEdge' }[prefs.judge] || 'edge');
 export const edgeRangeOf = (prefs, key) =>
-  typedRange(ruleFor(prefs, key)[edgeField(prefs)] ?? (prefs.judge === 'cal' ? DEFAULT_CAL_EDGE : DEFAULT_EDGE), 0.01);
+  typedRange(ruleFor(prefs, key)[edgeField(prefs)] ?? (prefs.judge === 'model' ? DEFAULT_EDGE : DEFAULT_CAL_EDGE), 0.01);
+// What the judging edge is called
+export const judgeLabel = prefs => ({ cal: 'calibrated edge', close: 'predicted-close edge' }[prefs.judge] || 'edge');
 export const oddsRangeOf = prefs => typedRange(prefs.odds);
 export const oddsTyped = prefs => { const [lo, hi] = oddsRangeOf(prefs); return lo > 0 || isFinite(hi); };
 // A hair of slack so 10% typed still takes an edge stored as 0.09999...
@@ -186,7 +195,7 @@ export function oddsText([lo, hi]) {
 export function prefsSummary(prefs, keys) {
   const on = keys.filter(k => ruleFor(prefs, k).on);
   const edges = new Set(on.map(k => edgeText(edgeRangeOf(prefs, k))));
-  const label = prefs.judge === 'cal' ? 'calibrated edge' : 'edge';
+  const label = judgeLabel(prefs);
   const text = edges.size === 1 ? [...edges][0] : null;
   const edge = !on.length ? '' : text == null ? ` · ${label}s vary` : text === 'any edge' ? ` · any ${label}` : ` · ${label} ${text}`;
   return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`

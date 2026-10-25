@@ -30,7 +30,7 @@ import { BASES, passesMarket, passesEdge, prefsSummary } from './best-bets-filte
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
-import { loadCalibration, calibrateBet } from './calibrate-client.js';
+import { loadCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, outlierBet, OUTLIER_CUTS, RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
@@ -89,15 +89,34 @@ const MINE_KEY = 'bsm_best_bets_analysis_mine';
 const mine = () => $('f-mine').checked;
 // The bets the Best Bets filters let through: the market on, its edge range
 // and (odds: false leaves it out) the odds range, all at the median price.
-// The edge is the one Filters judges by: the calibrated one once it is in.
-const minePrefs = () => (prefs.judge === 'cal' && !calib ? { ...prefs, judge: 'model' } : prefs);
+// The edge is the one Filters judges by: the calibrated or predicted-close one
+// once it is in.
+const minePrefs = () => ((prefs.judge === 'cal' && !calib) || (prefs.judge === 'close' && !calib?.close)
+  ? { ...prefs, judge: 'model' } : prefs);
 function calEdgeOfBet(b) {
   if (!calib) return null;
   rawOverrounds ??= overrounds(raw, 'close');
   const c = calibrateBet(calib, { ...b.row, mkt_sum: rawOverrounds.get(b.row) }, { modelProb: b.prob, median: b.back, taken: b.taken });
   return c ? c.bookEdge : null;
 }
-const judgedEdge = b => (minePrefs().judge === 'cal' ? calEdgeOfBet(b) : b.edge);
+// The predicted-close edge of a bet, at a moment whose time before kickoff is
+// known: when first priced (the 'open' stage), else when it first showed value
+// (the stages within its value window). Settled rows carry the kickoff's date
+// only; the hours left are the real ones (counted back from midnight UTC).
+function closeEdgeOfBet(b) {
+  const r = b.row;
+  if (!calib?.close) return null;
+  const st = $('f-stage').value === 'open' ? 'open' : 'first';
+  const hrs = r[`${st}_hrs`];
+  if (hrs == null || r[`${st}_back`] == null) return null;
+  rawOverrounds ??= overrounds(raw, 'close');
+  const kick = Date.parse(`${r.kickoff}T00:00:00Z`);
+  const c = closeBet(calib, { ...r, kickoff: new Date(kick).toISOString(), mkt_sum: rawOverrounds.get(r) },
+                     { modelProb: r[`${st}_prob`], median: r[`${st}_back`],
+                       taken: (basis() === 'book' ? r[`${st}_book_back`] : null) ?? r[`${st}_back`], at: kick / 1000 - hrs * 3600 });
+  return c ? c.edge : null;
+}
+const judgedEdge = b => (minePrefs().judge === 'cal' ? calEdgeOfBet(b) : minePrefs().judge === 'close' ? closeEdgeOfBet(b) : b.edge);
 const passesMine = (b, odds = true) => odds ? passesMarket(minePrefs(), b.group, judgedEdge(b), b.back)
   : passesEdge(minePrefs(), b.group, judgedEdge(b));
 
@@ -1005,6 +1024,56 @@ function startCalibration() {
 
 const roiCell = r => (r && r.n ? `${signedPct(r.roi, 0)}<span class="block text-[10px] text-gray-500">${r.n} bet${r.n === 1 ? '' : 's'}</span>` : '<span class="text-gray-600">–</span>');
 
+// close-model.js, fitted with the calibration: how its predicted closes have
+// done out of sample, per market and all told
+function renderPredictedClose() {
+  const cm = calib && calib.close;
+  if (!cm) {
+    $('pc-sub').textContent = calib === null ? 'Fitting where prices go by kickoff…'
+      : calib === false ? 'Could not be fitted in this browser.'
+      : 'Needs the backend that sends when each selection was first priced (open_hrs): not deployed yet.';
+    $('pc-summary').innerHTML = '';
+    $('pc-body').innerHTML = calib === null ? Array.from({ length: 3 }, () =>
+      '<tr><td colspan="7" class="px-2 py-1.5"><span class="bsm-skeleton h-5 w-full block"></span></td></tr>').join('') : '';
+    $('pc-note').textContent = '';
+    return;
+  }
+  const s = $('f-sport').value, k = $('f-market').value;
+  const ev = cm.eval, days = cm.days || [];
+  const cell = (x, f) => (x && x.n ? f(x) : '<span class="text-gray-600">–</span>');
+  const clvCell = x => cell(x, v => `<span class="${signCls(v.clv)} font-semibold">${signedPct(v.clv)}</span>`);
+  const nCell = x => cell(x, v => `${v.n}`);
+  const predCell = x => cell(x, v => `<span class="${signCls(v.pred)}">${signedPct(v.pred)}</span>`);
+  const resCell = x => cell(x, v => `<span class="${signCls(v.roi)}">${signedPct(v.roi, 0)}</span>`);
+  const a = ev.all;
+  $('pc-sub').textContent = `${count(cm.points, 'price move')} learnt from (every selection priced more than once: when first priced and when it first showed value, each to its close) · held out ${count(days.length, 'day')}`;
+  $('pc-summary').innerHTML = !days.length ? 'Too few days settled yet to hold any out.'
+    : `Out of sample (${dayText(days[0])} to ${dayText(days.at(-1))}, each day predicted by a fit on the days before), betting when first priced at the best bookie: `
+      + `close edge above 0 <span class="${signCls(a.open.close.clv)} font-semibold">${signedPct(a.open.close.clv)}</span> closing line value on ${count(a.open.close.n, 'bet')} `
+      + `(predicted ${signedPct(a.open.close.pred)}; results ${signedPct(a.open.close.roi)}) · `
+      + `model edge above 0 <span class="${signCls(a.open.model.clv)} font-semibold">${signedPct(a.open.model.clv)}</span> on ${count(a.open.model.n, 'bet')}. `
+      + `The model explains ${pct(Math.max(0, ev.move.r2 ?? 0), 0)} of how far held-out prices moved.`;
+  const rows = Object.entries(ev.byKey).filter(([key]) => (s === 'all' || key.startsWith(`${s}|`)) && (k === 'all' || key.split('|')[1] === k))
+    .sort(([x], [y]) => x.localeCompare(y));
+  $('pc-body').innerHTML = rows.map(([key, t]) => {
+    const [sport, kind] = key.split('|');
+    return `<tr class="border-t border-gray-700/60">
+      <td class="px-2 py-1.5 text-left font-semibold text-gray-100">${esc(`${SPORT_LABELS[sport] || sport} · ${kindLabel(kind)}`)}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${nCell(t.open.close)}</td>
+      <td class="px-2 py-1.5 text-right">${predCell(t.open.close)}</td>
+      <td class="px-2 py-1.5 text-right">${clvCell(t.open.close)}</td>
+      <td class="px-2 py-1.5 text-right">${resCell(t.open.close)}</td>
+      <td class="px-2 py-1.5 text-right">${clvCell(t.open.model)}</td>
+      <td class="px-2 py-1.5 text-right">${clvCell(t.first.close)}<span class="block text-[10px] text-gray-500">${t.first.close.n ? count(t.first.close.n, 'bet') : ''}</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="px-2 py-6 text-center text-sm text-gray-500">No held-out bets in this market yet.</td></tr>';
+  $('pc-note').textContent = "Results take thousands of bets to tell a few percent of edge from luck; the closing price settles it far faster. "
+    + "This learns, per market, how far prices still move by kickoff with the model's view and the best bookie's premium over the median, and how long is left, "
+    + "then judges the price you'd take against the fair closing price it predicts (the bookies' margin out, from how closing prices have done against results). "
+    + "Predicted and actual CLV agreeing out of sample says the predictions can be trusted; positive actual CLV is what a real edge looks like before the results can show it. "
+    + 'Filters → Judge by: Predicted close lists and stakes by it.';
+}
+
 function renderModelVsMarket() {
   if (!calib) {
     $('mvm-sub').textContent = calib === false ? 'Could not be fitted in this browser.' : 'Fitting each market against the price…';
@@ -1021,7 +1090,7 @@ function renderModelVsMarket() {
   const days = calib.days || [];
   const a = calib.all || {};
   const rule = (r, text) => (r && r.n ? `${text} <span class="${signCls(r.roi)} font-semibold">${signedPct(r.roi)}</span> on ${count(r.n, 'bet')}` : null);
-  $('mvm-sub').textContent = `${count(fitted, 'settled selection')} at the close · ${calib.basis === 'book' ? 'best bookie' : 'average bookie'} price for the returns`;
+  $('mvm-sub').textContent = `${count(fitted, 'settled selection')} (while showing value, else at the close) ·${calib.basis === 'book' ? 'best bookie' : 'average bookie'} price for the returns`;
   $('mvm-summary').innerHTML = !days.length ? 'Too few days settled yet to hold any out: the out-of-sample columns fill in from the 8th day.'
     : `Held out ${count(days.length, 'day')} (${dayText(days[0])} to ${dayText(days.at(-1))}), each scored by a fit on the days before it. One bet per market, at the average price while it showed value: `
       + [rule(a.cal, 'calibrated edge above 0'), rule(a.model, 'every bet that showed value'), rule(a.mine, 'your filters')].filter(Boolean).join(' · ') + '.';
@@ -1043,11 +1112,12 @@ function renderModelVsMarket() {
     </tr>`;
   }).join('') || '<tr><td colspan="10" class="px-2 py-6 text-center text-sm text-gray-500">No settled selections in this market yet.</td></tr>';
   $('mvm-note').textContent = 'Instead of hunting the edge × odds grid for a profitable patch (with dozens of patches to choose from, the best one is mostly luck), '
-    + "this fits each market's results on the model's chance and the bookies' (their margin taken out) together: the model weight says how much of the model's disagreement with the price has been worth. "
-    + `Thin markets lean on their sport, and sports on all markets, as much as the held-out days said to (${typeof calib.n0 === 'number' ? `worth ${calib.n0.toLocaleString()} of its bets each`
-        : `a sport worth ${calib.n0.sport.toLocaleString()} of all markets' bets, a market ${calib.n0.leaf.toLocaleString()} of its sport's`}). `
+    + "this fits each market's results on the model's chance and the bookies' (their margin taken out) together: the model weight says how much of the model's disagreement with the price has been worth, "
+    + "at the size of the market's typical value bet (the share can grow or shrink with the size of the edge). "
+    + `Thin markets lean on their sport, and sports on all markets, as much as the held-out bets that showed value said to (${typeof calib.n0 === 'number' ? `worth ${calib.n0.toLocaleString()} of its bets each`
+        : `the model's terms: a sport worth ${calib.n0.sport.toLocaleString()} of all markets' bets, a market ${calib.n0.leaf.toLocaleString()} of its sport's; each market's own margin and lean ${(calib.n0.market ?? calib.n0.leaf).toLocaleString()}`}). `
     + "The calibrated edge it gives every bet - the model's chance moved toward the price by that much - is what Filters → Judge by: Calibrated edge lists and stakes. "
-    + 'Fitted at the close, where the price is sharpest, so earlier prices are if anything judged harshly. Few days are settled yet: read the ranges, not the points.';
+    + 'A selection that showed value is fitted at its average price while it did, the rest at the close. Few days are settled yet: read the ranges, not the points.';
 }
 
 // --- breakdown ----------------------------------------------------------------
@@ -1081,7 +1151,7 @@ function breakdownRow(label, bets, key, active) {
     <td class="px-2 py-2 text-right text-gray-300">${all.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${all.games.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300 whitespace-nowrap" title="${exp.n ? `${wonCount(exp.wins)} of ${exp.n.toLocaleString()} won. The model expected ${exp.model.toFixed(1)}, the bookie odds ${exp.bookie.toFixed(1)} (margin included).` : ''}"><span class="font-semibold text-gray-100">${exp.n ? wonCount(exp.wins) : '–'}</span>${exp.n ? `<span class="block text-[10px] text-gray-500">model ${exp.model.toFixed(1)} · bookie ${exp.bookie.toFixed(1)}</span>` : ''}</td>
-    ${cw ? `<td class="px-2 py-2 text-right text-gray-300" title="From Model vs market: model weight ${cw.w.bModel.toFixed(2)}, the bookies' ${cw.w.bMarket.toFixed(2)} (every settled selection at the close, leaning on its sport)"><span class="font-semibold text-gray-100">${pct(cw.share, 0)}</span><span class="block text-[10px] text-gray-500">${pct(cw.lo, 0)} to ${pct(cw.hi, 0)}</span></td>`
+    ${cw ? `<td class="px-2 py-2 text-right text-gray-300" title="From Model vs market: model weight ${cw.w.bModel.toFixed(2)}, the bookies' ${cw.w.bMarket.toFixed(2)} (every settled selection, at its typical value bet's edge, leaning on its sport)"><span class="font-semibold text-gray-100">${pct(cw.share, 0)}</span><span class="block text-[10px] text-gray-500">${pct(cw.lo, 0)} to ${pct(cw.hi, 0)}</span></td>`
     : `<td class="px-2 py-2 text-right text-gray-300" title="${fit ? `logit(win) = ${fit.a.toFixed(2)} + ${fit.bModel.toFixed(2)} × model + ${fit.bMarket.toFixed(2)} × bookie` : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`}"><span class="font-semibold text-gray-100">${fit?.weight != null ? pct(fit.weight, 0) : '–'}</span>${fit?.weightCI ? `<span class="block text-[10px] text-gray-500">${pct(fit.weightCI[0], 0)} to ${pct(fit.weightCI[1], 0)}</span>` : ''}</td>`}
     <td class="px-2 py-2 text-right text-gray-300">${pos.n.toLocaleString()}</td>
     <td class="px-2 py-2 text-right text-gray-300">${pos.n ? wonCount(pos.wins) : '–'}</td>
@@ -1241,6 +1311,7 @@ function mineCounts() {
 function render() {
   renderMine();
   renderModelVsMarket();
+  renderPredictedClose();
   const s = scopes(), base = s.base;
   const bets = selected(base);
   let fit = fitBlend(bets), pooled = false;

@@ -40,7 +40,7 @@ import { listedInfo, pointPasses, hasHistory, spanText } from './best-bets-histo
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
 import { optimiseMarkets } from './best-bets-optimise.js';
 import { logit, sigmoid, overrounds, edgeAt as edgeAtOdds } from './calibrate.js';
-import { loadCalibration, calibrateBet, calEdgeAtPoint, commissionOf } from './calibrate-client.js';
+import { loadCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint, commissionOf } from './calibrate-client.js';
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -103,16 +103,21 @@ function passes(r) {
 // before kickoff, and its market's outliers are still on - outlier_on) needs
 // no edge, unless Filters has outliers off.
 const isOutlierBet = r => !!(r.outlier ? r.outlier.is_outlier : (r.outlier_on ?? r.outlier_at));
-// Filters can judge by the calibrated edge (r.cal, calibrate-client.js): once
-// the calibration is in. Until then, by the model's edge and its ranges. The
-// calibrated edge is at the price the bet is taken at (the best bookie's, with
-// Price on best bookie), not the median.
-const fprefs = () => (prefs.judge === 'cal' && !calib ? { ...prefs, judge: 'model' } : prefs);
-const judging = () => fprefs().judge === 'cal';
-const judgedEdge = r => (judging() ? (r.cal ? r.cal.bookEdge : null) : (r.avgEdge ?? r.edge));
+// Filters can judge by the calibrated edge (r.cal, calibrate-client.js) or the
+// predicted-close edge (r.close, close-model.js): once the calibration (and
+// its close model) is in. Until then, by the model's edge and its ranges. Both
+// are at the price the bet is taken at (the best bookie's, with Price on best
+// bookie), not the median.
+const fprefs = () => ((prefs.judge === 'cal' && !calib) || (prefs.judge === 'close' && !calib?.close)
+  ? { ...prefs, judge: 'model' } : prefs);
+const judgeBy = () => fprefs().judge;
+const judging = () => judgeBy() === 'cal';
+const judgedEdge = r => (judgeBy() === 'cal' ? (r.cal ? r.cal.bookEdge : null)
+  : judgeBy() === 'close' ? (r.close ? r.close.edge : null) : (r.avgEdge ?? r.edge));
 const passesFilters = r => passesBet(fprefs(), marketOf(r), judgedEdge(r), r.avgBack ?? r.median ?? r.back, isOutlierBet(r));
 // A price-history point judged as the filters judge (best-bets-history.js)
-const pointEdge = r => (judging() ? (pt => calEdgeAtPoint(calib, r, pt, bookBasis())) : null);
+const pointEdge = r => (judgeBy() === 'cal' ? (pt => calEdgeAtPoint(calib, r, pt, bookBasis()))
+  : judgeBy() === 'close' ? (pt => closeEdgeAtPoint(calib, r, pt, bookBasis())) : null);
 const listingOf = (r, end) => listedInfo(r.history, pt => pointPasses(fprefs(), marketOf(r), pt, pointEdge(r)), end);
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
@@ -481,6 +486,21 @@ function settledCalEdge(row) {
   return c ? c.bookEdge : null;
 }
 
+// A settled selection's predicted-close edge when it first showed value (the
+// "Most profitable" button, judging by it): the one moment of its value
+// window whose time before kickoff is known (first_hrs). Settled rows carry
+// the kickoff's date only: midnight UTC stands in, and first_hrs counts back
+// from the real kickoff, so the hours left are the real ones.
+function settledCloseEdge(row) {
+  if (!calib?.close || row.first_back == null || row.first_hrs == null) return null;
+  settledOverrounds ??= overrounds(settledRows, 'close');
+  const kick = Date.parse(`${row.kickoff}T00:00:00Z`);
+  const c = closeBet(calib, { ...row, kickoff: new Date(kick).toISOString(), mkt_sum: settledOverrounds.get(row) },
+                     { modelProb: row.first_prob, median: row.first_back,
+                       taken: (bookBasis() ? row.first_book_back : null) ?? row.first_back, at: kick / 1000 - row.first_hrs * 3600 });
+  return c ? c.edge : null;
+}
+
 function stakeTitle(s) {
   const risk = model.risk;
   const binText = t => {
@@ -505,18 +525,21 @@ function stakeTitle(s) {
   return lines.join('\n');
 }
 
-// Judging by the calibrated edge: fractional Kelly (the Risk level's) on its
-// 90% low end at the price taken - the calibration has the doubt about the
-// model in it already, and the low end the doubt about the calibration
+// Judging by the calibrated (or predicted-close) edge: fractional Kelly (the
+// Risk level's) on its 90% low end at the price taken - the calibration has
+// the doubt about the model in it already, and the low end the doubt about
+// the calibration (for the close: the close going least our way)
 function calStakeCell(r, td) {
   const risk = RISK_LEVELS[stakePrefs.risk] || RISK_LEVELS.medium;
-  const s = r.cal && kellyStake(r.cal.bookEdgeLo, r.back, commissionOf(r), risk);
-  if (!s) return td('<span class="text-gray-500">–</span>', r.cal
-    ? `No stake: the calibrated edge's 90% low end at the price taken is ${signedPct(r.cal.bookEdgeLo)}`
-    : 'No calibration for this bet');
+  const close = judgeBy() === 'close';
+  const lo = close ? r.close?.edgeLo : r.cal?.bookEdgeLo, name = close ? 'predicted-close edge' : 'calibrated edge';
+  const s = lo != null && kellyStake(lo, r.back, commissionOf(r), risk);
+  if (!s) return td('<span class="text-gray-500">–</span>', lo != null
+    ? `No stake: the ${name}'s 90% low end at the price taken is ${signedPct(lo)}`
+    : close ? 'No predicted close for this bet' : 'No calibration for this bet');
   const share = pct(s.frac, s.frac < 0.01 ? 2 : 1);
   const title = [`Stake ${pct(s.frac, 2)} of the bank`, '',
-    `${s.k.toFixed(2)} × Kelly on the calibrated edge's 90% low end at the price taken, ${signedPct(s.edge)} (full Kelly ${pct(s.kelly)})`,
+    `${s.k.toFixed(2)} × Kelly on the ${name}'s 90% low end at the price taken, ${signedPct(s.edge)} (full Kelly ${pct(s.kelly)})`,
     `About ${s.betsToSure.toLocaleString()} bets at this edge to be 99% sure of a profit`, '', `${risk.label} risk: ${risk.text}.`].join('\n');
   return td(stakePrefs.balance
     ? `<div class="font-bold text-gray-100">${money(s.frac * stakePrefs.balance)}</div><div class="text-[11px] text-gray-500">${share}</div>`
@@ -525,7 +548,7 @@ function calStakeCell(r, td) {
 
 function stakeCell(r) {
   const td = (inner, title = '') => `<td class="px-2 py-2 text-right tabular-nums whitespace-nowrap"${title ? ` title="${esc(title)}"` : ''}>${inner}</td>`;
-  if (judging()) return calStakeCell(r, td);
+  if (judgeBy() !== 'model') return calStakeCell(r, td);
   if (!model) return td(stakesFailed ? '<span class="text-gray-600">–</span>' : '<span class="bsm-skeleton h-3 w-10 inline-block"></span>',
     stakesFailed ? 'Could not load the settled bets the stake is worked out from' : '');
   const s = stakeFor(liveBet(r), model, stakePrefs.balance);
@@ -546,7 +569,8 @@ function stakeCell(r) {
 // At the best bookie's price where the bookies name one; Betfair rows (and
 // checks from before the best price was kept) at their own. edge stays the
 // median's (the value signal the filters read); bookEdge is at the price taken.
-// cal: its calibrated chance and edges (calibrate-client.js), once in.
+// cal: its calibrated chance and edges (calibrate-client.js), once in; close:
+// its predicted close and the edge against it (close-model.js), once in.
 function upcomingAt(r) {
   const book = bookBasis() && r.best_book_back != null && r.best_book_edge != null;
   const out = book
@@ -554,17 +578,29 @@ function upcomingAt(r) {
         best: r.best_book_odds ?? r.best_odds, median: r.back, atBook: true }
     : { ...r, bestEdge: r.best_book_edge ?? r.edge, open: r.open_odds, best: r.best_odds, median: r.back };
   out.cal = calibrateBet(calib, out, { median: out.median, taken: out.back });
+  out.close = closeBet(calib, out, { median: out.median, taken: out.back });
   return out;
+}
+
+// The predicted-close edge's line under a bet's edges, and what it is made of
+function closeLine(r) {
+  const c = r.close;
+  if (!c) return '';
+  const title = [`Predicted-close edge at the price taken (${odds(r.back)}): ${signedPct(c.edge)} (90% low end ${signedPct(c.edgeLo)})`,
+    `Median ${odds(r.median ?? r.back)} now, predicted ${odds(c.closeBack)} at kickoff: `
+    + `${c.move > 0.005 ? 'shortening' : c.move < -0.005 ? 'drifting' : 'about where it is'}, from how prices in this market have moved with the model's view this far out.`,
+    `Fair chance at that close, the bookies' margin out: ${pct(c.fair)}.`].join('\n');
+  return `<div class="text-[11px] leading-snug" title="${esc(title)}"><span class="text-gray-500">close</span> <span class="font-semibold ${signCls(c.edge)}">${signedPct(c.edge)}</span></div>`;
 }
 
 // The calibrated edge's line under a bet's edges, and what it is made of
 function calLine(r) {
   if (!r.cal) return '';
-  const c = r.cal, w = c.fit.beta[2];
+  const c = r.cal, w = c.w;
   const title = [`Calibrated edge at the price taken (${odds(r.back)}): ${signedPct(c.bookEdge)} (90% range ${signedPct(c.bookEdgeLo)} to ${signedPct(edgeAtOdds(c.hi, r.back, commissionOf(r)))})`,
     `At the median price: ${signedPct(c.edge)}`,
     `Chance ${pct(c.p)} (90%: ${pct(c.lo)} to ${pct(c.hi)}): the model's ${pct(r.model_prob)} blended with the bookies' (margin out) `
-    + `by how far this market's settled bets have trusted the model: weight ${w.toFixed(2)} (0: the bookies' chance; 1: the model's).`].join('\n');
+    + `by how far this market's settled bets have trusted a disagreement this size: weight ${w.toFixed(2)} (0: the bookies' chance; 1: the model's).`].join('\n');
   return `<div class="text-[11px] leading-snug" title="${esc(title)}"><span class="text-gray-500">cal</span> <span class="font-semibold ${signCls(c.bookEdge)}">${signedPct(c.bookEdge)}</span></div>`;
 }
 
@@ -589,7 +625,7 @@ function betRow(r, i) {
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold ${signCls(r.edge)}" title="At the average (median) price">${signedPct(r.edge)}</div>
         <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
-        ${calLine(r)}
+        ${calLine(r)}${closeLine(r)}
         <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
       </td>
       ${stakeCell(r)}
@@ -727,8 +763,9 @@ function droppedReason(r) {
   const key = marketOf(r);
   if (r.gone_at) return ['Off the board', `Not in the latest check since ${kickoffText(r.gone_at)}: the bookies took it down or moved the line`];
   const edge = judgedEdge(r);
-  if (!(edge > 0)) return ['No edge now', judging() ? 'Its calibrated edge at the price taken is no longer positive'
-                                                      : 'Its edge at the median price is no longer positive'];
+  if (!(edge > 0)) return ['No edge now', judgeBy() === 'cal' ? 'Its calibrated edge at the price taken is no longer positive'
+    : judgeBy() === 'close' ? 'Its edge against the predicted close, at the price taken, is no longer positive'
+    : 'Its edge at the median price is no longer positive'];
   if (!inRange(r.median ?? r.back, oddsRangeOf(prefs))) return ['Odds out of range', 'Its median price is outside your odds range'];
   if (!inRange(edge, edgeRangeOf(fprefs(), key))) return ['Edge out of range', 'Its edge is outside the range you set for this market'];
   return ['Off your filters', ''];
@@ -856,6 +893,7 @@ function liveBetAt(p) {
   // and (judging by it) the live chance moved by the same amount the
   // calibration moved the model's at kickoff
   const cal = calibrateBet(calib, p, { modelProb: p.model_prob, median: avgBack, taken: back });
+  const close = firstClose(p);
   let { p_win: w, p_lose: l } = p.live;
   if (judging() && cal && w != null && l != null && w > 0 && l > 0 && !LOCKED.has(p.live.status)) {
     const push = p.live.p_push || 0;
@@ -865,7 +903,7 @@ function liveBetAt(p) {
   }
   const ev = w == null ? null : w * net - l;
   const sd = w == null ? null : Math.sqrt(Math.max(0, w * net * net + l - ev * ev));
-  return { ...p, prices, back, edge, avgBack, avgEdge, bestEdge, cal, ev, sd, chance: w };
+  return { ...p, prices, back, edge, avgBack, avgEdge, bestEdge, cal, close, ev, sd, chance: w };
 }
 
 // Whether a live pick was listed under the current filters at a check before
@@ -1142,7 +1180,24 @@ function roiBar(label, st, scale, dim) {
 // where recorded, or the median); backAt / edgeAt: the median's price and
 // edge there, what the filters and bands read; bookAt: the best bookie's.
 // fallback: the best bookie's price was not recorded for it.
+// A settled or live pick's predicted-close edge when it first showed value
+// (first_* and first_hrs: the one moment of its value window whose time
+// before kickoff is known), at the price it would have been taken at then
+function firstClose(p) {
+  if (!calib?.close || p.first_back == null || p.first_hrs == null) return null;
+  return closeBet(calib, p, { modelProb: p.first_prob, median: p.first_back,
+                              taken: (bookBasis() ? p.first_book_back : null) ?? p.first_back,
+                              at: Date.parse(p.kickoff) / 1000 - p.first_hrs * 3600 });
+}
+
 function trackAt(p) {
+  // Judging by the predicted close: at the moment it first showed value
+  if (judgeBy() === 'close' && p.first_back != null && p.first_hrs != null) {
+    const at = priceAt(p, 'first', prefs.basis), close = firstClose(p);
+    return { ...p, stage: 'first', takeAt: at.back, fallback: at.fallback, backAt: p.first_back,
+             edgeAt: close ? close.edge : null, bookAt: priceAt(p, 'first', 'book').back,
+             takeBest: priceAt(p, 'best', prefs.basis).back, takeClose: priceAt(p, 'close', prefs.basis).back };
+  }
   const stage = p.avg_back != null ? 'avg' : 'flagged';
   const at = priceAt(p, stage, prefs.basis);
   const backAt = p[`${stage}_back`];
@@ -1319,7 +1374,8 @@ $('day-filter').addEventListener('change', e => { day = e.target.value; render()
 ['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
 // "Most profitable" in the modal: from the settled bets the stakes load
 const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys(),
-                                                                     next.judge === 'cal' && calib ? settledCalEdge : null),
+                                                                     next.judge === 'cal' && calib ? settledCalEdge
+                                                                     : next.judge === 'close' && calib?.close ? settledCloseEdge : null),
                                { ready: () => !!settledRows });
 $('filters-btn').addEventListener('click', () => openFilters({
   prefs, keys: modalKeys(), counts: marketCounts(), opener: $('filters-btn'), optimise,
