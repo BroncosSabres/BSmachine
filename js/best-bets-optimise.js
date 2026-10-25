@@ -15,6 +15,8 @@
 import { toBet } from './safe-stake.js';
 import { profit, dropEmptyMarkets, onePerMarket, edgeCuts } from './roi-stats.js';
 import { oddsRangeOf, inRange, ruleFor, edgeField } from './best-bets-filters.js';
+import { overrounds } from './calibrate.js';
+import { calibrateBet, closeBet } from './calibrate-client.js';
 
 export const OPT_STAGE = 'avg';
 // A market with fewer settled bets than this is left as it is, and a range
@@ -29,6 +31,41 @@ export function optimiseBets(rows, prefs, edgeOf = null) {
   if (edgeOf) for (const b of at) b.edge = edgeOf(b.row);
   const odds = oddsRangeOf(prefs);
   return onePerMarket(dropEmptyMarkets(at.filter(b => b.edge != null)).kept).filter(b => b.edge > 0 && inRange(b.back, odds));
+}
+
+// optimiseMarkets' edgeOf for the edge the settings judge by, over the settled
+// rows: null for the model's own (and where the fit it needs couldn't be had:
+// calib false, or no predicted-close model, as the pages fall back to the
+// model's), undefined while the calibration is still coming (calib null).
+//   cal    the calibrated edge at the average price while it showed value
+//   close  the predicted-close edge when it first showed value: the one moment
+//          of its value window whose time before kickoff is known (first_hrs).
+//          Settled rows carry the kickoff's date only: midnight UTC stands in,
+//          and first_hrs counts back from the real kickoff, so the hours left
+//          are the real ones.
+export function judgeEdgeOf(rows, prefs, calib) {
+  if (prefs.judge !== 'cal' && prefs.judge !== 'close') return null;
+  if (calib === null || calib === undefined) return undefined;
+  if (!calib || (prefs.judge === 'close' && !calib.close)) return null;
+  const book = prefs.basis === 'book';
+  let sums = null;
+  const mktSum = row => (sums ??= overrounds(rows, 'close')).get(row);
+  if (prefs.judge === 'cal') {
+    return row => {
+      if (row.avg_back == null) return null;
+      const c = calibrateBet(calib, { ...row, mkt_sum: mktSum(row) },
+                             { modelProb: row.avg_prob, median: row.avg_back, taken: (book ? row.avg_book_back : null) ?? row.avg_back });
+      return c ? c.bookEdge : null;
+    };
+  }
+  return row => {
+    if (row.first_back == null || row.first_hrs == null) return null;
+    const kick = Date.parse(`${row.kickoff}T00:00:00Z`);
+    const c = closeBet(calib, { ...row, kickoff: new Date(kick).toISOString(), mkt_sum: mktSum(row) },
+                       { modelProb: row.first_prob, median: row.first_back,
+                         taken: (book ? row.first_book_back : null) ?? row.first_back, at: kick / 1000 - row.first_hrs * 3600 });
+    return c ? c.edge : null;
+  };
 }
 
 // The run of neighbouring edge bands with the most units won (ties: more

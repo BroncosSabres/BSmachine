@@ -36,8 +36,13 @@
 //             whatever their edge ('any', where they've paid), in the markets
 //             switched on and the odds range; 'only' lists nothing else; 'off'
 //             lists them only when they have an edge too
-//   v         3: 2 moved the Live stage to 'avg' once; 3 dropped the old $10
-//             odds cap (saved as ['', '10'], the old default) once
+//   autoOpt   true: every market is kept on "Most profitable" (best-bets-
+//             optimise.js), re-fitted whenever the settled bets or the
+//             calibration come in, and after a change of price or judge.
+//             On for new settings; changing a market's own rule turns it off
+//   v         4: 2 moved the Live stage to 'avg' once; 3 dropped the old $10
+//             odds cap (saved as ['', '10'], the old default) once; 4 turned
+//             autoOpt on once for settings whose markets were never changed
 import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
 
 // kind as safe-stake.js kindKey: the NHL 60-minute (3-way) result apart from the moneyline
@@ -55,7 +60,7 @@ export const MARKETS = [
 export const BASES = { book: 'Best bookie', avg: 'Average bookie' };
 export const LIVE_STAGES = ['avg', 'open', 'best', 'close'];
 export const LIVE_STAGE_LABELS = { avg: 'average with value', open: 'opening', best: 'best', close: 'closing' };
-const PREFS_VERSION = 3;
+const PREFS_VERSION = 4;
 const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
 const DEFAULT_ODDS = ['', ''];
@@ -86,8 +91,12 @@ const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]),
 
 export function defaultPrefs() {
   return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg',
-           liveSort: 'edge', liveFinal: 'any', outliers: 'any', judge: 'model' };
+           liveSort: 'edge', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true };
 }
+
+// Whether any market's rule has been changed from its default
+const customised = markets => Object.entries(markets)
+  .some(([key, rule]) => JSON.stringify(rule) !== JSON.stringify(defaultRule(key)));
 
 // Anything (saved JSON, a profile column) -> valid settings
 export function normalizePrefs(p) {
@@ -114,6 +123,8 @@ export function normalizePrefs(p) {
     liveFinal: LIVE_FINALS.includes(p.liveFinal) ? p.liveFinal : 'any',
     outliers: OUTLIER_MODES.includes(p.outliers) ? p.outliers : 'any',
     judge: JUDGES.includes(p.judge) ? p.judge : 'model',
+    // Settings from before it: on where the markets were never set by hand
+    autoOpt: v < 4 ? !customised(markets) : p.autoOpt !== false,
   };
 }
 
@@ -127,6 +138,7 @@ export function migrateOldPrefs(old) {
   const has = id => typeof r[id] === 'string';
   const edge = has('edge-min') || has('edge-max') ? [typed(r['edge-min']), typed(r['edge-max'])] : [...DEFAULT_EDGE];
   if (has('odds-min') || has('odds-max')) p.odds = [typed(r['odds-min']), typed(r['odds-max'])];
+  p.autoOpt = !(has('edge-min') || has('edge-max'));
   for (const m of MARKETS) p.markets[m.key] = { on: m.key === 'nhl|match_odds:3' ? !!old.threeWay : true, edge: [...edge] };
   p.sort = old.sort === 'time' ? 'time' : 'edge';
   p.myTeams = !!old.myTeams;
@@ -208,7 +220,8 @@ export function prefsSummary(prefs, keys) {
   const text = edges.size === 1 ? [...edges][0] : null;
   const edge = !on.length ? '' : text == null ? ` · ${label}s vary` : text === 'any edge' ? ` · any ${label}` : ` · ${label} ${text}`;
   return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`
-    + (prefs.outliers === 'only' ? ' · outliers only' : prefs.outliers === 'off' ? ' · outliers off' : '');
+    + (prefs.outliers === 'only' ? ' · outliers only' : prefs.outliers === 'off' ? ' · outliers off' : '')
+    + (prefs.autoOpt ? ' · most profitable' : '');
 }
 
 // The edge range spanning every market on among `keys`: where the track

@@ -27,8 +27,8 @@ import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFr
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText } from './best-bets-filters.js';
-import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys } from './best-bets-prefs.js';
-import { optimiseMarkets } from './best-bets-optimise.js';
+import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
+import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
 import { loadCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
@@ -1040,8 +1040,17 @@ function startCalibration() {
   loadCalibration(raw, { version: dataVersion, basis: b, prefs }).then(c => {
     if (b !== basis()) return;
     calib = c || false;
+    keepOptimised();   // judging by the calibrated edge, it waited for this
+    filtersDataReady();
     render();
   });
+}
+
+// Kept on "Most profitable" (prefs.autoOpt): the filters re-fitted to the
+// settled bets and calibration in now
+function keepOptimised() {
+  const next = autoOptimise(prefs, optimise);
+  if (next) prefs = next;
 }
 
 const roiCell = r => (r && r.n ? `${signedPct(r.roi, 0)}<span class="block text-[10px] text-gray-500">${r.n} bet${r.n === 1 ? '' : 's'}</span>` : '<span class="text-gray-600">–</span>');
@@ -1363,8 +1372,11 @@ $('f-mine').addEventListener('change', () => {
   try { localStorage.setItem(MINE_KEY, mine() ? '1' : '0'); } catch { /* storage unavailable */ }
   render();
 });
-// The Best Bets page's Filters modal, here: changes are saved for both pages
-const optimise = Object.assign(next => optimiseMarkets(raw, next, modalKeys()), { ready: () => raw.length > 0 });
+// The Best Bets page's Filters modal, here: changes are saved for both pages.
+// "Most profitable" (and kept on it) judges as Filters says, once the
+// calibration it needs is in.
+const optimise = Object.assign(next => optimiseMarkets(raw, next, modalKeys(), judgeEdgeOf(raw, next, calib) ?? null),
+                               { ready: next => raw.length > 0 && judgeEdgeOf(raw, next ?? prefs, calib) !== undefined });
 $('f-mine-edit').addEventListener('click', () => openFilters({
   prefs, keys: modalKeys(), counts: mineCounts(), countLabel: 'settled', opener: $('f-mine-edit'), optimise,
   onChange: next => {
@@ -1381,8 +1393,9 @@ $('f-price').value = prefs.basis;
 $('f-price').addEventListener('change', () => {
   prefs = { ...prefs, basis: basis() };
   savePrefs(prefs);
+  if (calib !== null) { calib = null; startCalibration(); }
+  keepOptimised();
   render();
-  if (calib !== null) { calib = null; startCalibration(); render(); }
 });
 
 // Risk, bank and bin detail are shared with the Best Bets page
@@ -1509,12 +1522,14 @@ async function init() {
   if (!raw.some(r => r.market_id != null)) { $('f-count').value = 'all'; $('f-count').disabled = true; }
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
+  keepOptimised();
   render();
   startCalibration();
   // The account's filters and price basis, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
     prefs = remote;
+    keepOptimised();
     $('f-price').value = prefs.basis;
     render();
   }).catch(() => {});

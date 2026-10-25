@@ -37,9 +37,9 @@ import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from '.
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, LIVE_SORTS, LIVE_FINALS } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText } from './best-bets-history.js';
-import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady } from './best-bets-prefs.js';
-import { optimiseMarkets } from './best-bets-optimise.js';
-import { logit, sigmoid, overrounds, edgeAt as edgeAtOdds } from './calibrate.js';
+import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
+import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
+import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
 import { loadCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint, commissionOf } from './calibrate-client.js';
 
 const TABS = [
@@ -58,7 +58,7 @@ const $ = id => document.getElementById(id);
 let bets = [];             // /api/best_bets rows
 let dropped = [];          // /api/best_bets dropped: tracked bets listed at an earlier check, not now
 let checkedAt = null;      // when the odds were last fetched (/api/best_bets checked_at)
-let calib = null;          // calibrate-client.js: the model-vs-market fit per market (null until in)
+let calib = null;          // calibrate-client.js: the model-vs-market fit per market (null until in, false if it couldn't be)
 let shown = [];            // the rows in the table, in order (data-row indexes it)
 let results = null;        // /api/best_bets/results, loaded on first open
 let tab = 'all';
@@ -448,7 +448,6 @@ function buildModel() {
 }
 
 let settledVersion = null;  // /api/best_bets/analysis version (what the calibration is cached by)
-let settledOverrounds = null;
 
 async function loadStakes() {
   try {
@@ -457,7 +456,7 @@ async function loadStakes() {
     settledRows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
     settledVersion = data.version ?? null;
     settledBasis = modelKey = null;
-    settledOverrounds = null;
+    keepOptimised();
     buildModel();
     filtersDataReady();
     startCalibration();
@@ -473,36 +472,21 @@ function startCalibration() {
   if (!settledRows) return;
   const basisNow = prefs.basis;
   loadCalibration(settledRows, { version: settledVersion, basis: basisNow, prefs }).then(c => {
-    if (!c || basisNow !== prefs.basis) return;
-    calib = c;
+    if (basisNow !== prefs.basis) return;
+    calib = c || false;
+    keepOptimised();   // judging by the calibrated edge, it waited for this
+    filtersDataReady();
     render();
   });
 }
 
-// A settled selection's calibrated edge at the average price while it showed
-// value (the "Most profitable" button, judging by the calibrated edge)
-function settledCalEdge(row) {
-  if (!calib || row.avg_back == null) return null;
-  settledOverrounds ??= overrounds(settledRows, 'close');
-  const c = calibrateBet(calib, { ...row, mkt_sum: settledOverrounds.get(row) },
-                         { modelProb: row.avg_prob, median: row.avg_back,
-                           taken: (bookBasis() ? row.avg_book_back : null) ?? row.avg_back });
-  return c ? c.bookEdge : null;
-}
-
-// A settled selection's predicted-close edge when it first showed value (the
-// "Most profitable" button, judging by it): the one moment of its value
-// window whose time before kickoff is known (first_hrs). Settled rows carry
-// the kickoff's date only: midnight UTC stands in, and first_hrs counts back
-// from the real kickoff, so the hours left are the real ones.
-function settledCloseEdge(row) {
-  if (!calib?.close || row.first_back == null || row.first_hrs == null) return null;
-  settledOverrounds ??= overrounds(settledRows, 'close');
-  const kick = Date.parse(`${row.kickoff}T00:00:00Z`);
-  const c = closeBet(calib, { ...row, kickoff: new Date(kick).toISOString(), mkt_sum: settledOverrounds.get(row) },
-                     { modelProb: row.first_prob, median: row.first_back,
-                       taken: (bookBasis() ? row.first_book_back : null) ?? row.first_back, at: kick / 1000 - row.first_hrs * 3600 });
-  return c ? c.edge : null;
+// Kept on "Most profitable" (prefs.autoOpt): the filters re-fitted to the
+// settled bets and calibration in now -> whether that changed them
+function keepOptimised() {
+  const next = autoOptimise(prefs, optimise);
+  if (!next) return false;
+  prefs = next;
+  return true;
 }
 
 function stakeTitle(s) {
@@ -708,10 +692,14 @@ function renderBets() {
     body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
-    rows.sort((a, b) => byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge);
+    // Outliers first (unless Filters has them off), then by the chosen order
+    const outFirst = r => (prefs.outliers !== 'off' && isOutlierBet(r) ? 0 : 1);
+    rows.sort((a, b) => outFirst(a) - outFirst(b)
+      || (byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge));
     loadLogs(rows);
     body.innerHTML = rows.map(betRow).join('');
-    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}`;
+    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}`
+      + (rows.some(r => outFirst(r) === 0) ? ' · outliers first' : '');
   }
   shown = rows;
   $('status').textContent = summary && `${summary} · sorted by ${byEdge ? 'edge' : 'start time'}`;
@@ -1407,12 +1395,11 @@ $('sport-pills').addEventListener('click', e => {
   if (b) { sport = b.dataset.sport; render(); }
 });
 $('day-filter').addEventListener('change', e => { day = e.target.value; render(); });
-['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); render(); }));
-// "Most profitable" in the modal: from the settled bets the stakes load
-const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys(),
-                                                                     next.judge === 'cal' && calib ? settledCalEdge
-                                                                     : next.judge === 'close' && calib?.close ? settledCloseEdge : null),
-                               { ready: () => !!settledRows });
+['odds-min', 'odds-max'].forEach(id => $(id).addEventListener('change', () => { savePrefs(); keepOptimised(); render(); }));
+// "Most profitable" in the modal (and kept on it): from the settled bets the
+// stakes load, judged as Filters says once the calibration it needs is in
+const optimise = Object.assign(next => settledRows && optimiseMarkets(settledRows, next, modalKeys(), judgeEdgeOf(settledRows, next, calib) ?? null),
+                               { ready: next => !!settledRows && judgeEdgeOf(settledRows, next ?? prefs, calib) !== undefined });
 $('filters-btn').addEventListener('click', () => openFilters({
   prefs, keys: modalKeys(), counts: marketCounts(), opener: $('filters-btn'), optimise,
   onChange: next => {
@@ -1588,6 +1575,7 @@ async function init() {
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
     prefs = remote;
+    keepOptimised();
     applyPrefs();
     buildModel();
     render();

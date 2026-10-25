@@ -2,7 +2,10 @@
 // best-bets-filters.js) and draws the Filters modal. Used by the Best Bets
 // page and its analysis page (the price basis, and the filters themselves
 // when "My filters" is ticked there). The modal's "Most profitable" button
-// sets every market from its settled bets (best-bets-optimise.js).
+// sets every market from its settled bets (best-bets-optimise.js); with
+// "Keep on Most profitable" ticked (prefs.autoOpt, the default until a market
+// is changed by hand) the pages re-run it whenever what it reads comes in
+// (autoOptimise).
 //
 // The settings live in this browser (applied at once) and, signed in, in the
 // account's profile (profiles.best_bets_prefs), so they follow the account:
@@ -133,6 +136,13 @@ function bodyHtml() {
             class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.basis === b
               ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('');
   return `${reportSummary()}
+    <label class="mb-4 flex items-start gap-2 rounded-lg border ${prefs.autoOpt ? 'border-amber-400/50 bg-amber-400/5' : 'border-gray-700'} px-3 py-2 cursor-pointer">
+      <input type="checkbox" data-auto class="accent-amber-400 mt-0.5 shrink-0" ${prefs.autoOpt ? 'checked' : ''}>
+      <span>
+        <span class="block text-sm text-gray-100 font-semibold">Keep on Most profitable</span>
+        <span class="block text-[11px] text-gray-500 leading-snug">Every market is set from its settled bets as "Most profitable" does, and set again as new results come in, so the filters follow the data. Changing a market below by hand turns this off.</span>
+      </span>
+    </label>
     <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Price</div>
       <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${basis}</div>
@@ -198,6 +208,14 @@ function setRule(prefs, key, patch) {
   prefs.markets[key] = { ...ruleFor(prefs, key), ...patch };
 }
 
+// A market changed by hand: no longer kept on "Most profitable"
+function setRuleByHand(prefs, key, patch) {
+  setRule(prefs, key, patch);
+  prefs.autoOpt = false;
+  const box = overlay.querySelector('[data-auto]');
+  if (box) box.checked = false;
+}
+
 function build() {
   overlay = document.createElement('div');
   overlay.className = 'fixed inset-0 hidden items-end sm:items-center justify-center bg-black/60 sm:p-4';
@@ -232,37 +250,47 @@ function build() {
     if (b.dataset.judge) {
       state.report = null;   // fitted to the other edge
       change(p => { p.judge = JUDGES.includes(b.dataset.judge) ? b.dataset.judge : 'model'; });
+      if (state.prefs.autoOpt) optimise();
     } else if (b.dataset.outliers) {
       change(p => { p.outliers = OUTLIER_MODES.includes(b.dataset.outliers) ? b.dataset.outliers : 'any'; });
     } else if (b.dataset.basis) {
       state.report = null;   // read at the other price
       change(p => { p.basis = b.dataset.basis; });
+      if (state.prefs.autoOpt) optimise();
     } else if (b.hasAttribute('data-optimise')) optimise();
     else if (b.dataset.allOn || b.dataset.allOff) {
       const s = b.dataset.allOn || b.dataset.allOff;
-      change(p => state.keys.filter(k => k.startsWith(`${s}|`)).forEach(k => setRule(p, k, { on: !!b.dataset.allOn })));
+      change(p => state.keys.filter(k => k.startsWith(`${s}|`)).forEach(k => setRuleByHand(p, k, { on: !!b.dataset.allOn })));
     } else if (b.hasAttribute('data-copy') && key) {
       const field = edgeField(state.prefs);
       const edge = [...(ruleFor(state.prefs, key)[field] || ['', ''])];
-      change(p => state.keys.forEach(k => setRule(p, k, { [field]: [...edge] })));
+      change(p => state.keys.forEach(k => setRuleByHand(p, k, { [field]: [...edge] })));
     } else if (b.hasAttribute('data-reset')) {
+      // The defaults are kept on "Most profitable", as new settings are
       state.report = null;
-      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; p.judge = 'model'; });
+      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; p.judge = 'model'; p.autoOpt = true; });
+      optimise();
     }
   });
   overlay.addEventListener('change', e => {
+    if (e.target.hasAttribute('data-auto')) {
+      const on = e.target.checked;
+      change(p => { p.autoOpt = on; });
+      if (on) optimise();
+      return;
+    }
     const key = e.target.closest('[data-key]')?.dataset.key;
     if (!key) return;
     if (e.target.hasAttribute('data-on')) {
       e.target.closest('[data-key]').classList.toggle('opacity-60', !e.target.checked);
-      change(p => setRule(p, key, { on: e.target.checked }), false);
+      change(p => setRuleByHand(p, key, { on: e.target.checked }), false);
     } else if (e.target.dataset.edge != null) {
       const i = +e.target.dataset.edge;
       change(p => {
         const field = edgeField(p);
         const edge = [...(ruleFor(p, key)[field] || ['', ''])];
         edge[i] = e.target.value.trim();
-        setRule(p, key, { [field]: edge });
+        setRuleByHand(p, key, { [field]: edge });
       }, false);
     }
   });
@@ -274,31 +302,45 @@ function build() {
 const OPT_TITLE = 'Switch each market on at the edge range its settled bets have made the most money in, and off where '
   + 'no range has made money. Markets with too few settled bets are left as they are. Change anything afterwards as you like.';
 
-// "Most profitable": every market from its settled bets, the rest as they are
+// "Most profitable": every market from its settled bets, the rest as they
+// are. Nothing until what it reads is in (the button says so meanwhile).
 function optimise() {
-  const report = state.optimise?.(state.prefs);
+  const report = state.optimise?.ready?.(state.prefs) && state.optimise(state.prefs);
   if (!report) return;
   state.report = report;
   change(p => Object.assign(p, applyOptimised(p, report)));
 }
 
-// The button waits for the settled bets, which the page may still be loading
+// The button waits for the settled bets (and the calibration, judging by
+// it), which the page may still be loading
 function syncOptimise() {
   const b = overlay.querySelector('[data-optimise]');
-  const ready = !!state.optimise?.ready?.();
+  const ready = !!state.optimise?.ready?.(state.prefs);
   b.disabled = !ready;
   b.classList.toggle('hidden', !state.optimise);
   b.title = ready ? OPT_TITLE : `Loading the settled bets first. ${OPT_TITLE}`;
 }
 
+const modalOpen = () => !!(overlay && state && !overlay.classList.contains('hidden'));
+
 // keys: the markets to list (sport|kind). counts: { key: bets }, shown as
 // "n now" (or "n <countLabel>"). onChange(prefs) is called on every change,
 // and returns fresh counts. optimise(prefs) -> best-bets-optimise.js
-// optimiseMarkets' report, with optimise.ready() saying whether the settled
-// bets are in; leave it out for no "Most profitable" button.
+// optimiseMarkets' report, with optimise.ready(prefs) saying whether what it
+// reads (the settled bets, the calibration for its judge) is in; leave it out
+// for no "Most profitable" button. Kept on "Most profitable", the modal opens
+// with what it read.
 export function openFilters({ prefs, keys, counts, countLabel, onChange, optimise: opt, opener }) {
   if (!overlay) build();
   state = { prefs: structuredClone(prefs), keys, counts, countLabel, onChange, optimise: opt, opener, report: null };
+  if (state.prefs.autoOpt && opt?.ready?.(state.prefs)) {
+    state.report = opt(state.prefs) || null;
+    const next = state.report && applyOptimised(state.prefs, state.report);
+    if (next && JSON.stringify(next) !== JSON.stringify(state.prefs)) {
+      state.prefs = next;
+      state.counts = onChange(next) || counts;
+    }
+  }
   paint();
   syncOptimise();
   overlay.classList.remove('hidden');
@@ -307,9 +349,30 @@ export function openFilters({ prefs, keys, counts, countLabel, onChange, optimis
   overlay.querySelector('[data-close]').focus();
 }
 
-// The page's settled bets have arrived: "Most profitable" can run
+// The page's settled bets (or calibration) have arrived: "Most profitable"
+// can run
 export function filtersDataReady() {
-  if (overlay && state && !overlay.classList.contains('hidden')) syncOptimise();
+  if (modalOpen()) syncOptimise();
+}
+
+// Kept on "Most profitable" (prefs.autoOpt): the settings re-fitted to what
+// the page has now, saved, and the open modal shown them. -> the new settings
+// when that changed them, else null (not kept on it, what it reads not in
+// yet, or nothing moved). optimise as openFilters takes it.
+export function autoOptimise(prefs, optimise) {
+  if (!prefs.autoOpt || !optimise?.ready?.(prefs)) return null;
+  const report = optimise(prefs);
+  if (!report) return null;
+  const next = applyOptimised(prefs, report);
+  if (modalOpen()) {
+    state.prefs = structuredClone(next);
+    state.report = report;
+    paint();
+    syncOptimise();
+  }
+  if (JSON.stringify(next) === JSON.stringify(prefs)) return null;
+  savePrefs(next);
+  return next;
 }
 
 export function closeFilters() {
