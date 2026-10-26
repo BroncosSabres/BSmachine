@@ -62,6 +62,7 @@ let dropped = [];          // /api/best_bets dropped: tracked bets listed at an 
 let checkedAt = null;      // when the odds were last fetched (/api/best_bets checked_at)
 let calib = null;          // calibrate-client.js: the model-vs-market fit per market (null until in, false if it couldn't be)
 let shown = [];            // the rows in the table, in order (data-row indexes it)
+let droppedShown = [];     // the No longer value rows, in order (data-row indexes it)
 let results = null;        // /api/best_bets/results, loaded on first open
 let tab = 'all';
 let sport = 'all';
@@ -823,17 +824,23 @@ function droppedReason(r) {
   return ['Off your filters', ''];
 }
 
-function droppedRow(r) {
+// A dropped bet's prices: { was (its last listed point), wasPrice (at the
+// price basis), gone (off the board), lc (a moved line: about what its own
+// line is worth now, from the new line's price) }
+function droppedPrices(r) {
   const was = r.listing.lastPoint;
-  const wasPrice = bookBasis() ? (was[2] ?? was[1]) : was[1];
-  const [chip, why] = droppedReason(r);
   const gone = !!r.gone_at;
-  // A moved line: about what its own line is worth now, from the new line's price
-  const lc = gone && lineMoved(r) ? closeAt(r, prefs.basis).back : null;
+  return { was, wasPrice: bookBasis() ? (was[2] ?? was[1]) : was[1], gone,
+           lc: gone && lineMoved(r) ? closeAt(r, prefs.basis).back : null };
+}
+
+function droppedRow(r, i) {
+  const { was, wasPrice, gone, lc } = droppedPrices(r);
+  const [chip, why] = droppedReason(r);
   const priceNow = lc ? `<span title="About what this bet's line is worth now: ${esc(why)}">≈${odds(lc)}</span>` : gone ? '–' : odds(r.back);
   const series = seriesOf(r);
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top">
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
       ${gameCell(r)}${selectionCell(r)}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(lineTitle(r).join('\n'))}">
         <div class="font-semibold ${gone && !lc ? 'text-gray-500' : 'text-gray-200'}">${priceNow}</div>
@@ -857,10 +864,14 @@ function renderDropped() {
   $('dropped-wrap').classList.toggle('hidden', !rows.length);
   $('dropped-count').textContent = rows.length ? `${rows.length} bet${rows.length === 1 ? '' : 's'}` : '';
   $('dropped-body').innerHTML = rows.map(droppedRow).join('');
+  droppedShown = rows;
 }
 
 function openStats(r) {
   const g = r.game;   // live rows only
+  const d = r.listing ? droppedPrices(r) : null;   // No longer value rows only
+  const [chip, why] = d ? droppedReason(r) : [];
+  const basisLabel = bookBasis() ? 'best bookie' : 'average';
   openPlayerStats({
     sport: r.sport, gameId: r.game_id, playerId: r.player_id,
     name: r.selection_name,
@@ -872,14 +883,22 @@ function openStats(r) {
       { label: 'Model at kickoff', value: pct(r.model_prob) },
       { label: 'Chance now', value: pct(r.live.p_win), sub: (LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown)[0] },
       { label: 'Live EV', value: signedPct(r.ev), cls: signCls(r.ev) },
+    ] : d ? [
+      { label: `Odds now (${basisLabel})`, value: d.lc ? `≈${odds(d.lc)}` : d.gone ? '–' : odds(r.back),
+        cls: d.gone && !d.lc ? 'text-gray-500' : 'text-amber-400', sub: `Was ${odds(d.wasPrice)} when listed · Open ${odds(r.open)}` },
+      { label: 'Model', value: pct(r.model_prob) },
+      { label: 'Fair odds', value: odds(r.fair_odds) },
+      { label: 'Edge now', value: d.gone ? '–' : signedPct(r.edge), cls: d.gone ? 'text-gray-500' : signCls(r.edge),
+        sub: `average price · was ${signedPct(d.was[3])} when listed` },
     ] : [
-      { label: `Bookie odds (${bookBasis() ? 'best bookie' : 'average'})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open)} · Best ${odds(r.best)}` },
+      { label: `Bookie odds (${basisLabel})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open)} · Best ${odds(r.best)}` },
       { label: 'Model', value: pct(r.model_prob) },
       { label: 'Fair odds', value: odds(r.fair_odds) },
       { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge), sub: `average price · ${signedPct(r.bestEdge)} at the best` },
     ],
     note: `${selectionText(r)} — ${r.market_name}. `
-      + (!g && r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. ` : '')
+      + (d ? `No longer value (${chip.toLowerCase()})${why ? `: ${why}` : ''}. Listed ${spanText(r.listing.secs)}, until ${agoText(r.listing.lastEnd)}. ` : '')
+      + (!g && !d?.gone && r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. ` : '')
       + (g && bookBasis() && r.best_book ? `Best price before kickoff at ${r.best_book}. ` : '')
       + 'Price assumes the player takes the field.',
   });
@@ -1505,6 +1524,11 @@ $('bets-body').addEventListener('click', e => {
   if (e.target.closest('a')) return;   // the game's Multi Builder link
   const row = e.target.closest('tr[data-row]');
   if (row && shown[row.dataset.row]) openStats(shown[row.dataset.row]);
+});
+$('dropped-body').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const row = e.target.closest('tr[data-row]');
+  if (row && droppedShown[row.dataset.row]) openStats(droppedShown[row.dataset.row]);
 });
 $('live-body').addEventListener('click', e => {
   if (e.target.closest('a')) return;
