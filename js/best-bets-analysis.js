@@ -23,7 +23,7 @@
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
-import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit,
+import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit, lineMoveStats,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText } from './best-bets-filters.js';
@@ -286,8 +286,8 @@ function renderTiles(bets, fit, pooled) {
           : `Needs ${FIT_MIN_BETS} settled bets over ${FIT_MIN_GAMES} games`,
       "The model's share when its probability and the bookie's are fitted to results together. 100% = the model's price is the truth; 0% = the bookie's is."),
     tile('Closing line value', pos.clvN ? `<span class="${signCls(pos.clv)}">${signedPct(pos.clv)}</span>` : 'n/a',
-      pos.clvN ? `${count(pos.clvN, 'positive-edge bet')} priced more than once` : 'No positive-edge bets here have a closing price',
-      'Odds when first priced against the closing odds. Above zero means the market moved toward the model. Scorer odds are fetched once per game, so they have none.'),
+      pos.clvN ? `${count(pos.clvN, 'positive-edge bet')} with a closing price` : 'No positive-edge bets here have a closing price',
+      'Odds taken against the closing odds. Above zero means the market moved toward the model. A line or total whose line the bookies moved is judged against the close at its own line (Line moves below). Selections priced only once have none.'),
   ].join('');
 }
 
@@ -596,7 +596,7 @@ function renderRuleDetail(cell, fit) {
     stat('Without best game', st.restRoi != null ? `<span class="${signCls(st.restRoi)}">${signedPct(st.restRoi)}</span>` : '–', 'the return with its most profitable game taken out',
       'A rule that lives off one game falls over here'),
     stat('Closing line value', st.clvN ? `<span class="${signCls(st.clv)}">${signedPct(st.clv)}</span>` : 'n/a',
-      st.clvN ? `${count(st.clvN, 'bet')} priced more than once` : 'no closing prices here',
+      st.clvN ? `${count(st.clvN, 'bet')} with a closing price` : 'no closing prices here',
       'Odds when first priced against the closing odds. Above zero means the market moved toward the model: the earliest sign an edge is real.'),
     (s => stat('Safe stake', stakeText(s), stakeSub(s),
       `A share of the bank per bet at ${riskOf().label} risk: ${riskOf().text}. This rule is one of several looked at, so it flatters.`))(stakeOfBets(cell.bets)),
@@ -1077,7 +1077,7 @@ function renderPredictedClose() {
   const predCell = x => cell(x, v => `<span class="${signCls(v.pred)}">${signedPct(v.pred)}</span>`);
   const resCell = x => cell(x, v => `<span class="${signCls(v.roi)}">${signedPct(v.roi, 0)}</span>`);
   const a = ev.all;
-  $('pc-sub').textContent = `${count(cm.points, 'price move')} learnt from (every selection priced more than once: when first priced and when it first showed value, each to its close) · held out ${count(days.length, 'day')}`;
+  $('pc-sub').textContent = `${count(cm.points, 'price move')} learnt from (every selection with a closing price - a moved line's at its own line: when first priced and when it first showed value, each to its close) · held out ${count(days.length, 'day')}`;
   $('pc-summary').innerHTML = !days.length ? 'Too few days settled yet to hold any out.'
     : `Out of sample (${dayText(days[0])} to ${dayText(days.at(-1))}, each day predicted by a fit on the days before), betting when first priced at the best bookie: `
       + `close edge above 0 <span class="${signCls(a.open.close.clv)} font-semibold">${signedPct(a.open.close.clv)}</span> closing line value on ${count(a.open.close.n, 'bet')} `
@@ -1103,6 +1103,59 @@ function renderPredictedClose() {
     + "then judges the price you'd take against the fair closing price it predicts (the bookies' margin out, from how closing prices have done against results). "
     + "Predicted and actual CLV agreeing out of sample says the predictions can be trusted; positive actual CLV is what a real edge looks like before the results can show it. "
     + 'Filters → Judge by: Predicted close lists and stakes by it.';
+}
+
+// Lines, totals and yards: how far the bookies moved the line from each bet's
+// by the close, and closing-line value with those moves counted (the bets as
+// counted above, every filter applied)
+function renderLineMoves(base) {
+  const bets = selected(base).filter(b => b.lineSrc != null);
+  const all = lineMoveStats(bets);
+  $('lm-sub').textContent = `${scopeText()} · lines, totals and yards props`;
+  if (!all.n) {
+    $('lm-summary').textContent = raw.some(r => r.lc_src != null) ? 'No line, total or yards bets here.'
+      : 'Needs the backend that sends where each line closed: not deployed yet.';
+    $('lm-body').innerHTML = '';
+    $('lm-note').textContent = '';
+    return;
+  }
+  const clvCell = (v, n) => (n ? `<span class="${signCls(v)} font-semibold">${signedPct(v)}</span>` : '<span class="text-gray-600">–</span>');
+  const ptsCell = v => (v == null ? '<span class="text-gray-600">–</span>' : `<span class="${signCls(v)}">${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}</span>`);
+  const roiPair = st => `${st.forN ? `<span class="${signCls(st.roiFor)}">${signedPct(st.roiFor, 0)}</span>` : '–'} / `
+    + `${st.againstN ? `<span class="${signCls(st.roiAgainst)}">${signedPct(st.roiAgainst, 0)}</span>` : '–'}`;
+  $('lm-summary').innerHTML = `The bookies moved the line on ${count(all.moved, 'bet')} of ${all.n.toLocaleString()} `
+    + `(${pct(all.moved / all.n, 0)}): toward ${all.forN}, against ${all.againstN}. `
+    + `With line moves counted, closing line value is ${clvCell(all.clv, all.clvN)} on ${count(all.clvN, 'bet')} `
+    + `(${all.movedClvN ? `${clvCell(all.movedClv, all.movedClvN)} on the moved ones; ` : ''}against the price alone ${clvCell(all.clvPrice, all.clvPriceN)}), `
+    + `${all.beat == null ? '' : `and ${pct(all.beat, 0)} beat the close.`}`;
+  const groups = new Map();
+  for (const b of bets) {
+    if (!groups.has(b.group)) groups.set(b.group, []);
+    groups.get(b.group).push(b);
+  }
+  $('lm-body').innerHTML = [...groups.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([group, gb]) => {
+    const st = lineMoveStats(gb);
+    return `<tr class="border-t border-gray-700/60">
+      <td class="px-2 py-1.5 text-left font-semibold text-gray-100">${esc(groupLabel(group))}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${st.n.toLocaleString()}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${pct(st.moved / st.n, 0)}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${st.forN} / ${st.againstN}</td>
+      <td class="px-2 py-1.5 text-right">${ptsCell(st.pts)}</td>
+      <td class="px-2 py-1.5 text-right text-gray-300">${st.beat == null ? '–' : pct(st.beat, 0)}</td>
+      <td class="px-2 py-1.5 text-right">${clvCell(st.clv, st.clvN)}<span class="block text-[10px] text-gray-500">${st.clvN || ''}</span></td>
+      <td class="px-2 py-1.5 text-right">${clvCell(st.clvPrice, st.clvPriceN)}</td>
+      <td class="px-2 py-1.5 text-right">${roiPair(st)}</td>
+    </tr>`;
+  }).join('');
+  const src = all.srcs;
+  const how = [src.alt && `${src.alt} from the bookies' alternate line at the bet's line`,
+               src.model && `${src.model} from the new line's price moved back by the model's chances at the two lines (taken at the closing check)`,
+               src.approx && `${src.approx} the same from the model's chances when each line was last priced (older bets: less exact)`,
+               src.none && `${src.none} with no closing price at the new line (no CLV)`].filter(Boolean);
+  $('lm-note').textContent = 'Bookies move these lines rather than the price, which sits near 1.90 at every line, so the price alone shows almost no movement, '
+    + 'and a bet whose line moved used to be judged against its last price before the move. Here it is judged against the closing price at its own line. '
+    + (how.length ? `Of the moved: ${how.join('; ')}. ` : '')
+    + 'NHL puck lines only ever sit at ±1.5, so a move there is the favourite changing (3 goals on paper, a small move in chance).';
 }
 
 function renderModelVsMarket() {
@@ -1357,6 +1410,7 @@ function render() {
   renderGrid(s.anyOdds);
   renderRoiChart(bets, fit, pooled);
   renderCalChart(bets);
+  renderLineMoves(base);
   renderTeams(s.every);
   renderOutliers();
   renderBreakdown(base);

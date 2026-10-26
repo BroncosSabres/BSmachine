@@ -20,7 +20,7 @@
 // bets past that point are outliers and get no stake.
 import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
 import { profit, gameBootstrap, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
-import { priceAt } from './best-bets-filters.js';
+import { priceAt, closeAt, hasRealClose, lineMoved } from './best-bets-filters.js';
 
 // --- rows from /api/best_bets/analysis -----------------------------------------
 
@@ -68,16 +68,22 @@ export function decodeRows(data) {
 // which profit() pays out at. A row with no best-bookmaker price recorded is
 // taken at the median, marked fallback. A selection priced once has no CLV;
 // CLV is from the stage's price to the close (from the open, at the close).
+// A main line whose line moved is judged against the closing price at its
+// own line (closeAt): moved, linePts (how far the line moved its way),
+// closeLine, lineSrc; clvPrice is against its own last price, as it was
+// judged before line moves were followed.
 export function toBet(r, stage = 'open', basis = 'book') {
-  const repriced = r.n_checks > 1;
   const at = priceAt(r, stage, basis);
+  const from = priceAt(r, stage === 'close' ? 'open' : stage, basis).back;
   return {
     game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
     edge: at.edge, prob: r[`${stage}_prob`], back: r[`${stage}_back`], taken: at.back, commission: r.commission,
     fallback: at.fallback,
     win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),
-    clv: repriced ? priceAt(r, stage === 'close' ? 'open' : stage, basis).back / priceAt(r, 'close', basis).back - 1 : null,
+    clv: hasRealClose(r) ? from / closeAt(r, basis).back - 1 : null,
+    clvPrice: r.n_checks > 1 ? from / priceAt(r, 'close', basis).back - 1 : null,
+    moved: lineMoved(r), linePts: r.line_pts ?? null, closeLine: r.close_line ?? null, lineSrc: r.lc_src ?? null,
     market: marketKey(r), prop: propKey(r), checks: r.n_checks,
     row: r,   // for naming the bet when a group of bets is listed
   };

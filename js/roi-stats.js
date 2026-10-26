@@ -8,6 +8,7 @@
 //   back        the bookie odds
 //   win / push  fraction of the stake that won / was returned
 //   clv         back / closing odds - 1, or null when there is no closing price
+//               (a main line whose line moved: the closing odds at its own line)
 
 // At the price the bet was taken at (taken; safe-stake.js toBet), which can beat
 // back, the price it was chosen at
@@ -71,6 +72,39 @@ export function summarise(bets, opts) {
     roiCI: gameBootstrap(bets, profit, opts),
     clv: mean(withClv.map(b => b.clv)),
     clvN: withClv.length,
+  };
+}
+
+// Where a group of main-line bets' lines went by the close (spreads, totals,
+// NFL yards; safe-stake.js toBet's linePts / lineSrc / clv / clvPrice). Bets
+// with no closing line (other markets) are left out.
+//   n          bets whose closing line is known
+//   moved      of those, the ones whose market closed at another line, split
+//              forN / againstN by whether it moved their way
+//   pts        the mean points (yards) it moved their way, over the moved
+//   beat       the share with a closing price that beat it (CLV > 0)
+//   clv        mean CLV, a moved line's against the close at its own line;
+//              movedClv (movedClvN bets) the same over the moved bets only
+//   clvPrice   the same bets against their own last price, as they were
+//              judged before line moves were followed
+//   roi, roiFor, roiAgainst   actual RoI: all, line moved their way, against
+//   srcs       how the moved bets' closes were found {alt, model, approx, none}
+export function lineMoveStats(bets) {
+  const lined = bets.filter(b => b.lineSrc != null);
+  const moved = lined.filter(b => b.lineSrc !== 'held');
+  const fr = moved.filter(b => b.linePts > 0), ag = moved.filter(b => b.linePts < 0);
+  const withClv = lined.filter(b => b.clv != null), priced = lined.filter(b => b.clvPrice != null);
+  const srcs = {};
+  for (const b of moved) srcs[b.lineSrc] = (srcs[b.lineSrc] || 0) + 1;
+  return {
+    n: lined.length, moved: moved.length, forN: fr.length, againstN: ag.length,
+    pts: mean(moved.map(b => b.linePts)),
+    beat: withClv.length ? withClv.filter(b => b.clv > 0).length / withClv.length : null,
+    clv: mean(withClv.map(b => b.clv)), clvN: withClv.length,
+    movedClv: mean(moved.filter(b => b.clv != null).map(b => b.clv)), movedClvN: moved.filter(b => b.clv != null).length,
+    clvPrice: mean(priced.map(b => b.clvPrice)), clvPriceN: priced.length,
+    roi: mean(lined.map(profit)), roiFor: mean(fr.map(profit)), roiAgainst: mean(ag.map(profit)),
+    srcs,
   };
 }
 

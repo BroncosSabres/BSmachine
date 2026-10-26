@@ -48,6 +48,20 @@ export function listedInfo(points, pass, end) {
 // sent [t, median, book] points, or none)
 export const hasHistory = points => Array.isArray(points) && points.some(p => Array.isArray(p) && p.length >= 5);
 
+// A main line's line over time ([[unix seconds, line], ...]: line_history on
+// /api/best_bets rows and dropped, sent once the line has moved), or null.
+// Bookies move these lines and keep the price near 1.90, and the price
+// history is one line's, so this is where the market went.
+export function lineSeriesOf(r) {
+  const h = r.line_history;
+  return Array.isArray(h) && h.length > 1 && new Set(h.map(p => p[1])).size > 1 ? h : null;
+}
+
+// How far a move of the line to `to` is a bet's way: an over's line going
+// up, an under's or a handicap's (either side's own) going down - the bet
+// holds more than the market then gives (the backend's line_pts)
+export const linePointsFor = (side, line, to) => (side === 'over' ? to - line : line - to);
+
 // "2h 40m", "35 min", "under a minute"
 export function spanText(secs) {
   if (secs < 60) return 'under a minute';

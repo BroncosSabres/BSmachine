@@ -42,6 +42,7 @@
 // return of betting the calibrated edge (and other rules) at the average price
 // while each bet showed value.
 import { kindKey, marketKey, sourceKey, toBet } from './safe-stake.js';
+import { hasRealClose, lineMoved } from './best-bets-filters.js';
 import { onePerMarket } from './roi-stats.js';
 
 export const N0_SPORT_GRID = [30, 100, 300];         // the model's terms, sport level
@@ -103,7 +104,9 @@ const sidesOf = r => (r.market_kind === 'match_odds' && r.three_way ? 3 : 2);
 
 // {row -> overround} at a stage: the market's sides' 1 / price summed, for
 // rows whose every side was priced there (and, at the close, still in the
-// market at the end: a row that left it closed earlier than its sides)
+// market at the end: a row that left it closed earlier than its sides). A
+// main line the market moved off left with its other side, both last priced
+// at one check, so that pair's closes still make a margin.
 export function overrounds(rows, stage = 'close') {
   const groups = new Map();
   for (const r of rows) {
@@ -117,7 +120,7 @@ export function overrounds(rows, stage = 'close') {
   for (const g of groups.values()) {
     if (g.length !== sidesOf(g[0])) continue;
     const backs = g.map(r => r[`${stageOf(r, stage)}_back`]);
-    if (backs.some(b => !(b > 1)) || g.some(r => r.gone)) continue;
+    if (backs.some(b => !(b > 1)) || g.some(r => r.gone && !lineMoved(r))) continue;
     const sum = backs.reduce((s, b) => s + 1 / b, 0);
     for (const r of g) out.set(r, sum);
   }
@@ -127,6 +130,17 @@ export function overrounds(rows, stage = 'close') {
 // The market's chance of a selection at a price: margin out where the
 // overround is known, else 1 / price
 export const marketChance = (back, overround) => (overround ? 1 / back / overround : 1 / back);
+
+// The closing median price a settled row is judged against, and the margin
+// to take out of it: { back, ovr } (ovr: overrounds(rows, 'close')). Where a
+// main line moved, the close at the row's own line (lc_back, at the closing
+// line's margin); else its own close, if it was priced again and still in
+// its market at the end. Null when there is no real close.
+export function realClose(r, ovr) {
+  if (lineMoved(r)) return r.lc_back > 1 ? { back: r.lc_back, ovr: r.lc_ovr } : null;
+  if (!hasRealClose(r) || !(r.close_back > 1) || r.gone) return null;
+  return { back: r.close_back, ovr: ovr.get(r) };
+}
 
 export const leafKey = r => `${r.sport}|${kindKey(r)}|${r.source ? sourceKey(r) : (String(r.market_id || '').startsWith('oddsapi:') ? 'book' : 'betfair')}`;
 
@@ -373,14 +387,16 @@ export function ruleReturns(rows, fits, { basis = 'book', passes = null } = {}) 
 // Closing-line value per market of the bets that showed value: the average
 // price taken while they did against the close with the margin out (where both
 // sides were priced; else against the raw closing price, which flatters the
-// close by its margin). -> {key: {n, mean}}
+// close by its margin). A main line whose line moved: against the close at its
+// own line (lc_back, the closing line's margin lc_ovr). -> {key: {n, mean}}
 export function clvByKey(rows, basis = 'book') {
   const ovr = overrounds(rows, 'close');
   const out = {};
   for (const r of rows) {
-    if (r.avg_back == null || !(r.n_checks > 1) || !(r.close_back > 1) || r.gone) continue;
+    const close = realClose(r, ovr);
+    if (r.avg_back == null || !close) continue;
     const taken = (basis === 'book' ? r.avg_book_back : null) ?? r.avg_back;
-    const fair = marketChance(r.close_back, ovr.get(r));
+    const fair = marketChance(close.back, close.ovr);
     const t = out[leafKey(r)] || (out[leafKey(r)] = { n: 0, sum: 0 });
     t.n += 1;
     t.sum += taken * fair - 1;

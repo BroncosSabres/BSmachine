@@ -12,6 +12,8 @@
 //   move  = logit(1 / close median) - logit(1 / median now)
 //         ~ terms in the model's disagreement with the price now (d), the best
 //           bookie's premium over the median (gap) and the hours left
+//           (a main line whose line moved: the close at its own line, so a
+//           line move is the price move it is worth - calibrate.js realClose)
 //   fair  = the market-only fit's chance at the predicted closing price
 //           (calibrate.js, every selection at the close: the margin out)
 //   edge  = fair × price taken - 1
@@ -22,7 +24,7 @@
 // as calibrate.js. Each market is pulled toward its sport and each sport toward
 // all markets (empirical Bayes, n0 by the walk-forward's squared error on the
 // moments the model liked), with cluster-robust intervals by game.
-import { logit, sigmoid, overrounds, marketChance, leafKey, fitHierarchy, fitFor, observations, edgeAt,
+import { logit, sigmoid, overrounds, marketChance, realClose, leafKey, fitHierarchy, fitFor, observations, edgeAt,
          solve, inv, mat, mul, add, quad, dot, groupBy } from './calibrate.js';
 
 export const MOVE_TERMS = 6;
@@ -50,13 +52,16 @@ export function stateOf({ back, taken = back, prob, overround = null, hrs }) {
 }
 
 // Settled rows (decoded, with open_hrs / first_hrs) -> move points: { key,
-// sport, game, date, stage, x, y, w, d, row }. Only selections priced more
-// than once and still in their market at the end (a real close).
+// sport, game, date, stage, x, y, w, d, row }. Only selections with a real
+// close (calibrate.js realClose): priced more than once and still in their
+// market at the end, or a main line whose line moved, judged by the close at
+// its own line - so a line move counts as the price move it is worth.
 export function movePoints(rows) {
   const oOpen = overrounds(rows, 'open'), oClose = overrounds(rows, 'close');
   const out = [];
   for (const r of rows) {
-    if (!(r.n_checks > 1) || !(r.close_back > 1) || r.gone) continue;
+    const close = realClose(r, oClose);
+    if (!close) continue;
     const half = (oClose.get(r) && !(r.market_kind === 'match_odds' && r.three_way)) ? 0.5 : 1;
     for (const stage of ['open', 'first']) {
       const hrs = r[`${stage}_hrs`];
@@ -64,7 +69,7 @@ export function movePoints(rows) {
       const s = stateOf({ back: r[`${stage}_back`], taken: r[`${stage}_book_back`], prob: r[`${stage}_prob`],
                           overround: stage === 'open' ? oOpen.get(r) : oClose.get(r), hrs });
       if (!s) continue;
-      const y = Math.max(-MAX_MOVE, Math.min(MAX_MOVE, logit(1 / r.close_back) - logit(1 / s.back)));
+      const y = Math.max(-MAX_MOVE, Math.min(MAX_MOVE, logit(1 / close.back) - logit(1 / s.back)));
       out.push({ key: leafKey(r), sport: r.sport, game: `${r.sport}:${r.game_id}`, date: r.kickoff, stage,
                  x: moveFeatures(s.d, s.gap, hrs), y, w: half, d: s.d, row: r });
     }
@@ -196,10 +201,10 @@ export function closeReturns(rows, wf) {
                          first: { close: blank(), closeLo: blank(), model: blank() } });
   const all = tally(), byKey = {};
   for (const r of rows) {
-    const moves = wf.fits[r.kickoff], fair = wf.fair[r.kickoff];
-    if (!moves || !fair || !(r.n_checks > 1) || !(r.close_back > 1) || r.gone || r.win_frac == null) continue;
+    const moves = wf.fits[r.kickoff], fair = wf.fair[r.kickoff], close = realClose(r, oClose);
+    if (!moves || !fair || !close || r.win_frac == null) continue;
     const key = leafKey(r), ff = fitFor(fair, key);
-    const fairClose = sigmoid(ff.beta[0] + ff.beta[1] * logit(marketChance(r.close_back, oClose.get(r))));
+    const fairClose = sigmoid(ff.beta[0] + ff.beta[1] * logit(marketChance(close.back, close.ovr)));
     for (const stage of ['open', 'first']) {
       const hrs = r[`${stage}_hrs`];
       if (stage === 'first' && hrs == null) continue;

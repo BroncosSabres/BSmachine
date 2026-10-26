@@ -5,7 +5,7 @@
 import { fitFor, calProb, marketChance, edgeAt, leafKey } from './calibrate.js';
 import { stateOf, predictClose } from './close-model.js';
 
-const CACHE_KEY = 'bsm_bb_calib_v6';   // v6: the predicted-close model (close) with it
+const CACHE_KEY = 'bsm_bb_calib_v7';   // v7: moved main lines judged at the close at their own line
 
 function cached(version, basis) {
   try {

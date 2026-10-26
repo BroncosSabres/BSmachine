@@ -7,9 +7,10 @@
 // "Restricted" card or the tables accordingly. The Filters modal sets which
 // markets show, the edge each needs and whether bets are judged at the best
 // single bookie's price (the default) or the median across them; it is saved to
-// the account. The track-record sidebar aggregates the settled picks from
-// /api/best_bets/results in the browser so those filters, the sport and the
-// odds range apply to the ROI numbers too. NFL / NHL
+// the account. The track-record sidebar aggregates the settled selections
+// from /api/best_bets/analysis in the browser, one bet per market as the
+// analysis page counts them, so those filters, the sport and the odds range
+// apply to the ROI numbers too (its outlier line: /api/best_bets/results). NFL / NHL
 // scorers open the player's stats window (player-stats-modal.js) and show his
 // team and how often he has scored (last 10 / last season / career, from the
 // Multi Builder's game_player_logs) against the chance the bookie odds imply.
@@ -35,8 +36,9 @@ import { installTapTips } from './tap-tips.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
-         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, LIVE_SORTS, LIVE_FINALS } from './best-bets-filters.js';
-import { listedInfo, pointPasses, hasHistory, spanText } from './best-bets-history.js';
+         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, LIVE_SORTS, LIVE_FINALS,
+         closeAt, lineMoved, hasRealClose } from './best-bets-filters.js';
+import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
@@ -238,21 +240,72 @@ function moveArrow(mv) {
     : '<span class="text-red-400 text-[10px] ml-0.5" aria-label="shortened">▼</span>';
 }
 
-// The price over time as a step line (a price holds until the next check),
-// with the latest marked
-function sparkline(series) {
+// A value over time as a step line (it holds until the next check), with the
+// latest marked: the price, or a main line's line (lineSeriesOf). mark: a
+// dashed guide at that value (the bet's own line); tone: the latest's colour,
+// 'for' / 'against' the bet (default amber, the price now).
+const SPARK_TONES = { for: '#4ade80', against: '#f87171' };
+function sparkline(series, { mark = null, tone = null } = {}) {
   if (series.length < 2) return '';
   const W = 64, H = 16, P = 2;
   const t0 = series[0][0], t1 = series.at(-1)[0];
   const vals = series.map(p => p[1]);
-  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const lo = Math.min(...vals, mark ?? Infinity), hi = Math.max(...vals, mark ?? -Infinity);
   const x = t => (t1 === t0 ? W - P : P + (t - t0) / (t1 - t0) * (W - 2 * P)).toFixed(1);
   const y = v => (hi === lo ? H / 2 : H - P - (v - lo) / (hi - lo) * (H - 2 * P)).toFixed(1);
   let d = `M${x(t0)},${y(vals[0])}`;
   for (let i = 1; i < series.length; i++) d += `H${x(series[i][0])}V${y(vals[i])}`;
+  const guide = mark == null ? '' : `<line x1="${P}" x2="${W - P}" y1="${y(mark)}" y2="${y(mark)}" stroke="currentColor" stroke-width="0.75" stroke-dasharray="2 2" opacity="0.6"/>`;
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" class="inline-block text-gray-500" aria-hidden="true">
-    <path d="${d}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-    <circle cx="${x(t1)}" cy="${y(vals.at(-1))}" r="2" fill="#fbbf24"/></svg>`;
+    ${guide}<path d="${d}" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+    <circle cx="${x(t1)}" cy="${y(vals.at(-1))}" r="2" fill="${SPARK_TONES[tone] || '#fbbf24'}"/></svg>`;
+}
+
+// --- line moves ----------------------------------------------------------------
+// Main lines (spreads, totals, NFL yards) move the line, not the price: their
+// price history is one line's and sits near 1.90, so where the line went
+// (line_history) is what shows how the market moved.
+
+// A line as the market quotes it: a handicap signed, a total or yards plain
+const lineText = (r, x) => (r.market_kind === 'handicap' && x > 0 ? `+${x}` : `${x}`);
+// "+1 pt", "−2.5 yds": how far a line moved a bet's way
+function ptsText(r, pts) {
+  const a = Math.abs(pts), unit = isProp(r) ? 'yd' : 'pt';
+  return `${pts > 0 ? '+' : pts < 0 ? '−' : ''}${a} ${unit}${a === 1 ? '' : 's'}`;
+}
+
+// A row's line history for the sparkline: { series, from, now, pts (how far
+// from the row's own line the market is now, its way) }, or null when its
+// line hasn't moved
+function lineInfo(r) {
+  const series = lineSeriesOf(r);
+  if (!series) return null;
+  const now = series.at(-1)[1];
+  return { series, from: series[0][1], now, pts: linePointsFor(r.side, r.line, now) };
+}
+
+// The sparkline: the line where it has moved (a guide at the row's own line,
+// the latest coloured by whether the market went its way), else the price.
+// Up is a better offer for this side either way, as a longer price is: an
+// over's line falling, an under's or a handicap's (the side's own) rising.
+function historySpark(r, series, { tone = true } = {}) {
+  const li = lineInfo(r);
+  if (!li) return sparkline(series);
+  const t = !tone || li.pts === 0 ? null : li.pts > 0 ? 'for' : 'against';
+  const sgn = r.side === 'over' ? -1 : 1;
+  const offer = li.series.map(([at, x]) => [at, sgn * x]);
+  return `<span class="inline-flex items-center gap-1"><span class="text-[10px] text-gray-500">line</span>${sparkline(offer, { mark: sgn * r.line, tone: t })}</span>`;
+}
+
+// The tooltip's lines about the line, where it has moved
+function lineTitle(r) {
+  const li = lineInfo(r);
+  if (!li) return [];
+  // Gone at its own line: the selection itself was taken down, not moved
+  const when = r.gone_at && li.now === r.line ? 'when last priced' : 'now';
+  const out = [`Line: ${lineText(r, li.from)} when first priced, ${lineText(r, li.now)} ${when}. Bookies move these lines rather than the price, so the price above is this line's only.`];
+  if (li.now !== r.line) out.push(`This bet is at ${lineText(r, r.line)}: the market has moved ${ptsText(r, li.pts)} its way since.`);
+  return out;
 }
 
 function historyTitle(r, series, mv) {
@@ -264,7 +317,7 @@ function historyTitle(r, series, mv) {
     lines.push(`Since ${kickoffText(new Date(series[0][0] * 1000))}: low ${odds(Math.min(...vals))}, high ${odds(Math.max(...vals))}`);
   }
   lines.push(`Open ${odds(r.open)}: the first price recorded. Best ${odds(r.best)}: the highest since it first showed value.`);
-  return lines.join('\n');
+  return [...lines, ...lineTitle(r)].join('\n');
 }
 
 // Scorers with a stats window (the multi builders' player_detail endpoints).
@@ -464,6 +517,7 @@ async function loadStakes() {
     stakesFailed = true;
   }
   renderView();
+  renderTrackRecord();
 }
 
 // The calibration (calibrate-client.js): from this browser's cache, else
@@ -604,7 +658,7 @@ function betRow(r, i) {
         <div class="font-bold text-amber-400">${odds(r.back)}${moveArrow(mv)}</div>
         <div class="text-[11px] text-gray-400 leading-snug">Open ${odds(r.open)}</div>
         <div class="text-[11px] text-gray-400 leading-snug">Best ${odds(r.best)}</div>
-        ${sparkline(series)}
+        ${historySpark(r, series, { tone: false })}
       </td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="text-gray-200">${pct(r.model_prob)}</div>
@@ -753,6 +807,12 @@ function droppedRows() {
 // [chip, why]: what keeps it off the list now
 function droppedReason(r) {
   const key = marketOf(r);
+  if (r.gone_at && r.close_line != null && r.close_line !== r.line) {
+    const lc = lineMoved(r) ? closeAt(r, prefs.basis).back : null;
+    return ['Line moved', `The bookies moved the line to ${lineText(r, r.close_line)} (${ptsText(r, r.line_pts)} for this bet) `
+      + `at ${kickoffText(r.gone_at)}` + (lc ? `. At this bet's ${lineText(r, r.line)} that is worth about ${odds(lc)} now `
+      + `(${{ alt: "the bookies' alternate line", model: "the new line's price, moved back by the model's chances at the two lines", approx: "the new line's price, moved back by the model's chances at the two lines" }[r.lc_src]})` : '')];
+  }
   if (r.gone_at) return ['Off the board', `Not in the latest check since ${kickoffText(r.gone_at)}: the bookies took it down or moved the line`];
   const edge = judgedEdge(r);
   if (!(edge > 0)) return ['No edge now', judgeBy() === 'cal' ? 'Its calibrated edge at the price taken is no longer positive'
@@ -768,13 +828,17 @@ function droppedRow(r) {
   const wasPrice = bookBasis() ? (was[2] ?? was[1]) : was[1];
   const [chip, why] = droppedReason(r);
   const gone = !!r.gone_at;
+  // A moved line: about what its own line is worth now, from the new line's price
+  const lc = gone && lineMoved(r) ? closeAt(r, prefs.basis).back : null;
+  const priceNow = lc ? `<span title="About what this bet's line is worth now: ${esc(why)}">≈${odds(lc)}</span>` : gone ? '–' : odds(r.back);
+  const series = seriesOf(r);
   return `
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top">
       ${gameCell(r)}${selectionCell(r)}
-      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
-        <div class="font-semibold ${gone ? 'text-gray-500' : 'text-gray-200'}">${gone ? '–' : odds(r.back)}</div>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(lineTitle(r).join('\n'))}">
+        <div class="font-semibold ${gone && !lc ? 'text-gray-500' : 'text-gray-200'}">${priceNow}</div>
         <div class="text-[11px] text-gray-400 leading-snug">was ${odds(wasPrice)}</div>
-        ${sparkline(seriesOf(r))}
+        ${historySpark(r, series)}
       </td>
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-semibold ${gone ? 'text-gray-500' : signCls(r.edge)}">${gone ? '–' : signedPct(r.edge)}</div>
@@ -992,6 +1056,18 @@ function liveSelectionCell(r) {
   </td>`;
 }
 
+// Under a live main line's Close: the line the market closed at when it moved
+// off the pick's, and the closing price at the pick's own line
+function liveLineNote(r) {
+  if (r.close_line == null || r.close_line === r.line) return '';
+  const lc = lineMoved(r) ? closeAt(r, prefs.basis).back : null;
+  const title = `The bookies closed this market at ${lineText(r, r.close_line)}, ${ptsText(r, r.line_pts)} this pick's way. `
+    + 'Close above is the last price at its own line, before the line moved.'
+    + (lc ? ` At its ${lineText(r, r.line)}, the close was worth about ${odds(lc)}: closing-line value is judged against that.` : '');
+  return `<div class="text-[10px] leading-snug text-gray-500" title="${esc(title)}">line ${lineText(r, r.close_line)}
+    <span class="${signCls(r.line_pts)}">(${ptsText(r, r.line_pts)})</span>${lc ? ` ≈${odds(lc)}` : ''}</div>`;
+}
+
 function liveRow(r, i) {
   const ch = r.chance ?? r.live.p_win, m = judging() && r.cal ? r.cal.p : r.model_prob;
   const move = ch == null || m == null || LOCKED.has(r.live.status) || Math.abs(ch - m) < 0.005 ? ''
@@ -1005,7 +1081,7 @@ function liveRow(r, i) {
       ${liveGameCell(r)}${liveSelectionCell(r)}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold text-amber-400">${odds(r.back)}</div>
-        ${at('avg', 'Avg')}${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}
+        ${at('avg', 'Avg')}${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}${liveLineNote(r)}
       </td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
@@ -1164,6 +1240,9 @@ function summarise(picks) {
   const live = picks.filter(p => p.result !== 'void');
   const n = live.length;
   const mean = f => n ? live.reduce((a, p) => a + f(p), 0) / n : null;
+  // CLV only where there was a later price to close at (as the analysis page):
+  // priced again at its line, or its line moved and the close at it is known
+  const repriced = live.filter(p => p.clvClose != null);
   return {
     n,
     wins:     live.reduce((a, p) => a + p.win_frac, 0),   // a half-win counts as half
@@ -1172,7 +1251,7 @@ function summarise(picks) {
     roiBook:  mean(p => profit(p, p.bookAt)),
     roiBest:  mean(p => profit(p, p.takeBest)),
     roiClose: mean(p => profit(p, p.takeClose)),
-    clv:      mean(p => p.takeAt / p.takeClose - 1),
+    clv:      repriced.length ? repriced.reduce((a, p) => a + p.takeAt / p.clvClose - 1, 0) / repriced.length : null,
   };
 }
 
@@ -1194,13 +1273,6 @@ function roiBar(label, st, scale, dim) {
   </div>`;
 }
 
-// A settled pick at the price chosen in Filters, at the stage the track
-// record reads: the average while its median edge was positive ('avg', as
-// Live, the stakes and the analysis page), else - no window kept - when it
-// was first flagged. takeAt: the price it is taken at (the best bookie's
-// where recorded, or the median); backAt / edgeAt: the median's price and
-// edge there, what the filters and bands read; bookAt: the best bookie's.
-// fallback: the best bookie's price was not recorded for it.
 // A settled or live pick's predicted-close edge when it first showed value
 // (first_* and first_hrs: the one moment of its value window whose time
 // before kickoff is known), at the price it would have been taken at then
@@ -1211,42 +1283,59 @@ function firstClose(p) {
                               at: Date.parse(p.kickoff) / 1000 - p.first_hrs * 3600 });
 }
 
-function trackAt(p) {
-  // Judging by the predicted close: at the moment it first showed value
-  if (judgeBy() === 'close' && p.first_back != null && p.first_hrs != null) {
-    const at = priceAt(p, 'first', prefs.basis), close = firstClose(p);
-    return { ...p, stage: 'first', takeAt: at.back, fallback: at.fallback, backAt: p.first_back,
-             edgeAt: close ? close.edge : null, bookAt: priceAt(p, 'first', 'book').back,
-             takeBest: priceAt(p, 'best', prefs.basis).back, takeClose: priceAt(p, 'close', prefs.basis).back };
+// The track record counts the analysis page's bets as that page does by
+// default, so the two agree under the same filters: the settled selections
+// that showed value, at their average price then (`settled`, buildModel: no
+// markets without real prices, one bet per market, chosen before any filter).
+// The edge that judges them is the analysis page's too (judgeEdgeOf), kept
+// while the rows, calibration, judge and basis stay the same.
+let trackJudge = null;
+function trackEdgeOf() {
+  const fp = fprefs();
+  if (!trackJudge || trackJudge.rows !== settledRows || trackJudge.calib !== calib
+      || trackJudge.judge !== fp.judge || trackJudge.basis !== fp.basis) {
+    trackJudge = { rows: settledRows, calib, judge: fp.judge, basis: fp.basis,
+                   edgeOf: judgeEdgeOf(settledRows, fp, calib) ?? null };
   }
-  const stage = p.avg_back != null ? 'avg' : 'flagged';
-  const at = priceAt(p, stage, prefs.basis);
-  const backAt = p[`${stage}_back`];
-  const cal = calibrateBet(calib, p, { modelProb: p[`${stage}_prob`] ?? p.close_prob, median: backAt, taken: at.back });
-  return { ...p, stage, takeAt: at.back, fallback: at.fallback, backAt,
-           edgeAt: judging() ? (cal ? cal.bookEdge : null) : p[`${stage}_edge`],
-           bookAt: priceAt(p, stage, 'book').back,
-           takeBest: priceAt(p, 'best', prefs.basis).back, takeClose: priceAt(p, 'close', prefs.basis).back };
+  return trackJudge.edgeOf;
+}
+
+// A settled bet (safe-stake.js toBet) as the track record reads it. takeAt:
+// the price it is taken at (the best bookie's where recorded, or the median);
+// backAt / edgeAt: the median's price and the edge that judges, what the
+// filters and bands read; bookAt: the best bookie's; takeBest / takeClose: the
+// peak while it showed value and the closing price, at the basis chosen.
+// clvClose: the close its CLV is judged by (a moved main line's: the close at
+// its own line; null without a real close). fallback: the best bookie's price
+// was not recorded for it.
+function trackBet(b, edgeOf) {
+  const r = b.row;
+  return { ...r, takeAt: b.taken, fallback: b.fallback, backAt: b.back,
+           edgeAt: edgeOf ? edgeOf(r) : b.edge, bookAt: priceAt(r, STAKE_STAGE, 'book').back,
+           takeBest: priceAt(r, 'peak', prefs.basis).back, takeClose: priceAt(r, 'close', prefs.basis).back,
+           clvClose: hasRealClose(r) ? closeAt(r, prefs.basis).back : null };
 }
 
 function renderTrackRecord() {
   const t = TABS.find(x => x.key === tab);
   const at = bookBasis() ? 'best bookie odds' : 'average odds';
   const oddsLabel = oddsText(oddsRangeOf(prefs));
-  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsLabel ? ` · ${oddsLabel}` : ''} · your filters · settled bets, 1 unit each at the ${at} averaged while they showed value`;
-  if (!results) {
+  $('roi-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsLabel ? ` · ${oddsLabel}` : ''} · your filters · settled bets, one per market, 1 unit each at the ${at} averaged while they showed value`;
+  if (settledRows) buildModel();   // `settled` follows the price basis
+  if (!settled) {
     $('roi-headline').innerHTML = '';
-    $('roi-bars').innerHTML = resultsFailed ? '' : Array.from({ length: 5 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
-    $('roi-note').textContent = resultsFailed ? 'Could not load results. Try again in a moment.' : '';
+    $('roi-bars').innerHTML = stakesFailed ? '' : Array.from({ length: 5 }, () => '<span class="bsm-skeleton h-4 w-full block"></span>').join('');
+    $('roi-note').textContent = stakesFailed ? 'Could not load results. Try again in a moment.' : '';
     return;
   }
-  // Each pick judged by its own market's filter at the median price of its stage
-  const picks = results.picks.map(trackAt).filter(p => t.kinds.includes(p.market_kind) && passes(p)
-    && passesMarket(fprefs(), marketOf(p), p.edgeAt, p.backAt));
-  // Outlier picks apart, edge or not, at the outlier price they were picked at:
-  // those of markets whose outliers are still on (outlier_on), unless Filters
-  // has outliers off
-  const outs = prefs.outliers === 'off' ? [] : results.picks.filter(p => p.outlier_at && (p.outlier_on ?? true)
+  // Each bet judged by its own market's filter at the median price
+  const edgeOf = trackEdgeOf();
+  const picks = settled.filter(b => t.kinds.includes(b.row.market_kind) && passes(b.row))
+    .map(b => trackBet(b, edgeOf)).filter(p => passesMarket(fprefs(), marketOf(p), p.edgeAt, p.backAt));
+  // Outlier picks apart (the tracked picks, /api/best_bets/results), edge or
+  // not, at the outlier price they were picked at: those of markets whose
+  // outliers are still on (outlier_on), unless Filters has outliers off
+  const outs = prefs.outliers === 'off' || !results ? [] : results.picks.filter(p => p.outlier_at && (p.outlier_on ?? true)
     && p.result !== 'void' && t.kinds.includes(p.market_kind) && passes(p)
     && passesBet({ ...prefs, outliers: 'any' }, marketOf(p), p.flagged_edge, p.flagged_back, true));
   const outUnits = outs.reduce((a, p) => a + profit(p, p.outlier_book_back ?? p.flagged_back), 0);
@@ -1268,8 +1357,8 @@ function renderTrackRecord() {
     <div class="text-[11px] text-gray-500">ROI at your filters · ${sel.n} bet${sel.n === 1 ? '' : 's'}, ${wonCount(sel.wins)} won</div>
     <div class="mt-1.5 text-xs tabular-nums text-gray-300" title="The same bets, 1 unit each at their average price while they showed value, at the median across the bookies and at the best price any one bookie offered">
       Average odds <span class="font-semibold ${signCls(sel.roiAvg)}">${signedPct(sel.roiAvg)}</span> · Best bookie <span class="font-semibold ${signCls(sel.roiBook)}">${signedPct(sel.roiBook)}</span></div>
-    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen before kickoff (an upper bound) and at the last odds before kickoff; CLV compares the average odds while they showed value with the closing odds. All at the ${at}.">
-      best seen ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>${outLine}`
+    <div class="mt-1.5 text-[11px] text-gray-400 tabular-nums" title="The same bets at the best odds seen while they showed value (an upper bound) and at the last odds before kickoff; CLV compares the average odds while they showed value with the closing odds, for bets priced more than once. A line or total whose line the bookies moved is judged against the closing odds at its own line. All at the ${at}.">
+      peak ${signedPct(sel.roiBest)} · closing ${signedPct(sel.roiClose)} · CLV ${signedPct(sel.clv)}</div>${outLine}`
     : `<div class="text-xs text-gray-500">No settled bets at these filters yet.</div>${outLine}`;
 
   const scale = Math.max(0.1, ...bands.filter(b => b.st.n).map(b => Math.abs(b.st.roi)));
@@ -1278,19 +1367,19 @@ function renderTrackRecord() {
       <span class="w-14 shrink-0">Edge</span><span class="flex-1 text-center">loss · profit</span>
       <span class="w-14 shrink-0 text-right">ROI</span><span class="w-12 shrink-0 text-right" title="Bets won out of bets settled. A half-win counts as half.">Won</span>
     </div>` + bands.map(b => roiBar(b.label, b.st, scale, false)).join('');
-  $('roi-note').textContent = `${results.pending.toLocaleString()} tracked bet${results.pending === 1 ? '' : 's'} awaiting a result. `
+  $('roi-note').textContent = (results ? `${results.pending.toLocaleString()} tracked bet${results.pending === 1 ? '' : 's'} awaiting a result. ` : '')
+    + 'Counted as the analysis page counts them: one bet per market (the main line, the side the model liked best), '
+    + 'so alternate lines and the other side of a result already counted are left out. '
     + `Each band is as narrow as it can be with ${MIN_BAND_BETS} settled bets in it, so there are more bands as results come in. `
     + (fallbacks ? `${fallbacks} of these bets had no best bookie price recorded and count at the average. ` : '')
     + 'Settled from our own results data; voided bets excluded. Small samples swing a lot.';
 }
 
-let resultsFailed = false;
+// The tracked picks: the track record's outlier line and pending count
 async function loadResults() {
   try {
     results = await api('best_bets/results');
-  } catch {
-    resultsFailed = true;
-  }
+  } catch { /* the track record goes without them */ }
   renderTrackRecord();
 }
 

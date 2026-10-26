@@ -216,7 +216,7 @@
                   <th class="px-2 py-2 text-right font-semibold">Games</th>
                   <th class="px-2 py-2 text-right font-semibold" title="Return on 1 unit a bet, with the 90% range">Returned</th>
                   <th class="px-2 py-2 text-right font-semibold" title="The return with the rule's most profitable game taken out. A rule that lives off one game falls over here.">Without best game</th>
-                  <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds when first priced against the closing odds, for the rule's bets priced more than once">CLV</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds taken against the closing odds, for the rule's bets with a closing price (a line or total whose line moved: the close at its own line)">CLV</th>
                   <th class="px-2 py-2 text-right font-semibold" title="A share of the bank per bet at the Risk level chosen, off the low end of the rule's return, at its median odds. Nothing until that low end is a profit.">Safe stake</th>
                 </tr>
               </thead>
@@ -304,7 +304,7 @@
                   <th class="px-2 py-1.5 text-right font-semibold" title="Out of sample, one bet per market, 1 unit each at the average price while it showed value (the price chosen above): the bets whose calibrated edge at the price taken was above 0">Calibrated &gt; 0</th>
                   <th class="px-2 py-1.5 text-right font-semibold" title="The same for every bet that showed value: the model's own edge above 0">Model &gt; 0</th>
                   <th class="px-2 py-1.5 text-right font-semibold" title="The same for the bets your Best Bets filters (market switches, the model's edge ranges, the odds range) would have listed">Your filters</th>
-                  <th class="px-2 py-1.5 text-right font-semibold" title="Closing line value of the bets that showed value: the average price taken against the closing price with the margin out (scorers against the raw close, which flatters the close)">CLV</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Closing line value of the bets that showed value: the average price taken against the closing price with the margin out (scorers against the raw close, which flatters the close; a line or total whose line moved against the close at its own line)">CLV</th>
                 </tr>
               </thead>
               <tbody id="mvm-body"></tbody>
@@ -335,6 +335,32 @@
             </table>
           </div>
           <p id="pc-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
+        </section>
+
+        <!-- Lines and totals: where the bookies moved the line by kickoff (roi-stats.js lineMoveStats) -->
+        <section class="card mb-4" aria-labelledby="lm-title">
+          <h2 id="lm-title" class="text-sm font-bold text-gray-100">Line moves</h2>
+          <p id="lm-sub" class="text-[11px] text-gray-500 mb-2"></p>
+          <p id="lm-summary" class="text-xs text-gray-300 mb-3 leading-snug"></p>
+          <div class="overflow-x-auto -mx-1">
+            <table class="w-full text-xs tabular-nums sm:min-w-[48rem]">
+              <thead>
+                <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+                  <th class="px-2 py-1.5 text-left font-semibold">Market</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Bets in this market (as counted above) whose closing line is known">Bets</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="The share whose market closed at another line than the bet's">Line moved</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Of the moved: how many the line moved toward (the bet held more than the close gave) and against">For / against</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="How far the line moved the bets' way on average, over the bets whose line moved (points; yards for player props)">Avg move</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="The share of bets that beat the closing price: the odds taken against the close at the bet's own line">Beat close</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="Closing line value with line moves counted: a bet whose line moved is judged against the close at its own line (the bookies' alternate line there, else the new line's price moved back by the model's chances at the two lines)">CLV</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="For comparison: the same bets against the last price at their own line, which stops when the line moves - how CLV was judged before line moves were followed">Price-only CLV</th>
+                  <th class="px-2 py-1.5 text-right font-semibold" title="What the bets returned, 1 unit each at the price taken: where the line then moved their way, and against them">ROI for / against</th>
+                </tr>
+              </thead>
+              <tbody id="lm-body"></tbody>
+            </table>
+          </div>
+          <p id="lm-note" class="mt-2 text-[11px] text-gray-500 leading-snug"></p>
         </section>
 
         <section class="card mb-4" aria-labelledby="team-title">
@@ -441,7 +467,7 @@
                   <th class="px-2 py-2 text-right font-semibold" title="How many of the positive-edge selections won. A half-win counts as half.">Won</th>
                   <th class="px-2 py-2 text-right font-semibold" title="What the model expected those to return">Expected</th>
                   <th class="px-2 py-2 text-right font-semibold" title="What they returned, with the 90% range">Actual</th>
-                  <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds when first priced against the closing odds, for positive-edge selections priced more than once">CLV</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds taken against the closing odds, for positive-edge selections with a closing price (a line or total whose line moved: the close at its own line)">CLV</th>
                   <th class="px-2 py-2 text-right font-semibold" title="The lowest minimum edge at which betting everything above it has made a profit that is clear of zero (90% range)">Profitable from</th>
                 </tr>
               </thead>

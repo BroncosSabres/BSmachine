@@ -200,6 +200,32 @@ export function priceAt(r, stage, basis) {
   return { back: book, edge, bookEdge, fallback: false };
 }
 
+// Main lines (spreads, totals, NFL yards) move the line, not the price: a
+// moved line is a new selection, and the bet's own stops at its last price.
+// The backend's lc_src says how the closing price AT THE BET'S LINE was found
+// (best_bets_data.line_closes): 'held' (the line didn't move: its own close
+// stands), 'alt' (the alternate market there), 'model' / 'approx' (the
+// closing line's price shifted back by the model's chances at the two
+// lines), 'none' (moved, nothing to price it by). lc_back / lc_book_back are
+// that price at the median / best bookie, lc_ovr the closing line's margin.
+export const LINE_MOVED = ['alt', 'model', 'approx'];
+export const lineMoved = r => LINE_MOVED.includes(r.lc_src);
+
+// The closing price closing-line value is measured against, at the basis:
+// { back, ovr (the margin to take out, where known), moved }. Where the line
+// moved, the price at the bet's line at the close; else its own last price.
+// (The 'close' stage of priceAt stays the last price at the bet's own line:
+// a price that could have been taken.)
+export function closeAt(r, basis) {
+  if (lineMoved(r)) return { back: (basis === 'book' ? r.lc_book_back : null) ?? r.lc_back, ovr: r.lc_ovr, moved: true };
+  return { back: priceAt(r, 'close', basis).back, ovr: null, moved: false };
+}
+
+// Whether a row has a closing price to judge by: priced again at its line
+// after the stage (n_checks > 1) or its line moved and the price at it is
+// known - not one whose line moved with nothing to price it by
+export const hasRealClose = r => lineMoved(r) || (r.n_checks > 1 && r.lc_src !== 'none');
+
 // "10–30%", "10%+", "up to 30%", "any edge"
 export function edgeText([lo, hi]) {
   const w = x => `${+(x * 100).toFixed(1)}%`;
