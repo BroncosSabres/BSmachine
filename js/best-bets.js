@@ -36,9 +36,10 @@ import { installTapTips } from './tap-tips.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
-         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, LIVE_SORTS, LIVE_FINALS,
+         edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
          closeAt, lineMoved, hasRealClose } from './best-bets-filters.js';
-import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor } from './best-bets-history.js';
+import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
+         HIST_UNLISTED } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
@@ -91,9 +92,9 @@ function applyPrefs() {
 }
 // The bar's controls into the settings, then saved
 function savePrefs() {
-  prefs = { ...prefs, sort: $('sort-by').value === 'time' ? 'time' : 'edge', myTeams: $('my-teams-only').checked,
+  prefs = { ...prefs, sort: SORTS.includes($('sort-by').value) ? $('sort-by').value : 'best', myTeams: $('my-teams-only').checked,
             liveStage: LIVE_STAGES.includes($('odds-basis').value) ? $('odds-basis').value : 'avg',
-            liveSort: LIVE_SORTS.includes($('live-sort').value) ? $('live-sort').value : 'edge',
+            liveSort: LIVE_SORTS.includes($('live-sort').value) ? $('live-sort').value : 'best',
             liveFinal: LIVE_FINALS.includes($('live-final').value) ? $('live-final').value : 'any',
             odds: [$('odds-min').value.trim(), $('odds-max').value.trim()] };
   storePrefs(prefs);
@@ -125,9 +126,44 @@ const passesFilters = r => passesBet(fprefs(), marketOf(r), judgedEdge(r), r.avg
 // A price-history point judged as the filters judge (best-bets-history.js)
 const pointEdge = r => (judgeBy() === 'cal' ? (pt => calEdgeAtPoint(calib, r, pt, bookBasis()))
   : judgeBy() === 'close' ? (pt => closeEdgeAtPoint(calib, r, pt, bookBasis())) : null);
-const listingOf = (r, end) => listedInfo(r.history, pt => pointPasses(fprefs(), marketOf(r), pt, pointEdge(r)), end);
+const listedPass = r => pt => pointPasses(fprefs(), marketOf(r), pt, pointEdge(r));
+const listingOf = (r, end) => listedInfo(r.history, listedPass(r), end);
+
+// The bookies that had the best price while the list showed a bet under the
+// filters, up to `end` (unix s), each at the highest price it was best at
+// (best-bets-history.js bestBooksOf): { books, when }. A bet it never showed
+// (Live's Show them): while its median edge was positive. Empty where the
+// history names no bookie (Betfair; an older backend).
+function bestBooks(r, end) {
+  const books = bestBooksOf(r.history, listedPass(r), end);
+  return books.length ? { books, when: 'while the list showed it under your filters' }
+    : { books: bestBooksOf(r.history, p => p[3] > 0 && !(p[4] & HIST_UNLISTED), end), when: 'while its median edge was positive' };
+}
+
+// "Best at Sportsbet 3.40 · TAB 3.30", the highest price first
+function booksHtml(label, { books, when }, lead) {
+  if (!books.length) return '';
+  const title = `${lead} ${when}, each at the highest price it was best at:\n`
+    + books.map(b => `${b.book}: ${odds(b.price)}${b.secs == null ? '' : `, the best for ${spanText(b.secs)} in all`}`).join('\n');
+  return `<div class="text-[11px] text-gray-400 leading-snug" title="${esc(title)}">${label} ${books.map(b => `<span class="whitespace-nowrap">`
+    + `<span class="font-semibold text-gray-200">${esc(b.book)}</span> <span class="tabular-nums text-amber-400/90">${odds(b.price)}</span></span>`).join(' · ')}</div>`;
+}
+
+const bookNames = r => new Set(r.best_book ? r.best_book.split(', ') : []);
+const nowOrGone = r => Math.min(Date.now() / 1000, r.gone_at ? Date.parse(r.gone_at) / 1000 : Infinity);
+
+// Under an upcoming (or no longer value) bet's best bookie: the other bookies
+// that had the best price at an earlier check while it was listed
+function earlierBooksHtml(r) {
+  const b = bestBooks(r, nowOrGone(r)), now = bookNames(r);
+  return booksHtml('Also best', { ...b, books: b.books.filter(x => !now.has(x.book)) },
+    'Other bookies that had the best price at an earlier check');
+}
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
+// Descending, nothing to go on last
+const desc = (x, y) => (y ?? -Infinity) - (x ?? -Infinity);
+const SORT_LABELS = { best: 'best edge', edge: 'average edge', time: 'start time' };
 
 // The kickoff's date in the viewer's time zone, 'YYYY-MM-DD'
 function dayOf(iso) {
@@ -424,7 +460,7 @@ function selectionCell(r, { fresh = false } = {}) {
       ? ' <span class="ml-1 rounded bg-green-500/15 border border-green-500/40 px-1 text-[10px] font-semibold text-green-300 align-middle" title="Listed in the last half hour">New</span>' : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${gameLine(r, esc(kickoffText(r.kickoff)))}
-    ${bestBookHtml(r, r.atBook ? r.median : null)}
+    ${bestBookHtml(r, r.atBook ? r.median : null)}${earlierBooksHtml(r)}
     ${r.outlier ? `<div class="mt-0.5">${outlierHtml(r)}</div>` : ''}
     ${historyHtml(r)}
   </td>`;
@@ -738,7 +774,7 @@ const isNew = r => { const s = seen[rowKey(r)]; return !!(s && s[0] && Date.now(
 
 function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
-  const byEdge = $('sort-by').value !== 'time';
+  const sortBy = SORTS.includes($('sort-by').value) ? $('sort-by').value : 'best';
   const inTab = bets.filter(r => kinds.includes(r.market_kind));
   const rows = upcomingRows().filter(r => kinds.includes(r.market_kind));
   const body = $('bets-body');
@@ -747,17 +783,19 @@ function renderBets() {
     body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
       inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
   } else {
-    // Outliers first (unless Filters has them off), then by the chosen order
-    const outFirst = r => (prefs.outliers !== 'off' && isOutlierBet(r) ? 0 : 1);
-    rows.sort((a, b) => outFirst(a) - outFirst(b)
-      || (byEdge ? b.edge - a.edge : byTime(a, b) || b.edge - a.edge));
+    // Outliers in among the rest, by the same order
+    const order = {
+      best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.edge - a.edge,
+      edge: (a, b) => b.edge - a.edge,
+      time: (a, b) => byTime(a, b) || b.edge - a.edge,
+    }[sortBy];
+    rows.sort(order);
     loadLogs(rows);
     body.innerHTML = rows.map(betRow).join('');
-    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}`
-      + (rows.some(r => outFirst(r) === 0) ? ' · outliers first' : '');
+    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}`;
   }
   shown = rows;
-  $('status').textContent = summary && `${summary} · sorted by ${byEdge ? 'edge' : 'start time'}`;
+  $('status').textContent = summary && `${summary} · sorted by ${SORT_LABELS[sortBy]}`;
   // Scorer prices and match / total prices come from different places
   // Rows that count bookmakers in the market name ("6 AU books") are bookmaker
   // prices; the rest are Betfair's
@@ -794,12 +832,10 @@ function renderBets() {
 function droppedRows() {
   const kinds = TABS.find(t => t.key === tab).kinds;
   const listedNow = new Set(upcomingRows().map(rowKey));
-  const now = Date.now() / 1000;
   const out = [];
   for (const r of [...bets.filter(b => !b.alternate && !listedNow.has(rowKey(b))), ...dropped]) {
     if (!notStarted(r) || !kinds.includes(r.market_kind) || !passes(r) || !passesDay(r)) continue;
-    const end = Math.min(now, r.gone_at ? Date.parse(r.gone_at) / 1000 : Infinity);
-    const listing = listingOf(r, end);
+    const listing = listingOf(r, nowOrGone(r));
     if (listing.ever) out.push({ ...upcomingAt(r), listing });
   }
   return out.sort(byTime);
@@ -867,6 +903,8 @@ function renderDropped() {
   droppedShown = rows;
 }
 
+const booksNote = (lead, books) => books.length ? `${lead} ${books.map(b => `${b.book} ${odds(b.price)}`).join(', ')}. ` : '';
+
 function openStats(r) {
   const g = r.game;   // live rows only
   const d = r.listing ? droppedPrices(r) : null;   // No longer value rows only
@@ -899,7 +937,8 @@ function openStats(r) {
     note: `${selectionText(r)} — ${r.market_name}. `
       + (d ? `No longer value (${chip.toLowerCase()})${why ? `: ${why}` : ''}. Listed ${spanText(r.listing.secs)}, until ${agoText(r.listing.lastEnd)}. ` : '')
       + (!g && !d?.gone && r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. ` : '')
-      + (g && bookBasis() && r.best_book ? `Best price before kickoff at ${r.best_book}. ` : '')
+      + (g ? booksNote('Best price before kickoff at', liveBooks(r).books)
+        : booksNote('Also the best price earlier at', bestBooks(r, nowOrGone(r)).books.filter(x => !bookNames(r).has(x.book))))
       + 'Price assumes the player takes the field.',
   });
 }
@@ -984,8 +1023,16 @@ function liveBetAt(p) {
 // Whether a live pick was listed under the current filters at a check before
 // kickoff, judged as the list judged it then (best-bets-history.js
 // listedInfo), or null when it has no history to tell by
-const liveListing = p => !hasHistory(p.history) ? null
-  : listingOf(p, Math.min(Date.parse(p.kickoff), p.gone_at ? Date.parse(p.gone_at) : Infinity) / 1000);
+const liveEnd = p => Math.min(Date.parse(p.kickoff), p.gone_at ? Date.parse(p.gone_at) : Infinity) / 1000;
+const liveListing = p => !hasHistory(p.history) ? null : listingOf(p, liveEnd(p));
+
+// The bookies that had the best price before kickoff while the list showed
+// it (bestBooks); a history naming none: the bookie at its highest price
+function liveBooks(r) {
+  const b = bestBooks(r, liveEnd(r));
+  return b.books.length || !r.best_book || r.best_book_back == null ? b
+    : { books: [...bookNames(r)].map(book => ({ book, price: r.best_book_back, secs: null })), when: '(only the one at its highest price is known)' };
+}
 
 const LIVE_ALL_KEY = 'bsm_bb_live_all';
 let liveShowAll = (() => { try { return sessionStorage.getItem(LIVE_ALL_KEY) === '1'; } catch { return false; } })();
@@ -1013,13 +1060,11 @@ function listingHtml(r) {
 
 // Finished: the game is over but the bet hasn't settled (its result provisional)
 const isFinished = r => r.game?.state === 'final';
-const LIVE_SORT_LABELS = { edge: 'edge', time: 'start time', result: 'result', ev: 'live EV', chance: 'chance' };
+const LIVE_SORT_LABELS = { ...SORT_LABELS, result: 'result', ev: 'live EV', chance: 'chance' };
 // Result order: won first, lost last, the undecided by how they stand
 const RESULT_RANK = Object.fromEntries(['won', 'half_won', 'winning', 'half_winning', 'needs', 'level', 'push', 'snaps',
   'pending', 'unknown', 'void', 'half_losing', 'losing', 'half_lost', 'lost'].map((st, i) => [st, i]));
 const resultRank = r => RESULT_RANK[r.live.status] ?? RESULT_RANK.unknown;
-// Descending, nothing to go on last
-const desc = (x, y) => (y ?? -Infinity) - (x ?? -Infinity);
 
 // The live rows in the view's tab under the filters, before Finished
 function liveInTab() {
@@ -1035,13 +1080,14 @@ function liveRows() {
   const game = r => `${r.sport}:${r.game_id}`;
   const chanceOf = r => r.chance ?? r.live.p_win;
   const by = {
+    best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.avgEdge - a.avgEdge,
     edge: (a, b) => b.avgEdge - a.avgEdge,
     time: (a, b) => byTime(a, b) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge,
     result: (a, b) => resultRank(a) - resultRank(b) || desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
     ev: (a, b) => desc(a.ev, b.ev) || b.avgEdge - a.avgEdge,
     chance: (a, b) => desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
-  }[prefs.liveSort] || ((a, b) => b.avgEdge - a.avgEdge);
-  return rows.sort(by);
+  };
+  return rows.sort(by[prefs.liveSort] || by.best);
 }
 
 function liveGameCell(r) {
@@ -1068,6 +1114,7 @@ function liveSelectionCell(r) {
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${listingHtml(r)}
     ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}`)}
+    ${booksHtml('Best at', liveBooks(r), 'The bookies that had the best price at a check before kickoff')}
     <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
       <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
       ${r.live.detail ? `<span class="text-gray-400">${esc(r.live.detail)}</span>` : ''}${pickOutlierHtml(r)}
@@ -1202,11 +1249,12 @@ function renderLive() {
     summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} ${prefs.liveFinal === 'only' ? 'finished, awaiting settlement' : 'in play'}`
       + (prefs.liveFinal === 'any' && finished ? ` (${finished} finished, awaiting settlement)` : '')
       + (hidden ? ` · ${hidden} finished hidden` : '')
-      + ` · sorted by ${LIVE_SORT_LABELS[prefs.liveSort] || 'edge'}`;
+      + ` · sorted by ${LIVE_SORT_LABELS[prefs.liveSort] || 'best edge'}`;
   }
   $('status').textContent = summary;
   $('method-note').textContent = 'Every bet the list showed under your filters at some check before kickoff (Show them for the other '
-    + 'tracked ones), from the start of its game until it settles, with how long it was listed. Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
+    + 'tracked ones), from the start of its game until it settles, with how long it was listed and every bookie that had the best '
+    + 'price while it was (each at the highest price it was best at, the highest first). Scores: NHL from the NHL\'s live feed, NFL from ESPN\'s; NRL only once our own results are in. Scorers and overs are '
     + 'marked won the moment they land; anything else at full time shows its result as provisional until it settles (usually within '
     + 'the hour; NFL scorers can wait on snap counts). Chance: from the current score and the time left on the pre-game model (the sim\'s '
     + 'score spread shrunk to the time left; scorers from the chance the model gave them), so at kickoff it is the model\'s own. '

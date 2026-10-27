@@ -4,7 +4,8 @@
 //
 // A history point (/api/best_bets rows and dropped, /api/best_bets/live picks):
 //   [unix seconds, median price, best bookie's price (null: Betfair),
-//    median edge, flags]
+//    median edge, flags, that bookie ("A, B" on ties; null: Betfair; absent
+//    from older backends)]
 // flags: HIST_OUTLIER - an outlier price under today's thresholds;
 //        HIST_UNLISTED - a check the page never lists (Betfair's closing runs).
 // A point holds from its check until the next one, the last until the end
@@ -42,6 +43,28 @@ export function listedInfo(points, pass, end) {
     lastEnd = until;
   });
   return { ever: !!lastPoint, secs, firstAt, lastPoint, lastEnd };
+}
+
+// The bookies that had the best price at the checks pass(point) picks, each
+// with the highest price it was best at and how long it was the best in all
+// (seconds; a check holds until the next one, the last until `end`):
+// [{ book, price, secs }], the highest price first. A tie counts for each of
+// its bookies; a point naming none (Betfair, older backends) for none.
+export function bestBooksOf(points, pass, end) {
+  const list = Array.isArray(points) ? points : [];
+  const by = new Map();
+  list.forEach((p, i) => {
+    if (!Array.isArray(p) || typeof p[5] !== 'string' || p[2] == null || !pass(p)) return;
+    const next = i + 1 < list.length ? list[i + 1][0] : end;
+    const secs = Math.max(p[0], Math.min(next ?? p[0], end ?? Infinity)) - p[0];
+    for (const book of p[5].split(', ')) {
+      if (!by.has(book)) by.set(book, { book, price: 0, secs: 0 });
+      const b = by.get(book);
+      b.price = Math.max(b.price, p[2]);
+      b.secs += secs;
+    }
+  });
+  return [...by.values()].sort((a, b) => b.price - a.price || b.secs - a.secs);
 }
 
 // Whether the backend sent a history this module can read (older backends

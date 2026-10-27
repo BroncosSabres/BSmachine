@@ -80,15 +80,17 @@
                 <input id="stake-balance" type="number" min="0" step="any" inputmode="decimal" placeholder="optional"
                        class="w-24 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
               </label>
-              <label id="sort-wrap" class="flex items-center gap-1.5">Sort
+              <label id="sort-wrap" class="flex items-center gap-1.5" title="The list's order. Best edge: the model's edge at the best bookie's price. Avg edge: at the average (median) price, the one the filters read. Outliers are sorted with the rest.">Sort
                 <select id="sort-by" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                  <option value="edge">Edge</option>
+                  <option value="best">Best edge</option>
+                  <option value="edge">Avg edge</option>
                   <option value="time">Start time</option>
                 </select>
               </label>
-              <label id="live-sort-wrap" class="hidden flex items-center gap-1.5" title="The Live list's order. Edge: the model's edge at kickoff. Result: where each bet stands, won first and lost last. Live EV: the expected return from here. Chance: the chance it wins from here.">Sort
+              <label id="live-sort-wrap" class="hidden flex items-center gap-1.5" title="The Live list's order. Best edge: the model's edge at kickoff at the best bookie's price. Avg edge: at the average (median) price. Result: where each bet stands, won first and lost last. Live EV: the expected return from here. Chance: the chance it wins from here.">Sort
                 <select id="live-sort" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
-                  <option value="edge">Edge</option>
+                  <option value="best">Best edge</option>
+                  <option value="edge">Avg edge</option>
                   <option value="time">Start time</option>
                   <option value="result">Result</option>
                   <option value="ev">Live EV</option>

@@ -24,9 +24,13 @@
 //             it is judged at. 'avg' (the default): the time-weighted average
 //             while its median edge was positive, what betting it at a random
 //             moment while it showed value would have got
-//   liveSort  'edge' | 'time' | 'result' | 'ev' | 'chance': the Live list's
-//             order - the edge at kickoff, start time, where the bet stands
-//             (won first, lost last), the live EV or the chance from here
+//   sort      'best' | 'edge' | 'time': the upcoming list's order - the edge
+//             at the best bookie's price (the default), at the median price,
+//             start time
+//   liveSort  'best' | 'edge' | 'time' | 'result' | 'ev' | 'chance': the Live
+//             list's order - the edge at kickoff at the best bookie's price
+//             (the default), at the median price, start time, where the bet
+//             stands (won first, lost last), the live EV or the chance from here
 //   liveFinal 'any' | 'hide' | 'only': Live bets whose game has finished but
 //             which haven't settled yet - shown, hidden, or nothing else
 //   outliers  'any' | 'only' | 'off': outlier prices (one bookie far above the
@@ -60,12 +64,13 @@ export const MARKETS = [
 export const BASES = { book: 'Best bookie', avg: 'Average bookie' };
 export const LIVE_STAGES = ['avg', 'open', 'best', 'close'];
 export const LIVE_STAGE_LABELS = { avg: 'average with value', open: 'opening', best: 'best', close: 'closing' };
-const PREFS_VERSION = 4;
+const PREFS_VERSION = 5;
 const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
 const DEFAULT_ODDS = ['', ''];
 export const OUTLIER_MODES = ['any', 'only', 'off'];
-export const LIVE_SORTS = ['edge', 'time', 'result', 'ev', 'chance'];
+export const SORTS = ['best', 'edge', 'time'];
+export const LIVE_SORTS = ['best', 'edge', 'time', 'result', 'ev', 'chance'];
 export const LIVE_FINALS = ['any', 'hide', 'only'];
 // Off unless switched on: the moneyline is the NHL head-to-head shown by default
 const OFF_BY_DEFAULT = new Set(['nhl|match_odds:3']);
@@ -90,8 +95,8 @@ const typed = x => { const s = String(x ?? '').trim(); return s !== '' && Number
 const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]), typed(p[1])] : [...fallback];
 
 export function defaultPrefs() {
-  return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'edge', myTeams: false, liveStage: 'avg',
-           liveSort: 'edge', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true };
+  return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'best', myTeams: false, liveStage: 'avg',
+           liveSort: 'best', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true };
 }
 
 // Whether any market's rule has been changed from its default
@@ -116,10 +121,12 @@ export function normalizePrefs(p) {
     // The old default cap ($10) goes once; a range typed since stays
     odds: v < 3 && odds[0] === '' && odds[1] === '10' ? ['', ''] : odds,
     markets,
-    sort: p.sort === 'time' ? 'time' : 'edge',
+    // Edge (at the median) was the only edge order before v5: it moves to
+    // the best bookie's, the default since, once
+    sort: v < 5 && p.sort === 'edge' ? 'best' : SORTS.includes(p.sort) ? p.sort : 'best',
     myTeams: !!p.myTeams,
     liveStage: v >= 2 && LIVE_STAGES.includes(p.liveStage) ? p.liveStage : 'avg',
-    liveSort: LIVE_SORTS.includes(p.liveSort) ? p.liveSort : 'edge',
+    liveSort: v < 5 && p.liveSort === 'edge' ? 'best' : LIVE_SORTS.includes(p.liveSort) ? p.liveSort : 'best',
     liveFinal: LIVE_FINALS.includes(p.liveFinal) ? p.liveFinal : 'any',
     outliers: OUTLIER_MODES.includes(p.outliers) ? p.outliers : 'any',
     judge: JUDGES.includes(p.judge) ? p.judge : 'model',
@@ -140,7 +147,7 @@ export function migrateOldPrefs(old) {
   if (has('odds-min') || has('odds-max')) p.odds = [typed(r['odds-min']), typed(r['odds-max'])];
   p.autoOpt = !(has('edge-min') || has('edge-max'));
   for (const m of MARKETS) p.markets[m.key] = { on: m.key === 'nhl|match_odds:3' ? !!old.threeWay : true, edge: [...edge] };
-  p.sort = old.sort === 'time' ? 'time' : 'edge';
+  p.sort = old.sort === 'time' ? 'time' : 'best';
   p.myTeams = !!old.myTeams;
   return p;
 }
