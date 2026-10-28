@@ -3,7 +3,8 @@
 // For accounts with Best Bets access it lists the selected game's
 // positive-edge selections and outlier prices (/api/best_bets?sport=&game_id=), best edge first,
 // in the markets switched on in the Best Bets page's Filters and at the price
-// chosen there (the best bookie's or the average; best-bets-prefs.js).
+// chosen there (the best bookie's or the average; best-bets-prefs.js), with the
+// best price at the bookies its My bookies uses where that differs.
 // Everyone else gets nothing: the panel stays hidden and no bets are asked for.
 //
 // The builders are three separate scripts (the NRL one a classic script, so it
@@ -17,7 +18,7 @@
 //                          the betslip, and adding / removing it
 import { BACKEND } from './api-config.js';
 import { getSession, hasBestBetsAccess } from './supabase-client.js';
-import { esc, odds, pct, signedPct, signCls, selectionText, bestBookHtml, outlierHtml } from './best-bets-shared.js';
+import { esc, odds, pct, signedPct, signCls, selectionText, bestBookHtml, outlierHtml, usedPrice, usedWarnHtml } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
 import { marketOf, ruleFor, outlierPasses, outRuleOf } from './best-bets-filters.js';
 import { localPrefs } from './best-bets-prefs.js';
@@ -75,7 +76,9 @@ async function load(sel) {
   const only = prefs.outliers === 'only';
   const isOut = r => !!r.outlier && outlierPasses(prefs, marketOf(r),
     { gap: r.outlier.disc, cls: r.outlier.edge_class, paid: r.outlier.is_outlier });
-  rows = found.filter(r => !r.alternate).map(r => ({ ...at(r, prefs.basis), isOut: isOut(r) }))
+  // Judged at every bookie's prices; mine: the best at the bookies the viewer
+  // uses (My bookies) where the best of all isn't at one of them
+  rows = found.filter(r => !r.alternate).map(r => ({ ...at(r, prefs.basis), isOut: isOut(r), mine: usedPrice(r, prefs.use) }))
     .filter(r => r.isOut || (!only && ruleFor(prefs, marketOf(r)).on && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
   outView = r => {
     const key = marketOf(r), out = outRuleOf(prefs, key), cls = r.outlier.edge_class;
@@ -127,6 +130,8 @@ function render() {
                 <span class="font-semibold text-gray-100">${esc(selectionText(r))}</span>
                 <span class="block text-[11px] text-gray-500">${esc(r.market_name)}</span>
                 ${bestBookHtml(r, r.atBook ? r.median : null)}
+                ${r.mine?.price != null ? `<div class="text-[11px] text-gray-400">Yours <span class="font-semibold tabular-nums ${r.mine.ok ? 'text-amber-400' : 'text-gray-500'}">${odds(r.mine.price)}</span> at <span class="font-semibold text-gray-200">${esc(r.mine.book)}</span> · <span class="${signCls(r.mine.edge)}">${signedPct(r.mine.edge)}</span></div>` : ''}
+                ${usedWarnHtml(r, r.mine)}
                 ${r.outlier && outlierHtml(r, outView(r)) ? `<div class="mt-0.5">${outlierHtml(r, outView(r))}</div>` : ''}
               </td>
               <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.shownBack)}</td>

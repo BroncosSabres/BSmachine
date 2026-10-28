@@ -258,15 +258,15 @@ function projRow(sport, proj) {
 const BODY = { nfl: nflBody, nhl: nhlBody };
 const LOGO = { nfl: nflLogoUrl, nhl: nhlLogoUrl };
 
-// data: undefined = loading, null = failed
-function render({ sport, name, subtitle, team, teams, tiles, note }, data, proj) {
+// data: undefined = loading, null = failed, false = no player (the caller's part only)
+function render({ sport, name, subtitle, team, teams, tiles, note, extra }, data, proj) {
   team = team || teams?.[proj?.side] || null;   // his side of the game, from the projection
-  let body;
+  let body = '';
   if (data === undefined) {
     body = `<div class="mt-5 space-y-2">${'<span class="bsm-skeleton h-4 w-full block"></span>'.repeat(6)}</div>`;
   } else if (data === null) {
     body = '<p class="mt-5 text-sm text-gray-400 text-center">Could not load stats. Try again in a moment.</p>';
-  } else {
+  } else if (data) {
     body = BODY[sport](data);
   }
   return `
@@ -283,22 +283,33 @@ function render({ sport, name, subtitle, team, teams, tiles, note }, data, proj)
     ${tiles?.length ? `<div class="mt-4">${tileGrid(tiles)}</div>` : ''}
     ${projRow(sport, proj)}
     ${note ? `<p class="mt-1.5 text-[11px] text-gray-400">${esc(note)}</p>` : ''}
+    ${extra || ''}
     ${body}`;
 }
 
-// opts: { sport ('nfl' | 'nhl'), gameId, playerId, name, subtitle, team (his
-// team's name, shown with its logo) or teams: { home, away } to work it out, tiles: [{ label, value, sub, cls }], note }
-export async function openPlayerStats(opts) {
-  if (!STATS_SPORTS.includes(opts.sport)) return;
-  const mine = ++seq;
-  const url = apiUrl(opts.sport, `player_detail/${opts.gameId}/${opts.playerId}`);
-  let data = cache.get(url), proj;
-  const paint = () => { if (mine === seq) panel.innerHTML = render(opts, data, proj); };
-  paint();
+function show() {
   panel.scrollTop = 0;
   modal.classList.remove('hidden');
   modal.classList.add('flex');
   document.body.style.overflow = 'hidden';
+}
+
+// opts: { sport ('nfl' | 'nhl'), gameId, playerId, name, subtitle, team (his
+// team's name, shown with its logo) or teams: { home, away } to work it out,
+// tiles: [{ label, value, sub, cls }], note, extra (the caller's own HTML,
+// under the note) }. Without a playerId, or in another sport, the window has
+// the caller's part only: a bet that isn't on a player.
+export async function openPlayerStats(opts) {
+  const mine = ++seq;
+  if (opts.playerId == null || !STATS_SPORTS.includes(opts.sport)) {
+    panel.innerHTML = render({ ...opts, team: opts.team && LOGO[opts.sport] ? opts.team : null }, false, null);
+    return show();
+  }
+  const url = apiUrl(opts.sport, `player_detail/${opts.gameId}/${opts.playerId}`);
+  let data = cache.get(url), proj;
+  const paint = () => { if (mine === seq) panel.innerHTML = render(opts, data, proj); };
+  paint();
+  show();
 
   loadProjection(opts.sport, opts.gameId).then(res => { proj = findPlayer(res, opts.playerId); paint(); });
   if (data) return;

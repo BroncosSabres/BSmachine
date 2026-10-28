@@ -31,9 +31,10 @@ import { supabase, getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
 import { SPORT_LABELS, SPORT_COLORS, esc, odds, pct, signedPct, signCls, wonCount,
-         selectionText, bestBookHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
+         selectionText, bestBookHtml, bookPricesHtml, bookLabel, STAR, edgeAtPrice, usesBook, usedPrice, usedWarning, usedWarnHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
+import { openBooks } from './best-bets-books.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS, outlierBets } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
@@ -166,7 +167,7 @@ const listingOf = (r, end) => listedInfo(r.history, listedPass(r), end);
 // filters, up to `end` (unix s), each at the highest price it was best at
 // (best-bets-history.js bestBooksOf): { books, when }. A bet it never showed
 // (Live's Show them): while its median edge was positive. Empty where the
-// history names no bookie (Betfair; an older backend).
+// history names no bookie (Betfair; an older backend). The Live tab's.
 function bestBooks(r, end) {
   const books = bestBooksOf(r.history, listedPass(r), end);
   return books.length ? { books, when: 'while the list showed it under your filters' }
@@ -179,19 +180,11 @@ function booksHtml(label, { books, when }, lead) {
   const title = `${lead} ${when}, each at the highest price it was best at:\n`
     + books.map(b => `${b.book}: ${odds(b.price)}${b.secs == null ? '' : `, the best for ${spanText(b.secs)} in all`}`).join('\n');
   return `<div class="text-[11px] text-gray-400 leading-snug" title="${esc(title)}">${label} ${books.map(b => `<span class="whitespace-nowrap">`
-    + `<span class="font-semibold text-gray-200">${esc(b.book)}</span> <span class="tabular-nums text-amber-400/90">${odds(b.price)}</span></span>`).join(' · ')}</div>`;
+    + `<span class="font-semibold text-gray-200">${esc(bookLabel(b.book))}</span> <span class="tabular-nums text-amber-400/90">${odds(b.price)}</span></span>`).join(' · ')}</div>`;
 }
 
 const bookNames = r => new Set(r.best_book ? r.best_book.split(', ') : []);
 const nowOrGone = r => Math.min(Date.now() / 1000, r.gone_at ? Date.parse(r.gone_at) / 1000 : Infinity);
-
-// Under an upcoming (or no longer value) bet's best bookie: the other bookies
-// that had the best price at an earlier check while it was listed
-function earlierBooksHtml(r) {
-  const b = bestBooks(r, nowOrGone(r)), now = bookNames(r);
-  return booksHtml('Also best', { ...b, books: b.books.filter(x => !now.has(x.book)) },
-    'Other bookies that had the best price at an earlier check');
-}
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 // Descending, nothing to go on last
@@ -378,8 +371,10 @@ function lineTitle(r) {
   return out;
 }
 
-function historyTitle(r, series, mv) {
-  const lines = [`${r.atBook ? 'Best bookie price' : 'Median price'}: ${odds(r.back)} now`];
+// now: when the price is from ('now', or 'when last priced' off the board);
+// extra: lines before the line-move ones
+function historyTitle(r, series, mv, { now = 'now', extra = [] } = {}) {
+  const lines = [`${r.atBook ? 'Best bookie price' : 'Median price'}: ${odds(r.back)} ${now}`];
   if (mv) lines.push(`${mv.up ? 'Lengthened' : 'Shortened'} from ${odds(mv.from)} ${agoText(mv.at)}`);
   else if (series.length) lines.push(`Unchanged since ${kickoffText(new Date(series[0][0] * 1000))}`);
   if (series.length > 1) {
@@ -387,11 +382,14 @@ function historyTitle(r, series, mv) {
     lines.push(`Since ${kickoffText(new Date(series[0][0] * 1000))}: low ${odds(Math.min(...vals))}, high ${odds(Math.max(...vals))}`);
   }
   lines.push(`Open ${odds(r.open)}: the first price recorded. Best ${odds(r.best)}: the highest since it first showed value.`);
-  return [...lines, ...lineTitle(r)].join('\n');
+  return [...lines, ...extra, ...lineTitle(r)].join('\n');
 }
 
 // Scorers with a stats window (the multi builders' player_detail endpoints).
 const hasStats = r => r.player_id != null && STATS_SPORTS.includes(r.sport);
+// Rows that open the details window: a player's (with his stats), or any
+// bet with its bookies' prices to list
+const canOpen = r => hasStats(r) || !!r.books?.length;
 
 // --- scorer history -----------------------------------------------------------
 // One /api/<sport>/game_player_logs per game on show, fetched as its rows
@@ -493,7 +491,8 @@ function selectionCell(r, { fresh = false } = {}) {
       ? ' <span class="ml-1 rounded bg-green-500/15 border border-green-500/40 px-1 text-[10px] font-semibold text-green-300 align-middle" title="Listed in the last half hour">New</span>' : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${gameLine(r, esc(kickoffText(r.kickoff)))}
-    ${bestBookHtml(r, r.atBook ? r.median : null)}${earlierBooksHtml(r)}
+    ${r.gone_at ? bestBookHtml(r, r.atBook ? r.median : null) : bookPricesHtml(r, r.atBook ? r.median : null, { favs: prefs.books, use: prefs.use })}
+    ${r.gone_at ? '' : usedWarnHtml(r, r.mine)}
     ${r.outlier && outlierHtml(r, rowOutView(r)) ? `<div class="mt-0.5">${outlierHtml(r, rowOutView(r))}</div>` : ''}
     ${historyHtml(r)}
   </td>`;
@@ -661,6 +660,9 @@ function calStakeCell(r, td) {
 
 function stakeCell(r) {
   const td = (inner, title = '') => `<td class="px-2 py-2 text-right tabular-nums whitespace-nowrap"${title ? ` title="${esc(title)}"` : ''}>${inner}</td>`;
+  const notYours = usedWarning(r, r.mine);   // none of the viewer's bookies has it at an edge
+  if (notYours) return td('<span class="text-[11px] font-semibold text-amber-300">⚠ –</span>', `No stake: ${notYours[1]}`);
+  if (r.mine && bookBasis()) r = takenAtMine(r);   // staked where the viewer would take it
   if (judgeBy() !== 'model') return calStakeCell(r, td);
   if (!model) return td(stakesFailed ? '<span class="text-gray-600">–</span>' : '<span class="bsm-skeleton h-3 w-10 inline-block"></span>',
     stakesFailed ? 'Could not load the settled bets the stake is worked out from' : '');
@@ -684,7 +686,12 @@ function stakeCell(r) {
 // median's (the value signal the filters read); bookEdge is at the price taken.
 // cal: its calibrated chance and edges (calibrate-client.js), once in; close:
 // its predicted close and the edge against it (close-model.js), once in.
-function upcomingAt(r) {
+// All of that is at every bookie's prices, whoever the viewer bets with.
+// mine: the best price at the bookies they use (My bookies, use; null: all)
+// where that isn't the best of all (usedPrice), for the "yours" lines, the
+// stake and the warning where none of theirs has an edge.
+function upcomingAt(r, use = prefs.use) {
+  const mine = usedPrice(r, use);
   const book = bookBasis() && r.best_book_back != null && r.best_book_edge != null;
   const out = book
     ? { ...r, back: r.best_book_back, bestEdge: r.best_book_edge, open: r.open_book_odds ?? r.open_odds,
@@ -692,6 +699,7 @@ function upcomingAt(r) {
     : { ...r, bestEdge: r.best_book_edge ?? r.edge, open: r.open_odds, best: r.best_odds, median: r.back };
   out.cal = calibrateBet(calib, out, { median: out.median, taken: out.back });
   out.close = closeBet(calib, out, { median: out.median, taken: out.back });
+  out.mine = mine;
   return out;
 }
 
@@ -717,18 +725,33 @@ function calLine(r) {
   return `<div class="text-[11px] leading-snug" title="${esc(title)}"><span class="text-gray-500">cal</span> <span class="font-semibold ${signCls(c.bookEdge)}">${signedPct(c.bookEdge)}</span></div>`;
 }
 
+// "yours" under a bet's price and edge: the best price at the bookies the
+// viewer uses (r.mine, usedPrice) where the best of all is at one they don't
+const yoursOdds = r => r.mine?.price == null ? '' : `<div class="text-[11px] text-gray-400 leading-snug" title="${esc(`The best price at the bookies you use: ${r.mine.book}`)}">yours <span class="font-semibold ${r.mine.ok ? 'text-amber-400' : 'text-gray-500'}">${odds(r.mine.price)}</span></div>`;
+const yoursEdge = r => r.mine?.price == null ? '' : `<div class="text-[11px] leading-snug" title="${esc(`At the best price at the bookies you use, ${odds(r.mine.price)} at ${r.mine.book}`)}"><span class="text-gray-500">yours</span> <span class="font-semibold ${signCls(r.mine.edge)}">${r.mine.ok ? '' : '⚠ '}${signedPct(r.mine.edge)}</span></div>`;
+
+// A bet as taken at the best price at the viewer's bookies (r.mine), for its
+// stake. What it is judged by (the filters, sort and edges shown) stays at
+// every bookie's prices.
+function takenAtMine(r) {
+  const at = { ...r, back: r.mine.price };
+  return { ...at, cal: calibrateBet(calib, at, { median: r.median, taken: at.back }),
+           close: closeBet(calib, at, { median: r.median, taken: at.back }) };
+}
+
 // Prices, model and edges each stacked in one cell: the selection cell is
 // three or four lines tall anyway, and a phone has room for few columns.
 function betRow(r, i) {
   const series = seriesOf(r);
   const mv = lastMove(series);
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${canOpen(r) ? ' cursor-pointer' : ''}"${canOpen(r) ? ` data-row="${i}"` : ''}>
       ${gameCell(r)}${selectionCell(r, { fresh: isNew(r) })}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(historyTitle(r, series, mv))}">
         <div class="font-bold text-amber-400">${odds(r.back)}${moveArrow(mv)}</div>
         <div class="text-[11px] text-gray-400 leading-snug">Open ${odds(r.open)}</div>
         <div class="text-[11px] text-gray-400 leading-snug">Best ${odds(r.best)}</div>
+        ${yoursOdds(r)}
         ${historySpark(r, series, { tone: false })}
       </td>
       <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
@@ -738,7 +761,7 @@ function betRow(r, i) {
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold ${signCls(r.edge)}" title="At the average (median) price">${signedPct(r.edge)}</div>
         <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
-        ${calLine(r)}${closeLine(r)}
+        ${yoursEdge(r)}${calLine(r)}${closeLine(r)}
         <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
       </td>
       ${stakeCell(r)}
@@ -773,7 +796,7 @@ const notStarted = r => Date.parse(r.kickoff) > Date.now();
 
 // The upcoming bets that pass the sport / day / My Teams / market filters, at
 // the price chosen, one line per side (any tab)
-const upcomingRows = () => oneLinePerSide(bets.map(upcomingAt).filter(r => notStarted(r) && passes(r) && passesDay(r)
+const upcomingRows = () => oneLinePerSide(bets.map(r => upcomingAt(r)).filter(r => notStarted(r) && passes(r) && passesDay(r)
                                           && passesFilters(r)), oddsTyped(prefs));
 
 // --- new since last looked ------------------------------------------------------
@@ -834,8 +857,13 @@ function renderBets() {
   // Rows that count bookmakers in the market name ("6 AU books") are bookmaker
   // prices; the rest are Betfair's
   const bookNote = 'Where the market names bookmakers ("6 AU books"), bookie odds are '
-    + (bookBasis() ? 'the best price any one of them offers, named under the selection with the median across them '
-      : 'the median price across them, with the best price found and who had it underneath ')
+    + (bookBasis() ? 'the best price any one of them offers, '
+      : 'the median price across them, ')
+    + 'with the best price at the bookies you use and who has it, your favourites\' prices (★) and the median under the selection '
+    + '(My bookies sets both; open a bet for every bookie\'s price and the edge at each). Every bet is judged at every bookie\'s prices, '
+    + 'whoever you bet with: the median across all of them says whether it has value. '
+    + (prefs.use == null ? '' : 'Where the best price is at a bookie you don\'t use, "yours" gives the best of yours and the edge there, '
+      + 'the stake is at it, and ⚠ marks a bet none of your bookies has at an edge. ')
     + '(Filters → Price chooses which the edges, stakes and track record use). They are refreshed up to every 15 minutes close '
     + 'to the start, but can still have moved: check the price before betting. Alternate lines and totals ("Alt Line") only show '
     + 'with an odds range set, one per game and side: the standard line wins and loses with them. '
@@ -905,27 +933,45 @@ function droppedPrices(r) {
            lc: gone && lineMoved(r) ? closeAt(r, prefs.basis).back : null };
 }
 
+// Laid out as the list's rows (betRow), with what the price and the edge were
+// when last listed under each, and the Listed column where the list has
+// Stake. Off the board the price and edges aren't on offer: – (a moved line:
+// ≈ what its own line is worth now).
 function droppedRow(r, i) {
   const { was, wasPrice, gone, lc } = droppedPrices(r);
   const [chip, why] = droppedReason(r);
   const priceNow = lc ? `<span title="About what this bet's line is worth now: ${esc(why)}">≈${odds(lc)}</span>` : gone ? '–' : odds(r.back);
   const series = seriesOf(r);
+  const mv = lastMove(series);
+  const listed = `Listed under your filters for ${spanText(r.listing.secs)} in all, until ${agoText(r.listing.lastEnd)}`;
+  const title = historyTitle(r, series, mv, { now: gone ? 'when last priced' : 'now',
+    extra: [`Was ${odds(wasPrice)}: the price when it was last listed, ${agoText(r.listing.lastEnd)}.`] });
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${canOpen(r) ? ' cursor-pointer' : ''}"${canOpen(r) ? ` data-row="${i}"` : ''}>
       ${gameCell(r)}${selectionCell(r)}
-      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(lineTitle(r).join('\n'))}">
-        <div class="font-semibold ${gone && !lc ? 'text-gray-500' : 'text-gray-200'}">${priceNow}</div>
-        <div class="text-[11px] text-gray-400 leading-snug">was ${odds(wasPrice)}</div>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap" title="${esc(title)}">
+        <div class="font-bold ${gone && !lc ? 'text-gray-500' : 'text-amber-400'}">${priceNow}${gone ? '' : moveArrow(mv)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Open ${odds(r.open)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Best ${odds(r.best)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Was ${odds(wasPrice)}</div>
+        ${gone ? '' : yoursOdds(r)}
         ${historySpark(r, series)}
       </td>
-      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
-        <div class="font-semibold ${gone ? 'text-gray-500' : signCls(r.edge)}">${gone ? '–' : signedPct(r.edge)}</div>
-        <div class="text-[11px] text-gray-400 leading-snug">was <span class="${signCls(was[3])}">${signedPct(was[3])}</span></div>
+      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="text-gray-200">${pct(r.model_prob)}</div>
+        <div class="text-[11px] text-gray-400 leading-snug">Fair ${odds(r.fair_odds)}</div>
       </td>
-      <td class="px-2 py-2 text-right text-[11px] leading-snug whitespace-nowrap">
-        <div class="text-gray-300">${spanText(r.listing.secs)}</div>
-        <div class="text-gray-500">until ${agoText(r.listing.lastEnd)}</div>
-        <span class="mt-0.5 inline-block rounded border border-gray-600 px-1 text-[10px] font-semibold text-gray-300" title="${esc(why)}">${esc(chip)}</span>
+      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-bold ${gone ? 'text-gray-500' : signCls(r.edge)}" title="At the average (median) price${gone ? ': not priced now' : ''}">${gone ? '–' : signedPct(r.edge)}</div>
+        ${gone ? '' : `<div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+        ${yoursEdge(r)}${calLine(r)}${closeLine(r)}`}
+        <div class="text-[11px] leading-snug" title="At the average (median) price when it was last listed"><span class="text-gray-500">was</span> <span class="font-semibold ${signCls(was[3])}">${signedPct(was[3])}</span></div>
+        <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
+      </td>
+      <td class="px-2 py-2 text-right whitespace-nowrap" title="${esc([why, listed].filter(Boolean).join('\n'))}">
+        <span class="inline-block rounded border border-gray-600 px-1 text-[10px] font-semibold text-gray-300">${esc(chip)}</span>
+        <div class="mt-0.5 text-[11px] text-gray-400 leading-snug">for ${spanText(r.listing.secs)}</div>
+        <div class="text-[11px] text-gray-500 leading-snug">until ${agoText(r.listing.lastEnd)}</div>
       </td>
     </tr>`;
 }
@@ -940,14 +986,65 @@ function renderDropped() {
 
 const booksNote = (lead, books) => books.length ? `${lead} ${books.map(b => `${b.book} ${odds(b.price)}`).join(', ')}. ` : '';
 
+// The bet's details: every bookie's price (books), the highest first, the
+// viewer's favourites starred and the bookies they don't use greyed, each
+// against the best price at the ones they use and with the model's edge
+// there (edgeAtPrice). when: which check the prices are from.
+function booksTableHtml(r, ref, when) {
+  if (!r.books?.length) return '';
+  const favs = new Set(prefs.books);
+  const top = r.books.find(([b]) => usesBook(prefs.use, b))?.[1] ?? r.books[0][1];
+  const th = 'px-1.5 py-1 font-semibold text-gray-400 whitespace-nowrap';
+  const td = 'px-1.5 py-1.5 text-right tabular-nums';
+  const row = (name, p, e, { fav = false, median = false, used = true } = {}) => {
+    const best = !median && used && p === top;
+    return `
+    <tr class="border-t ${median ? 'border-gray-600' : 'border-gray-700/60'}${fav ? ' bg-amber-400/5' : ''}${used ? '' : ' opacity-50'}">
+      <td class="px-1.5 py-1.5 whitespace-nowrap ${median ? 'text-gray-400' : fav ? 'text-gray-100 font-semibold' : 'text-gray-300'}">${fav ? `${STAR} ` : ''}${esc(name)}</td>
+      <td class="${td} ${best ? 'font-semibold text-amber-400' : 'text-gray-200'}">${odds(p)}</td>
+      <td class="${td} text-gray-400">${best ? 'best' : signedPct(p / top - 1)}</td>
+      <td class="${td} ${signCls(e)}">${signedPct(e)}</td>
+    </tr>`;
+  };
+  const missing = prefs.books.filter(b => !r.books.some(([x]) => x === b));
+  const unused = prefs.use != null && r.books.some(([b]) => !usesBook(prefs.use, b));
+  return `
+    <div class="mt-4">
+      <div class="flex items-baseline justify-between gap-2 mb-1">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Price at each bookie</h3>
+        <span class="text-[11px] text-gray-400">${esc(when)}</span>
+      </div>
+      <table class="w-full text-xs">
+        <thead><tr>
+          <th class="${th} text-left">Bookie</th><th class="${th} text-right">Odds</th>
+          <th class="${th} text-right" title="${prefs.use == null ? 'How far the price is from the best one'
+            : 'How far the price is from the best at the bookies you use'}">vs best</th>
+          <th class="${th} text-right" title="The model's expected return per unit staked at that price">Edge</th>
+        </tr></thead>
+        <tbody>${r.books.map(([b, p]) => row(bookLabel(b), p, edgeAtPrice(p, ref), { fav: favs.has(b), used: usesBook(prefs.use, b) })).join('')}
+          ${ref.median == null ? '' : row('Median', ref.median, ref.edge, { median: true })}</tbody>
+      </table>
+      <p class="mt-1 text-[11px] text-gray-500">${[
+        unused ? "Greyed: bookies you don't use (My bookies)." : '',
+        missing.length ? `${STAR} No price from ${esc(missing.map(bookLabel).join(', '))}.` : '',
+        prefs.books.length ? '' : 'Star your favourite bookies in My bookies to see them beside the best price on every bet.',
+      ].filter(Boolean).join(' ')}</p>
+    </div>`;
+}
+
 function openStats(r) {
   const g = r.game;   // live rows only
   const d = r.listing ? droppedPrices(r) : null;   // No longer value rows only
   const [chip, why] = d ? droppedReason(r) : [];
   const basisLabel = bookBasis() ? 'best bookie' : 'average';
+  // The bookies' prices are from the last check before kickoff on Live, else the latest
+  const ref = g ? { median: r.close_back, edge: r.close_edge, best: r.close_book_back, bestEdge: r.close_book_edge, prob: r.model_prob }
+    : { median: r.median, edge: r.edge, best: r.best_book_back, bestEdge: r.best_book_edge, prob: r.model_prob };
+  const at = r.checked_at ? agoText(Date.parse(r.checked_at) / 1000) : '';
+  const when = g ? 'at the last check before kickoff' : d?.gone ? `when last priced${at ? `, ${at}` : ''}` : `at the latest check${at ? `, ${at}` : ''}`;
   openPlayerStats({
     sport: r.sport, gameId: r.game_id, playerId: r.player_id,
-    name: r.selection_name,
+    name: r.player_id != null ? r.selection_name : selectionText(r),
     team: teamOf(r), teams: { home: r.home_team, away: r.away_team },
     subtitle: `${SPORT_LABELS[r.sport]} · ${r.home_team} v ${r.away_team} · ${g
       ? `${g.home != null ? `${g.home}–${g.away} ` : ''}${g.state === 'pre' ? kickoffText(r.kickoff) : g.label}` : kickoffText(r.kickoff)}`,
@@ -958,23 +1055,27 @@ function openStats(r) {
       { label: 'Live EV', value: signedPct(r.ev), cls: signCls(r.ev) },
     ] : d ? [
       { label: `Odds now (${basisLabel})`, value: d.lc ? `≈${odds(d.lc)}` : d.gone ? '–' : odds(r.back),
-        cls: d.gone && !d.lc ? 'text-gray-500' : 'text-amber-400', sub: `Was ${odds(d.wasPrice)} when listed · Open ${odds(r.open)}` },
+        cls: d.gone && !d.lc ? 'text-gray-500' : 'text-amber-400', sub: `Open ${odds(r.open)} · Best ${odds(r.best)} · was ${odds(d.wasPrice)} when listed` },
       { label: 'Model', value: pct(r.model_prob) },
       { label: 'Fair odds', value: odds(r.fair_odds) },
       { label: 'Edge now', value: d.gone ? '–' : signedPct(r.edge), cls: d.gone ? 'text-gray-500' : signCls(r.edge),
-        sub: `average price · was ${signedPct(d.was[3])} when listed` },
+        sub: `average price · ${d.gone ? '' : `${signedPct(r.bestEdge)} at the best · `}was ${signedPct(d.was[3])} when listed` },
     ] : [
-      { label: `Bookie odds (${basisLabel})`, value: odds(r.back), cls: 'text-amber-400', sub: `Open ${odds(r.open)} · Best ${odds(r.best)}` },
+      { label: `Bookie odds (${basisLabel})`, value: odds(r.back), cls: 'text-amber-400',
+        sub: `Open ${odds(r.open)} · Best ${odds(r.best)}${r.mine?.price != null ? ` · yours ${odds(r.mine.price)}` : ''}` },
       { label: 'Model', value: pct(r.model_prob) },
       { label: 'Fair odds', value: odds(r.fair_odds) },
-      { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge), sub: `average price · ${signedPct(r.bestEdge)} at the best` },
+      { label: 'Edge', value: signedPct(r.edge), cls: signCls(r.edge),
+        sub: `average price · ${signedPct(r.bestEdge)} at the best${r.mine?.price != null ? ` · ${signedPct(r.mine.edge)} at yours` : ''}` },
     ],
     note: `${selectionText(r)} — ${r.market_name}. `
+      + (!g && !d?.gone && usedWarning(r, r.mine) ? `⚠ ${usedWarning(r, r.mine)[1]} ` : '')
       + (d ? `No longer value (${chip.toLowerCase()})${why ? `: ${why}` : ''}. Listed ${spanText(r.listing.secs)}, until ${agoText(r.listing.lastEnd)}. ` : '')
-      + (!g && !d?.gone && r.best_book && r.best_book_back != null ? `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. ` : '')
-      + (g ? booksNote('Best price before kickoff at', liveBooks(r).books)
-        : booksNote('Also the best price earlier at', bestBooks(r, nowOrGone(r)).books.filter(x => !bookNames(r).has(x.book))))
-      + 'Price assumes the player takes the field.',
+      + (g || d?.gone || r.books?.length || !r.best_book || r.best_book_back == null ? ''
+        : `Best price ${odds(r.best_book_back)} at ${r.best_book}; median ${odds(r.median)}. `)
+      + (g ? booksNote('Best price before kickoff at', liveBooks(r).books) : '')
+      + (r.player_id != null ? 'Price assumes the player takes the field.' : ''),
+    extra: booksTableHtml(r, ref, when),
   });
 }
 
@@ -1183,7 +1284,7 @@ function liveRow(r, i) {
   // The prices stacked, the one chosen in Odds at highlighted
   const at = (key, label) => `<div class="text-[11px] leading-snug ${key === basis() ? 'font-semibold text-amber-400' : 'text-gray-400'}">${label} ${odds(r.prices[key])}</div>`;
   return `
-    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${hasStats(r) ? ' cursor-pointer' : ''}"${hasStats(r) ? ` data-row="${i}"` : ''}>
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${canOpen(r) ? ' cursor-pointer' : ''}"${canOpen(r) ? ` data-row="${i}"` : ''}>
       ${liveGameCell(r)}${liveSelectionCell(r)}
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold text-amber-400">${odds(r.back)}</div>
@@ -1542,9 +1643,14 @@ function renderHeads() {
   $('th-odds').title = `All at ${price}. Top: the price now, when last checked, with ▲ / ▼ for its latest move `
     + '(lengthened / shortened). Open: the first price recorded, whatever the edge was then. Best: the highest seen since it '
     + 'first showed value (or now, if higher). The line: the price at every check so far, the dot is now. Hover a price for its history.';
+  $('dth-odds').title = `All at ${price}. Top: the price now, with ▲ / ▼ for its latest move; – once the bookies have taken it down, `
+    + "or ≈ where they moved the line: about what this bet's line is worth now. Open: the first price recorded. Best: the highest seen "
+    + 'since it first showed value. Was: the price when it was last listed under your filters. The line: the price at every check, the dot the latest.';
   $('lth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Avg: the average while it showed value before kickoff, `
     + 'weighted by time. Open: the first price recorded. Best: the highest from when it first showed value to kickoff. Close: the last before kickoff.';
   $('filters-summary').textContent = `${prefsSummary(prefs, modalKeys())} · ${BASES[prefs.basis].toLowerCase()}`;
+  const favs = prefs.books.length === 1 ? `★ ${bookLabel(prefs.books[0])}` : prefs.books.length ? `★ ${prefs.books.length}` : '';
+  $('books-summary').textContent = [prefs.use == null ? 'all used' : `${prefs.use.length} used`, favs].filter(Boolean).join(' · ');
 }
 
 function render() {
@@ -1617,6 +1723,14 @@ $('filters-btn').addEventListener('click', () => openFilters({
     if (basisChanged) startCalibration();
     render();
     return marketCounts();
+  },
+}));
+$('books-btn').addEventListener('click', () => openBooks({
+  favs: prefs.books, use: prefs.use, rows: upcomingRows(), opener: $('books-btn'),
+  onChange: ({ books, use }) => {
+    prefs = { ...prefs, books, use };
+    storePrefs(prefs);
+    render();
   },
 }));
 $('bets-body').addEventListener('click', e => {

@@ -89,9 +89,108 @@ export function bestBookHtml(r, median = null) {
   const title = `Highest price found: ${odds(r.best_book_back)} at ${r.best_book}`
     + (r.best_book_edge == null ? '' : ` (${signedPct(r.best_book_edge)} edge at that price)`)
     + (median == null ? '' : `; median across the bookies ${odds(median)}`);
+  const books = esc(r.best_book.split(', ').map(bookLabel).join(', '));
   return median == null
-    ? `<div class="text-[11px] text-gray-400" title="${esc(title)}">Best <span class="font-semibold tabular-nums text-amber-400">${odds(r.best_book_back)}</span> at <span class="font-semibold text-gray-200">${esc(r.best_book)}</span></div>`
-    : `<div class="text-[11px] text-gray-400" title="${esc(title)}">At <span class="font-semibold text-gray-200">${esc(r.best_book)}</span> · avg <span class="tabular-nums">${odds(median)}</span></div>`;
+    ? `<div class="text-[11px] text-gray-400" title="${esc(title)}">Best <span class="font-semibold tabular-nums text-amber-400">${odds(r.best_book_back)}</span> at <span class="font-semibold text-gray-200">${books}</span></div>`
+    : `<div class="text-[11px] text-gray-400" title="${esc(title)}">At <span class="font-semibold text-gray-200">${books}</span> · avg <span class="tabular-nums">${odds(median)}</span></div>`;
+}
+
+// "PointsBet (AU)", "Dabble AU": the region adds nothing on a list of AU books
+export const bookLabel = b => b.replace(/\s+\(?AU\)?$/, '');
+
+export const STAR = '<span class="text-amber-300/80" aria-hidden="true">★</span>';
+
+// The model's edge at another price for the same bet. It is linear in the
+// price (betfair-api pricing.price: the chance of winning times the price,
+// plus the stake back on a push, less 1), so it is read off the edges at the
+// median and the best price where those are far enough apart to give its
+// slope; else the slope is the model's chance (exact where the bet can't
+// push). ref: { median, edge, best, bestEdge, prob }, all at one check.
+export function edgeAtPrice(o, { median, edge, best, bestEdge, prob }) {
+  if (o == null || median == null || edge == null) return null;
+  const slope = best != null && bestEdge != null && Math.abs(best - median) >= 0.05
+    ? (bestEdge - edge) / (best - median) : prob;
+  return slope == null ? null : edge + slope * (o - median);
+}
+
+// My bookies → Use (prefs.use; null: every bookie, the default): whether a
+// viewer bets at a bookie
+export const usesBook = (use, book) => use == null || use.includes(book);
+
+// Where a viewer would take a bet (My bookies → Use, prefs.use). A bet is
+// judged at every bookie's prices whoever the viewer bets with: the median
+// across all of them says whether it has value, and the filters, outliers
+// and sort read every bookie. This is only the best price at the bookies they
+// use, where that isn't the best of all: { price, book (who has it; ties
+// comma-separated), edge (the model's there, edgeAtPrice), ok (edge > 0) },
+// price null where none of theirs prices it. null where nothing changes:
+// every bookie used (use null), the best price at one of theirs, or a row
+// naming no bookies (Betfair; before migration 042). r: a /api/best_bets row
+// as it comes (back: the median).
+export function usedPrice(r, use) {
+  if (use == null || !r.books?.length || r.best_book_back == null) return null;
+  const mine = r.books.filter(([b]) => use.includes(b));
+  if (!mine.length) return { price: null, book: null, edge: null, ok: false };
+  const top = mine[0][1];
+  if (top >= r.best_book_back) return null;   // the best price is at one of theirs
+  const edge = edgeAtPrice(top, { median: r.back, edge: r.edge, best: r.best_book_back, bestEdge: r.best_book_edge,
+                                  prob: r.model_prob });
+  return { price: top, book: mine.filter(([, p]) => p === top).map(([b]) => b).join(', '), edge, ok: edge > 0 };
+}
+
+// [chip, why] for a bet none of the viewer's bookies has at an edge (mine:
+// usedPrice, not ok), else null. r.median: the median across every bookie.
+export function usedWarning(r, mine) {
+  if (!mine || mine.ok) return null;
+  const median = r.median ?? r.back;
+  const best = `${odds(r.best_book_back)} at ${r.best_book}`;
+  if (mine.price == null) {
+    return ['Not at your bookies', `None of the bookies you use prices this bet. It is judged at every bookie's prices: the best is ${best}.`];
+  }
+  return ['No edge at your bookies', `The best price at the bookies you use, ${odds(mine.price)} at ${mine.book}, has no edge `
+    + `(${signedPct(mine.edge)})${mine.price < median ? `: it is below the median of ${odds(median)} across every bookie` : ''}. `
+    + `The bet is judged at every bookie's prices; its value is only at bookies you don't use (best ${best}).`];
+}
+
+export function usedWarnHtml(r, mine) {
+  const w = usedWarning(r, mine);
+  return w ? `<div class="mt-0.5"><span class="inline-block rounded border border-amber-500/50 bg-amber-500/10 px-1 text-[10px] font-semibold text-amber-300"
+    title="${esc(w[1])}">⚠ ${esc(w[0])}</span></div>` : '';
+}
+
+// Under a bet, from its bookies' prices (/api/best_bets books, migration
+// 042: [[bookie, price], ...], highest first): the best price at the
+// bookies the viewer uses (use, prefs.use; null: all) and who has it, then
+// each of their favourites (favs, prefs.books: ★, and – where one doesn't
+// price it; the price green above the median across every bookie, red
+// below), then the median as in bestBookHtml. Every bookie's price is in
+// the bet's details. Rows naming none (Betfair; older rows) get bestBookHtml.
+export function bookPricesHtml(r, median = null, { favs = [], use = null } = {}) {
+  if (!r.books?.length) return bestBookHtml(r, median);
+  const price = new Map(r.books);
+  const mine = r.books.filter(([b]) => usesBook(use, b));
+  const top = mine[0]?.[1];
+  const best = mine.filter(([, p]) => p === top).map(([b]) => b);
+  const favLine = [...r.books.map(([b]) => b).filter(b => favs.includes(b) && !best.includes(b)),
+                   ...favs.filter(b => !price.has(b))];
+  const yours = use == null ? '' : ' at the bookies you use';
+  const med = r.median ?? r.back;   // across every bookie, whatever price the page shows
+  const vsMedian = p => med == null ? 'text-gray-200' : p > med + 1e-9 ? 'text-green-400' : p < med - 1e-9 ? 'text-red-400' : 'text-gray-200';
+  const title = [top == null ? "None of the bookies you use prices it" : `Best price${yours} ${odds(top)} at ${best.join(', ')}`,
+    ...favLine.map(b => price.has(b) ? `${b}: ${odds(price.get(b))} (${[top == null ? '' : `${signedPct(price.get(b) / top - 1)} on the best${yours}`,
+      med == null ? '' : `${signedPct(price.get(b) / med - 1)} on the median`].filter(Boolean).join(', ')})`
+      : `${b}: doesn't price it`),
+    ...(median == null ? [] : [`Median across all ${r.books.length} bookies: ${odds(median)}`]),
+    "Open the bet for every bookie's price."].join('\n');
+  const item = (b, p, [nameCls, priceCls]) => `<span class="whitespace-nowrap">${favs.includes(b) ? `${STAR} ` : ''}`
+    + `<span class="${nameCls}">${esc(bookLabel(b))}</span> <span class="tabular-nums ${priceCls}">${p == null ? '–' : odds(p)}</span></span>`;
+  const items = [
+    ...(top == null ? ['<span class="whitespace-nowrap text-gray-500">none of your bookies</span>']
+      : best.map(b => item(b, top, ['font-semibold text-gray-200', 'font-semibold text-amber-400']))),
+    ...favLine.map(b => item(b, price.get(b), price.has(b) ? ['text-gray-200', vsMedian(price.get(b))] : ['text-gray-500', 'text-gray-500'])),
+  ];
+  if (median != null) items.push(`<span class="whitespace-nowrap">avg <span class="tabular-nums">${odds(median)}</span></span>`);
+  return `<div class="text-[11px] text-gray-400 leading-snug" title="${esc(title)}">${items.join(' · ')}</div>`;
 }
 
 // Outlier prices (migration 036): one bookie far above the consensus of the

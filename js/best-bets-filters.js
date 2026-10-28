@@ -104,8 +104,18 @@ const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]),
 
 export function defaultPrefs() {
   return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'best', myTeams: false, liveStage: 'avg',
-           liveSort: 'best', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true };
+           liveSort: 'best', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true, books: [], use: null };
 }
+
+// My bookies, as the bookies' prices name them ("PointsBet (AU)"). books:
+// the favourites, whose prices every bet shows beside the best one. use: the
+// bookies the viewer bets at - each bet shows and is staked at the best of
+// theirs, judged all the same at every bookie's prices (best-bets-shared.js
+// usedPrice) - or null for every bookie, the default until changed
+// (bookies new to the feed are then used too).
+const MAX_BOOKS = 30;
+const bookList = b => (Array.isArray(b)
+  ? [...new Set(b.filter(x => typeof x === 'string' && x.trim() && x.length <= 60))].slice(0, MAX_BOOKS) : []);
 
 // Whether any market's rule has been changed from its default
 const customised = markets => Object.entries(markets)
@@ -140,6 +150,8 @@ export function normalizePrefs(p) {
     judge: JUDGES.includes(p.judge) ? p.judge : 'model',
     // Settings from before it: on where the markets were never set by hand
     autoOpt: v < 4 ? !customised(markets) : p.autoOpt !== false,
+    books: bookList(p.books),
+    use: Array.isArray(p.use) ? bookList(p.use) : null,
   };
 }
 

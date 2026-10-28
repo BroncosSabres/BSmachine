@@ -54,6 +54,12 @@
                 <svg aria-hidden="true" viewBox="0 0 20 20" class="w-3.5 h-3.5 fill-current text-amber-400"><path d="M3 4h14l-5.5 6.5V16l-3 1.5v-7L3 4z"/></svg>
                 Filters <span id="filters-summary" class="text-xs text-gray-400"></span>
               </button>
+              <button id="books-btn" type="button" aria-haspopup="dialog"
+                      title="The bookies you bet at (bets are taken at the best price among them; all until you change them) and your favourites (their prices show beside the best one on every bet)"
+                      class="flex items-center gap-1.5 bg-gray-800 border border-gray-600 hover:border-gray-400 rounded px-2 py-1 text-sm text-white">
+                <span aria-hidden="true" class="text-amber-400">★</span>
+                My bookies <span id="books-summary" class="text-xs text-gray-400"></span>
+              </button>
               <div class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with odds in this range, both ends included, in every market. Leave an end blank for no limit.">Odds $
                 <input id="odds-min" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Lowest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
@@ -144,9 +150,10 @@
                     <tr class="text-xs text-gray-500 uppercase tracking-wider">
                       <th class="hidden sm:table-cell px-2 py-2 text-left font-semibold">Game</th>
                       <th class="px-2 py-2 text-left font-semibold">Selection</th>
-                      <th class="px-2 py-2 text-right font-semibold" title="Top: the price now (at the price basis chosen in Filters). Below: the price when it was last listed under your filters.">Odds</th>
-                      <th class="px-2 py-2 text-right font-semibold" title="Top: the edge now at the average (median) price. Below: when it was last listed.">Edge</th>
-                      <th class="px-2 py-2 text-right font-semibold" title="How long it was listed under your filters, when that ended, and why it isn't now">Listed</th>
+                      <th id="dth-odds" class="px-2 py-2 text-right font-semibold">Odds</th>
+                      <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The model's chance, and the fair odds that makes">Model</th>
+                      <th class="px-2 py-2 text-right font-semibold" title="Top: the edge now at the average (median) price, what the filters read (– once the bookies have taken it down). best: the same at the best bookie's price. was: at the average price when it was last listed under your filters.">Edge</th>
+                      <th class="px-2 py-2 text-right font-semibold" title="Why it isn't listed now, how long it was listed under your filters in all, and when that ended">Listed</th>
                     </tr>
                   </thead>
                   <tbody id="dropped-body"></tbody>
