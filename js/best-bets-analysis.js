@@ -19,7 +19,8 @@
 // "Most profitable" and all. Same access rules as the Best Bets page.
 // "Outlier prices" is apart from all that: bets on one bookie far above the
 // median of the others, at the price when the gap first reached a cut, and
-// each market's threshold (betfair-api outliers.py).
+// each market's threshold (betfair-api outliers.py), split by the model's edge
+// at the median and at the outlier price, with a gap's bets charted by day.
 import { BACKEND } from './api-config.js';
 import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
@@ -561,9 +562,11 @@ const stakeSub = s => s.stake ? `at ${odds(s.st.odds)} · about ${s.stake.betsTo
     + (s.st.thin ? ` · ⚠ not proven yet: under ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games, so less sure than it looks` : '')
   : !s.st.n ? 'no bets' : s.st.verdict === 'behind' ? 'a loss, clear of zero' : `no profit clear of zero: ${lowText(s.st)}`;
 
+// One figure in a detail panel's list
+const stat = (label, value, sub = '', title = '') => `<div title="${esc(title)}"><dt class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">${label}</dt>
+  <dd class="text-sm font-semibold tabular-nums text-gray-100">${value}</dd>${sub ? `<dd class="text-[10px] text-gray-500 leading-snug">${sub}</dd>` : ''}</div>`;
+
 function renderRuleDetail(cell, fit) {
-  const stat = (label, value, sub = '', title = '') => `<div title="${esc(title)}"><dt class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">${label}</dt>
-    <dd class="text-sm font-semibold tabular-nums text-gray-100">${value}</dd>${sub ? `<dd class="text-[10px] text-gray-500 leading-snug">${sub}</dd>` : ''}</div>`;
   ruleChart?.destroy();
   ruleChart = null;
   $('rule-chart-wrap').classList.toggle('hidden', !cell?.n);
@@ -688,14 +691,19 @@ function renderBets() {
   $('bets-show').innerHTML = [['all', 'All'], ['won', 'Won'], ['lost', 'Lost']].map(([key, label], i) =>
     `<button type="button" data-show="${key}" aria-pressed="${key === betsShow}" class="px-2.5 py-1 ${i ? 'border-l border-gray-600 ' : ''}${
       key === betsShow ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}">${label} <span class="tabular-nums opacity-70">${parts[key].length}</span></button>`).join('');
+  // An outlier bet's odds are the outlier price: its gap and the median under
+  // them, and its edge at that price with the median's under it
+  const out = betsOpen.outlier;
   $('bets-rows').innerHTML = shown.map(b => {
     const r = b.row, p = profit(b);
     return `<tr class="border-t border-gray-700/60 tabular-nums text-gray-300 align-top">
       <td class="px-2 py-1.5 whitespace-nowrap">${dayText(b.date)}</td>
       <td class="px-2 py-1.5">${esc(r.home_team)} v ${esc(r.away_team)}${manySports ? `<span class="block text-[10px] text-gray-500">${esc(SPORT_LABELS[b.sport] || b.sport)}</span>` : ''}</td>
       <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.book ? esc(b.book) : 'bookmakers'}</span></td>
-      <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}</td>
-      <td class="px-2 py-1.5 text-right">${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span></td>
+      <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}${out ? `<span class="block text-[10px] text-gray-500 whitespace-nowrap">${b.gap != null ? `gap ${signedPct(b.gap, 0)} · ` : ''}median ${odds(b.back)}</span>` : ''}</td>
+      <td class="px-2 py-1.5 text-right">${out
+        ? `<span class="${signCls(b.bookEdge)}">${signedPct(b.bookEdge, 0)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">median ${signedPct(b.edge, 0)} · model ${pct(b.prob, 0)}</span>`
+        : `${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span>`}</td>
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
     </tr>`;
   }).join('') || '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">None of these.</td></tr>';
@@ -703,7 +711,7 @@ function renderBets() {
     || `Odds and edge are as ${stageOf()[1]}, at the ${basis() === 'book' ? 'best bookie price' : 'average price'}.`} Profit is on 1 unit, after commission where it applies.`;
 }
 
-// list: { title, bets }, the rule panel's row by default
+// list: { title, bets, note?, outlier? }, the rule panel's row by default
 function openBets(list = listed) {
   if (!list) return;
   betsOpen = list;
@@ -1268,9 +1276,17 @@ function renderBreakdown(base) {
 // so the bets at any gap are exact. Read from every bookmaker row: an outlier
 // is taken at the best bookie's price when the gap first got there, so Odds
 // from / taken / count / odds range don't apply; Sport and Market do.
+// Each table splits its bets by the model's edge twice: at the median price
+// (what lists a bet without any gap) and at the outlier price taken. The best
+// price is at or above the median, so a bet above 0 at the median is above 0
+// at the outlier price too. The gap row selected is charted below its table
+// by game day, split one way or the other.
 
 let outlierMarkets = {};   // 'sport|kind' -> { band: outlier_thresholds row }
-let outLists = {};         // cut (as the option value) -> { title, bets, note } behind the gap table's rows
+let outLists = {};         // data-out-list -> { title, bets, note, outlier } behind the tables' cells and the panel
+let outSel = null;         // the gap row charted (its cut), or null: the gap chosen above, else the market's threshold
+let outSplitBy = 'book';   // the chart's split: edge at the outlier price ('book') or the median ('median')
+let outChart = null;
 const OUT_DEFAULT_CUT = '0.25';
 // A market's threshold before it can be judged (outliers.DEFAULT_CUT), also
 // where nothing is settled yet
@@ -1282,10 +1298,154 @@ const outBets = (rows, cut) => cut == null ? [] : rows.map(r => outlierBet(r, cu
 const meanOf = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
 const gapText = cut => signedPct(cut, 0);
 
-function outSplit(bets) {
-  if (!bets.length) return '<span class="text-gray-600">–</span>';
-  const st = ruleStats(bets, { thinRange: true });
-  return `<span class="font-semibold ${signCls(st.roi)}">${signedPct(st.roi, 0)}</span><span class="block text-[10px] text-gray-500">${count(st.n, 'bet')} · ${wonCount(st.wins)} won</span>`;
+// The two edges a bet is split by. One the model didn't price counts as 0 or below.
+const OUT_EDGES = {
+  median: { label: 'median', of: b => b.edge },
+  book: { label: 'outlier price', of: b => b.bookEdge },
+};
+const outValue = (b, by) => OUT_EDGES[by].of(b) > 0;
+const outNote = cut => `Odds are the best bookie's the first time the gap reached ${gapText(cut)}, with the gap over the other bookies' median and the median across all of them below. `
+  + "Edge is the model's at the price taken, with its edge at the median below.";
+
+// One table row's split cells: its bets with the model's edge above 0 and 0
+// or below, at the median then at the outlier price. Each lists its bets.
+function outSplitCells(key, title, bets, note) {
+  return [['median', true], ['median', false], ['book', true], ['book', false]].map(([by, pos], i) => {
+    const part = bets.filter(b => outValue(b, by) === pos);
+    const edge = i % 2 ? '' : ' border-l border-gray-700/60';
+    if (!part.length) return `<td class="px-2 py-2 text-right${edge}"><span class="text-gray-600">–</span></td>`;
+    const roi = part.reduce((a, b) => a + profit(b), 0) / part.length, wins = part.reduce((a, b) => a + b.win, 0);
+    const listKey = `${key}|${by}|${pos ? 'pos' : 'neg'}`;
+    outLists[listKey] = { title: `${title} · edge ${pos ? 'above 0' : '0 or below'} at the ${OUT_EDGES[by].label}`, bets: part, note, outlier: true };
+    return `<td class="px-2 py-2 text-right${edge}"><button type="button" data-out-list="${esc(listKey)}" class="text-right rounded hover:bg-gray-700/50 px-1 -mx-1" title="List these bets">
+      <span class="font-semibold ${signCls(roi)}">${signedPct(roi, 0)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">${count(part.length, 'bet')} · ${wonCount(wins)} won</span></button></td>`;
+  }).join('');
+}
+
+// The final value of each line just past its right end, nudged apart so two
+// that end close together don't overlap: a dash in the line's colour, the
+// figure in ink.
+const endLabels = {
+  id: 'endLabels',
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea: a } = chart;
+    const items = chart.data.datasets.map((ds, i) => {
+      const end = chart.isDatasetVisible(i) && chart.getDatasetMeta(i).data.at(-1);
+      return end ? { y: end.y, value: ds.data.at(-1).y, color: ds.borderColor } : null;
+    }).filter(Boolean).sort((p, q) => p.y - q.y);
+    for (let k = 1; k < items.length; k++) items[k].y = Math.max(items[k].y, items[k - 1].y + 13);
+    ctx.save();
+    ctx.font = `600 10px ${Chart.defaults.font.family}`;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    for (const it of items) {
+      ctx.fillStyle = it.color;
+      ctx.fillRect(a.right + 4, it.y - 1, 6, 2);
+      ctx.fillStyle = C_INK;
+      ctx.fillText(`${it.value > 0 ? '+' : ''}${it.value.toFixed(1)}`, a.right + 13, it.y);
+    }
+    ctx.restore();
+  },
+};
+
+// The total's line: neutral, as its split's two lines add up to it
+const C_ALL = '#d1d5db';
+const DAY_MS = 86400000;
+const dayMs = date => Date.parse(`${date}T00:00:00Z`);
+
+// Running profit by game day: all the bets, and the two halves of the split
+// chosen. Every line has a point on each day any bet settled, so the tooltip
+// reads them together.
+function renderOutChart(bets) {
+  const by = outSplitBy, label = OUT_EDGES[by].label;
+  const byDay = new Map();
+  for (const b of bets) {
+    if (!byDay.has(b.date)) byDay.set(b.date, []);
+    byDay.get(b.date).push(b);
+  }
+  const days = [...byDay.keys()].sort();
+  const start = dayMs(days[0]) - DAY_MS;
+  const line = (lineLabel, color, width, test) => {
+    let run = 0, n = 0;
+    const data = [{ x: start, y: 0 }];
+    for (const d of days) {
+      const today = byDay.get(d).filter(test);
+      run += today.reduce((a, b) => a + profit(b), 0);
+      n += today.length;
+      data.push({ x: dayMs(d), y: run, n, day: d, today: today.length });
+    }
+    return { label: lineLabel, data, borderColor: color, backgroundColor: color, borderWidth: width,
+             pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 6, stepped: 'after' };
+  };
+  const datasets = [
+    line('All', C_ALL, 2.5, () => true),
+    line(`Edge above 0 at the ${label}`, C_SECOND, 2, b => outValue(b, by)),
+    line(`Edge 0 or below at the ${label}`, C_ACTUAL, 2, b => !outValue(b, by)),
+  ];
+  const isoDay = ms => new Date(ms).toISOString().slice(0, 10);
+  outChart?.destroy();
+  outChart = new Chart($('out-chart'), { type: 'line', data: { datasets }, plugins: [endLabels],
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
+      layout: { padding: { right: 44 } },
+      scales: {
+        x: { type: 'linear', min: start, max: dayMs(days.at(-1)),
+             // Ticks on whole days, a week or more apart once the span is long
+             afterBuildTicks: axis => {
+               const span = (axis.max - axis.min) / DAY_MS;
+               const step = [1, 2, 3, 7, 14, 28].find(s => span / s <= 8) ?? 56;
+               axis.ticks = [];
+               for (let t = axis.min + DAY_MS; t <= axis.max; t += step * DAY_MS) axis.ticks.push({ value: t });
+             },
+             ticks: { color: C_INK, font: { size: 10 }, maxRotation: 0, callback: v => dayText(isoDay(v)) },
+             grid: { display: false }, border: { color: 'rgba(255,255,255,0.1)' } },
+        y: { title: { display: true, text: 'Units', color: C_INK, font: { size: 10 } }, ticks: { color: C_INK, font: { size: 10 } },
+             grid: { color: ctx => ctx.tick.value === 0 ? 'rgba(255,255,255,0.35)' : GRID }, border: { color: 'rgba(255,255,255,0.1)' } },
+      },
+      plugins: {
+        legend: { labels: { color: C_INK, usePointStyle: true, pointStyle: 'line', pointStyleWidth: 18, font: { size: 11 } } },
+        tooltip: { filter: item => item.raw.day != null,
+          callbacks: { title: items => dayText(items[0].raw.day),
+                       label: item => `${item.dataset.label}: ${units(item.raw.y)} after ${count(item.raw.n, 'bet')}`,
+                       footer: items => { const all = items.find(i => i.datasetIndex === 0)?.raw; return all ? `${count(all.today, 'bet')} on the day` : ''; } } },
+      },
+    } });
+}
+
+// The gap row selected (or null): what it returned, and its chart
+function renderOutDetail(sel, scope) {
+  outChart?.destroy();
+  outChart = null;
+  $('out-detail').classList.toggle('hidden', !sel);
+  if (!sel) return;
+  const { cut, bets, st } = sel;
+  const title = `${scope} · gap ${gapText(cut)} and over`;
+  outLists.sel = { title, bets, note: outNote(cut), outlier: true };
+  const [chip, chipCls] = VERDICT_CHIPS[st.verdict];
+  $('out-sel-title').textContent = title;
+  $('out-sel-verdict').innerHTML = `<span class="inline-block rounded px-1.5 py-0.5 mr-1.5 text-[10px] font-semibold ${chipCls}">${chip}</span>`
+    + (st.verdict === 'thin' ? `${count(st.n, 'bet')} over ${count(st.games, 'game')}. A gap is called once it has ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games.`
+      : st.verdict === 'open' ? `The 90% range runs from ${signedPct(st.roiCI[0], 0)} to ${signedPct(st.roiCI[1], 0)}, so the result so far could be luck either way.`
+      : st.verdict === 'ahead' ? 'Even the low end of the 90% range is a profit. It is one of several gaps looked at, so check the rows around it agree.'
+      : 'Even the high end of the 90% range is a loss.');
+  const exp = expectedWins(bets.filter(b => b.prob != null));
+  const atBook = meanOf(bets.map(b => b.bookEdge).filter(x => x != null)), atMedian = meanOf(bets.map(b => b.edge).filter(x => x != null));
+  $('out-sel-stats').innerHTML = [
+    stat('Returned', `<span class="${signCls(st.roi)}">${signedPct(st.roi)}</span>`, st.roiCI ? `90% range ${range(st.roiCI)}` : 'too few games for a range'),
+    stat('Profit', `<span class="${signCls(st.units)}">${units(st.units)}</span>`, `${count(st.n, 'bet')} over ${count(st.games, 'game')}`),
+    stat('Won', `${wonCount(st.wins)} of ${st.n.toLocaleString()}`, exp.n ? `model expected ${exp.model.toFixed(1)} · median price ${exp.bookie.toFixed(1)}` : '',
+      "How many won, against what the model's chances and the bookies' median price (1 / odds, margin included) expected"),
+    stat('Model expected', signedPct(atBook), `at the outlier price${atMedian != null ? ` · ${signedPct(atMedian)} at the median` : ''}`,
+      "The return the model's chances say these bets should make at the price taken, and at the median price"),
+    stat('Without best game', st.restRoi != null ? `<span class="${signCls(st.restRoi)}">${signedPct(st.restRoi)}</span>` : '–', 'the return with its most profitable game taken out',
+      'A gap that lives off one game falls over here'),
+  ].join('');
+  for (const b of $('out-split').children) {
+    const on = b.dataset.split === outSplitBy;
+    b.className = `px-2.5 py-1 ${b.previousElementSibling ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
+    b.setAttribute('aria-pressed', on);
+  }
+  renderOutChart(bets);
 }
 
 function outRoi(st) {
@@ -1311,30 +1471,33 @@ function renderOutliers() {
   const groups = [...new Set([...rows.filter(r => r.disc_ladder).map(r => r.group), ...Object.keys(outlierMarkets)])].sort();
   const marketMode = $('out-cut').value === 'market';
   $('out-sub').textContent = 'One bookie well above the median of the others, bet at that price the first time the gap got '
-    + `${marketMode ? "to the market's threshold" : `to ${gapText(+$('out-cut').value)}`}. Select a market to see it by gap.`;
+    + `${marketMode ? "to the market's threshold" : `to ${gapText(+$('out-cut').value)}`}. Select a market to see it by gap, or a split to list its bets.`;
+  outLists = {};
   if (!rows.some(r => r.disc_ladder)) {
-    $('out-markets').innerHTML = '<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">No outlier prices recorded yet.</td></tr>';
+    $('out-markets').innerHTML = '<tr><td colspan="11" class="px-2 py-8 text-center text-sm text-gray-500">No outlier prices recorded yet.</td></tr>';
     $('out-gaps').innerHTML = '';
     $('out-gap-title').textContent = '';
     $('out-gap-sub').textContent = '';
     $('out-note').textContent = '';
+    renderOutDetail(null);
     return;
   }
   const current = $('f-sport').value !== 'all' && $('f-market').value !== 'all' ? `${$('f-sport').value}|${$('f-market').value}` : null;
   $('out-markets').innerHTML = groups.map(g => {
-    const m = outlierMarkets[g]?.all;
-    const bets = outBets(rows.filter(r => r.group === g), outCutFor(g));
+    const m = outlierMarkets[g]?.all, cut = outCutFor(g);
+    const bets = outBets(rows.filter(r => r.group === g), cut);
     const st = ruleStats(bets, { thinRange: true });
+    const title = `${groupLabel(g)}${periodText()} · gap ${gapText(cut)} and over`;
+    if (st.n) outLists[g] = { title, bets, note: outNote(cut), outlier: true };
     return `<tr data-group="${esc(g)}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${g === current ? 'bg-gray-700/30' : ''}">
       <td class="px-2 py-2 text-left font-semibold text-gray-100">${esc(groupLabel(g))}</td>
       <td class="px-2 py-2 text-right text-gray-300">${m ? m.n_games.toLocaleString() : '–'}</td>
       <td class="px-2 py-2 text-right text-gray-300"${m?.h != null ? ` title="${esc(`A unit bet at the others' median price returned ${m.h.toFixed(3)} over ${m.n.toLocaleString()} settled selections`)}"` : ''}>${m?.breakeven != null ? gapText(m.breakeven) : '–'}</td>
       <td class="px-2 py-2 text-right">${outThresholdCell(g)}</td>
-      <td class="px-2 py-2 text-right text-gray-300">${st.n ? st.n.toLocaleString() : '–'}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${st.n ? `<button type="button" data-out-list="${esc(g)}" class="rounded hover:bg-gray-700/50 px-1 -mx-1" title="List these bets">${st.n.toLocaleString()}</button>` : '–'}</td>
       <td class="px-2 py-2 text-right text-gray-300">${st.n ? wonCount(st.wins) : '–'}</td>
       <td class="px-2 py-2 text-right">${outRoi(st)}</td>
-      <td class="px-2 py-2 text-right">${outSplit(bets.filter(b => b.edge > 0))}</td>
-      <td class="px-2 py-2 text-right">${outSplit(bets.filter(b => !(b.edge > 0)))}</td>
+      ${outSplitCells(g, title, bets, outNote(cut))}
     </tr>`;
   }).join('');
 
@@ -1343,35 +1506,42 @@ function renderOutliers() {
     && ($('f-market').value === 'all' || r.kind === $('f-market').value));
   const threshold = current ? outThreshold(current) : null;
   const scope = marketText().replace(' · my filters', '');
-  outLists = {};
   const lines = OUTLIER_CUTS.map(cut => {
     const bets = outBets(sel, cut);
     if (!bets.length) return null;
-    outLists[cut] = { title: `${scope} · gap ${gapText(cut)} and over`, bets,
-                      note: `Odds are the best bookie's the first time the gap reached ${gapText(cut)}; edge and model chance are the model's at the median price then.` };
     return { cut, bets, st: ruleStats(bets, { thinRange: true }), expected: meanOf(bets.map(b => b.bookEdge).filter(x => x != null)) };
   }).filter(Boolean);
+  // The row charted: the one selected, else the gap chosen above (the
+  // market's threshold, +25% without one)
+  const preferred = marketMode ? threshold ?? OUT_DEFAULT : +$('out-cut').value;
+  const shown = lines.find(l => l.cut === outSel) || lines.find(l => l.cut === preferred) || lines.find(l => l.cut === OUT_DEFAULT) || lines[0] || null;
   const reach = Math.max(0.2, ...lines.flatMap(l => [Math.abs(l.st.roi), Math.abs(l.expected ?? 0)]));
   $('out-gap-title').textContent = `By gap · ${scope}`;
-  $('out-gap-sub').textContent = 'Each row: every bet whose gap reached it, so the rows overlap. Select one to list its bets.'
-    + (threshold != null ? ` The market's threshold is ${gapText(threshold)} (highlighted).` : '');
-  $('out-gaps').innerHTML = lines.map(l => `
-    <tr data-cut="${l.cut}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${l.cut === threshold ? 'bg-amber-900/20' : ''}">
-      <td class="px-2 py-2 text-left font-semibold ${l.cut === threshold ? 'text-amber-300' : 'text-gray-100'}">${gapText(l.cut)}</td>
+  $('out-gap-sub').textContent = 'Each row: every bet whose gap reached it, so the rows overlap. Select one to chart it below, or a split to list its bets.'
+    + (threshold != null ? ` The market's threshold is ${gapText(threshold)} (amber).` : '');
+  $('out-gaps').innerHTML = lines.map(l => {
+    const on = l === shown, title = `${scope} · gap ${gapText(l.cut)} and over`;
+    return `
+    <tr data-cut="${l.cut}" aria-selected="${on}" class="border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums ${on ? 'bg-gray-700/40' : l.cut === threshold ? 'bg-amber-900/20' : ''}">
+      <td class="px-2 py-2 text-left font-semibold ${l.cut === threshold ? 'text-amber-300' : 'text-gray-100'}" style="${on ? 'box-shadow:inset 3px 0 0 #d97706;' : ''}">${gapText(l.cut)}</td>
       <td class="px-2 py-2 text-right text-gray-300">${l.st.n.toLocaleString()}</td>
       <td class="px-2 py-2 text-right text-gray-300">${wonCount(l.st.wins)}</td>
       <td class="px-2 py-2 text-right ${signCls(l.st.units)}">${l.st.units > 0 ? '+' : ''}${l.st.units.toFixed(1)}</td>
       <td class="px-2 py-2 text-right">${outRoi(l.st)}</td>
       <td class="px-2 py-2">${returnBar({ ...l.st, edge: l.expected ?? 0 }, reach)}</td>
-      <td class="px-2 py-2 text-right">${outSplit(l.bets.filter(b => b.edge > 0))}</td>
-      <td class="px-2 py-2 text-right">${outSplit(l.bets.filter(b => !(b.edge > 0)))}</td>
-    </tr>`).join('') || '<tr><td colspan="8" class="px-2 py-8 text-center text-sm text-gray-500">No settled outlier prices here.</td></tr>';
+      ${outSplitCells(`cut:${l.cut}`, title, l.bets, outNote(l.cut))}
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" class="px-2 py-8 text-center text-sm text-gray-500">No settled outlier prices here.</td></tr>';
+  renderOutDetail(shown, scope);
   $('out-note').textContent = 'Gap: the best price over the median of the other bookies, minus 1 (Ladbrokes $17 against $7.50 is +127%); '
     + 'only with 3 or more bookies, and Ladbrokes / Neds and TABtouch / Unibet, which share price feeds, count as one. '
     + "Break-even: the gap a bet needs if the others' median were right after their margin, measured on every settled selection "
     + "of the market. A market's threshold is the gap, at or above a cautious version of that, whose outlier bets have returned the "
     + 'most, once one has at least 15 settled bets and 5 winners and is in profit (the market has none if no such gap is); '
     + 'until a gap has that many to judge, it is +25%. '
+    + "Edge at median: the model's edge at the median price across the bookies, what lists a bet without any gap. Edge at outlier price: "
+    + 'its edge at the price taken. That price is at or above the median, so every bet above 0 at the median is above 0 there too, '
+    + 'with those only the outlier price made value; a bet the model did not price counts as 0 or below. '
     + 'The rows by gap are exactly what betting at each gap would have got, but picking the best of them is fitted to these results: '
     + 'expect less from it. Games more than 14 days old kept only their first and last prices before kickoff, so a gap that came and '
     + 'went in between is missing there. These bets are in every other table on the page too, by their own edge and odds.';
@@ -1498,17 +1668,34 @@ function showGroup(key) {
 $('out-cut').innerHTML = [['market', "Each market's threshold"], ...OUTLIER_CUTS.map(c => [String(c), gapText(c)])]
   .map(([v, label]) => `<option value="${v}">${esc(label)}</option>`).join('');
 $('out-cut').value = OUT_DEFAULT_CUT;
-$('out-cut').addEventListener('change', renderOutliers);
+$('out-cut').addEventListener('change', () => { outSel = null; renderOutliers(); });
+// A split (or a market's bet count) lists its bets; elsewhere on a row, the
+// market's row chooses it above and the gap's row is charted
+const outListAt = e => outLists[e.target.closest('[data-out-list]')?.dataset.outList];
 $('out-markets').addEventListener('click', e => {
+  const list = outListAt(e);
+  if (list) { openBets(list); return; }
   const key = e.target.closest('tr[data-group]')?.dataset.group;
   if (!key) return;
+  outSel = null;
   showGroup(key);
   render();
 });
 $('out-gaps').addEventListener('click', e => {
+  const list = outListAt(e);
+  if (list) { openBets(list); return; }
   const cut = e.target.closest('tr[data-cut]')?.dataset.cut;
-  if (cut != null && outLists[cut]) openBets(outLists[cut]);
+  if (cut == null) return;
+  outSel = Number(cut);
+  renderOutliers();
 });
+$('out-split').addEventListener('click', e => {
+  const by = e.target.closest('button[data-split]')?.dataset.split;
+  if (!by || by === outSplitBy) return;
+  outSplitBy = by;
+  renderOutliers();
+});
+$('out-sel-bets').addEventListener('click', () => { if (outLists.sel) openBets(outLists.sel); });
 installTapTips(document.body);
 
 $('breakdown-body').addEventListener('click', e => {
