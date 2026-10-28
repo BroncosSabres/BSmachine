@@ -33,20 +33,28 @@
 //             stands (won first, lost last), the live EV or the chance from here
 //   liveFinal 'any' | 'hide' | 'only': Live bets whose game has finished but
 //             which haven't settled yet - shown, hidden, or nothing else
-//   outliers  'any' | 'only' | 'off': outlier prices (one bookie far above the
-//             others, by at least its market's threshold - the gap its settled
-//             outlier bets have paid at, +25% until they can be judged, none
-//             where they haven't paid: betfair-api outliers.py) are listed
-//             whatever their edge ('any', where they've paid), in the markets
-//             switched on and the odds range; 'only' lists nothing else; 'off'
-//             lists them only when they have an edge too
+//   outliers  'any' | 'only' | 'off': outlier prices (one bookie well above
+//             the median of the others) are listed whatever their edge, in the
+//             odds range, as each market's own rule (markets[key].out) says
+//             ('any': "On"); 'only' lists nothing else; 'off' lists them only
+//             when they have an edge too, like any bet
+//   markets[key].out  { mode: 'paid' | 'custom' | 'off', gaps: { value, made,
+//             none } }: which of the market's outliers count. 'paid' (the
+//             default): where they've paid - each edge class's fitted
+//             threshold (betfair-api outliers.py: the gap its settled outlier
+//             bets have made the most profit at, none where they haven't paid or
+//             are too few to judge); 'custom': the gap chosen for each class
+//             (a key of OUT_CUTS, '' for none); 'off': none. A market's
+//             outliers don't need its edge switch on
 //   autoOpt   true: every market is kept on "Most profitable" (best-bets-
 //             optimise.js), re-fitted whenever the settled bets or the
 //             calibration come in, and after a change of price or judge.
 //             On for new settings; changing a market's own rule turns it off
-//   v         4: 2 moved the Live stage to 'avg' once; 3 dropped the old $10
+//   v         6: 2 moved the Live stage to 'avg' once; 3 dropped the old $10
 //             odds cap (saved as ['', '10'], the old default) once; 4 turned
-//             autoOpt on once for settings whose markets were never changed
+//             autoOpt on once for settings whose markets were never changed;
+//             5 moved the edge sorts to the best bookie's; 6 gave every market
+//             its outlier rule ('paid')
 import { SPORT_LABELS, KIND_LABELS } from './best-bets-shared.js';
 
 // kind as safe-stake.js kindKey: the NHL 60-minute (3-way) result apart from the moneyline
@@ -64,7 +72,7 @@ export const MARKETS = [
 export const BASES = { book: 'Best bookie', avg: 'Average bookie' };
 export const LIVE_STAGES = ['avg', 'open', 'best', 'close'];
 export const LIVE_STAGE_LABELS = { avg: 'average with value', open: 'opening', best: 'best', close: 'closing' };
-const PREFS_VERSION = 5;
+const PREFS_VERSION = 6;
 const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
 const DEFAULT_ODDS = ['', ''];
@@ -87,7 +95,7 @@ export function marketLabel(key) {
 export const marketTitle = key => `${SPORT_LABELS[key.split('|')[0]] || key.split('|')[0]} · ${marketLabel(key)}`;
 
 export const defaultRule = key => ({ on: !OFF_BY_DEFAULT.has(key), edge: [...DEFAULT_EDGE], calEdge: [...DEFAULT_CAL_EDGE],
-                                     closeEdge: [...DEFAULT_CAL_EDGE] });
+                                     closeEdge: [...DEFAULT_CAL_EDGE], out: defaultOut() });
 export const JUDGES = ['model', 'cal', 'close'];
 
 // A typed limit: a number (as typed) or '' for none
@@ -111,7 +119,7 @@ export function normalizePrefs(p) {
   for (const [key, rule] of Object.entries(p.markets && typeof p.markets === 'object' ? p.markets : {})) {
     if (!/^[a-z]+\|[a-z_]+(:3)?$/.test(key) || !rule || typeof rule !== 'object') continue;
     markets[key] = { on: rule.on !== false, edge: pair(rule.edge, DEFAULT_EDGE), calEdge: pair(rule.calEdge, DEFAULT_CAL_EDGE),
-                     closeEdge: pair(rule.closeEdge, DEFAULT_CAL_EDGE) };
+                     closeEdge: pair(rule.closeEdge, DEFAULT_CAL_EDGE), out: normalizeOut(rule.out) };
   }
   const v = +p.v || 1;
   const odds = pair(p.odds, DEFAULT_ODDS);
@@ -182,13 +190,142 @@ export function passesEdge(prefs, key, edge) {
   return ruleFor(prefs, key).on && edge != null && edge > 0 && inRange(edge, edgeRangeOf(prefs, key));
 }
 
-// An outlier price passes on its market's switch and the odds range alone: its
-// edge doesn't decide it (outliers 'off': it passes on its edge like any bet).
-// outlier: whether the bet is one; back: at the median.
+// An outlier price passes on the odds range alone: neither its edge nor its
+// market's edge switch decides it (outliers 'off': it passes on its edge like
+// any bet). outlier: whether it is one under these settings (outlierPasses,
+// windowKeys); back: at the median.
 export function passesBet(prefs, key, edge, back, outlier) {
   const out = prefs.outliers !== 'off' && !!outlier;
   if (prefs.outliers === 'only' && !out) return false;
-  return passesMarket(prefs, key, edge, back) || (out && ruleFor(prefs, key).on && inRange(back, oddsRangeOf(prefs)));
+  return passesMarket(prefs, key, edge, back) || (out && inRange(back, oddsRangeOf(prefs)));
+}
+
+// --- outliers ---------------------------------------------------------------
+// One bookie well above the median of the others (betfair-api outliers.py):
+// gap = the best price / the other books' median - 1. A check's edge class:
+// the model's edge at the median price above 0 ('value'), above 0 only at
+// the outlier price ('made'), neither ('none'). Each market and class has its
+// own fitted threshold (the gap its settled outliers made the most profit at),
+// none where they haven't paid or are too few to judge.
+export const OUT_CLASSES = ['value', 'made', 'none'];
+export const OUT_CLASS_LABELS = { value: 'Median edge > 0', made: 'Edge only at outlier price', none: 'No edge' };
+export const OUT_CLASS_SHORT = { value: 'median edge', made: 'outlier price only', none: 'no edge' };
+// The gaps a threshold can be (outliers.CUTS): each selection keeps its prices
+// at each, so only these can be judged
+export const OUT_CUTS = [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00, 1.50, 2.00, 3.00];
+export const outCutKey = cut => (+cut).toFixed(2);
+export const OUT_MODES = ['paid', 'custom', 'off'];
+// A market's threshold before migration 041 while too few to judge (outliers.DEFAULT_CUT)
+export const OUT_DEFAULT_CUT = 0.25;
+const OUT_BANDS = [[2.5, '<2.5'], [5, '2.5-5'], [10, '5-10'], [Infinity, '10+']];   // outliers.BANDS
+export const outBandOf = cons => OUT_BANDS.find(([top]) => cons < top)[1];
+
+export const edgeClass = (edge, bookEdge) => (edge > 0 ? 'value' : bookEdge > 0 ? 'made' : 'none');
+export function defaultOut() { return { mode: 'paid', gaps: { value: '', made: '', none: '' } }; }
+function normalizeOut(o) {
+  const out = defaultOut();
+  if (!o || typeof o !== 'object') return out;
+  out.mode = OUT_MODES.includes(o.mode) ? o.mode : 'paid';
+  for (const cls of OUT_CLASSES) {
+    const g = o.gaps?.[cls];
+    out.gaps[cls] = g != null && g !== '' && OUT_CUTS.some(c => outCutKey(c) === outCutKey(g)) ? outCutKey(g) : '';
+  }
+  return out;
+}
+export const outRuleOf = (prefs, key) => normalizeOut(ruleFor(prefs, key).out);
+
+// The fitted thresholds (/api/best_bets/analysis outliers: outlier_thresholds
+// rows) -> { byClass, markets: { 'sport|kind': { all, bands: { band: row },
+// classes: { class: row } } } }. byClass: the per-class rows are in
+// (migration 041); before them a market's threshold is one for every class.
+export function outlierFits(rows) {
+  const markets = {};
+  let byClass = false;
+  for (const o of rows || []) {
+    const m = (markets[`${o.sport}|${o.kind}`] ||= { all: null, bands: {}, classes: {} });
+    const cls = o.edge_class || 'any';
+    if (cls !== 'any') { m.classes[cls] = o; byClass = true; } else if (o.band === 'all') m.all = o; else m.bands[o.band] = o;
+  }
+  return { byClass, markets };
+}
+
+// The gap a class needs to count "where they've paid", at a consensus price
+// (its band's floor, for 'made' and 'none'); null: it doesn't. Before the
+// class rows: the market's (its band's first), +25% with nothing settled.
+export function fittedCut(fits, key, cls, cons) {
+  const m = fits?.markets?.[key];
+  if (fits?.byClass) {
+    const t = m?.classes?.[cls]?.threshold;
+    if (t == null) return null;
+    const floor = cls !== 'value' && cons != null ? m.bands[outBandOf(cons)]?.floor : null;
+    return floor != null && floor > t + 1e-9 ? floor : t;
+  }
+  if (!m) return OUT_DEFAULT_CUT;
+  const band = cons != null ? m.bands[outBandOf(cons)]?.threshold : null;
+  return band ?? (m.all ? m.all.threshold : OUT_DEFAULT_CUT);
+}
+
+// The gap each class needs under these settings in one market: { class: cut
+// or null }. fits: outlierFits (for 'paid'); cons: the consensus band it is in.
+export function outCutsFor(prefs, key, fits, cons = null) {
+  const out = outRuleOf(prefs, key);
+  const off = prefs.outliers === 'off' || out.mode === 'off';
+  return Object.fromEntries(OUT_CLASSES.map(cls => [cls, off ? null
+    : out.mode === 'custom' ? (out.gaps[cls] === '' ? null : +out.gaps[cls]) : fittedCut(fits, key, cls, cons)]));
+}
+
+// Whether a price is an outlier under these settings: o = { gap, cls, paid }
+// - its gap and edge class, and whether the backend counted it one under the
+// fitted thresholds (paid: "Where they've paid", the default).
+export function outlierPasses(prefs, key, o) {
+  if (!o || prefs.outliers === 'off') return false;
+  const out = outRuleOf(prefs, key);
+  if (out.mode === 'off') return false;
+  if (out.mode === 'paid') return !!o.paid;
+  const g = out.gaps[o.cls];
+  return g !== '' && o.gap != null && o.gap >= +g - 1e-9;
+}
+
+// A selection's outlier window (/api/best_bets/analysis disc_window, /live
+// out_window: best_bets_data.compact_window): { 'class:cut': [first price,
+// its median edge, its book, its median, the other books' median then,
+// average price while there, average median edge, average edge at the best
+// price, seconds, first there (unix s)] }. The keys at which it showed as an
+// outlier under these settings: each class at the gap it needs ('paid': at
+// the floor of the consensus band it was first there in, as the backend).
+export function windowKeys(prefs, key, win, fits) {
+  if (!win || prefs.outliers === 'off') return [];
+  const out = outRuleOf(prefs, key);
+  if (out.mode === 'off') return [];
+  const keys = [];
+  for (const cls of OUT_CLASSES) {
+    if (out.mode === 'custom') {
+      const k = out.gaps[cls] === '' ? null : `${cls}:${out.gaps[cls]}`;
+      if (k && win[k]) keys.push(k);
+      continue;
+    }
+    const t = fittedCut(fits, key, cls, null);
+    const e = t == null ? null : win[`${cls}:${outCutKey(t)}`];
+    if (!e) continue;
+    const cut = fittedCut(fits, key, cls, e[4]);
+    if (cut != null && win[`${cls}:${outCutKey(cut)}`]) keys.push(`${cls}:${outCutKey(cut)}`);
+  }
+  return keys;
+}
+
+// A bet on the window's keys, at the average best price over the time it
+// showed there (the first price where no time was recorded): { taken,
+// first, firstAt, secs, edge, bookEdge (both averaged too), median, cons,
+// book, firstEdge (of the first check), cls (the first's class) }, or null.
+export function windowTake(win, keys) {
+  const es = keys.map(k => [k, win?.[k]]).filter(([, e]) => e && e[0] != null);
+  if (!es.length) return null;
+  const [k0, f] = es.reduce((a, b) => ((b[1][9] ?? Infinity) < (a[1][9] ?? Infinity) ? b : a));
+  const secs = es.reduce((a, [, e]) => a + (e[8] || 0), 0);
+  const avg = i => es.reduce((a, [, e]) => a + (e[i] ?? 0) * (e[8] || 0), 0) / secs;
+  return { taken: secs > 0 ? avg(5) : f[0], first: f[0], firstAt: f[9] ?? null, secs,
+           edge: secs > 0 ? avg(6) : f[1], bookEdge: secs > 0 ? avg(7) : f[7], median: f[3], cons: f[4], book: f[2],
+           firstEdge: f[1], cls: k0.split(':')[0] };
 }
 
 // A tracked row at one stage ('open', 'flagged', 'best', 'close') on the
@@ -252,8 +389,9 @@ export function prefsSummary(prefs, keys) {
   const label = judgeLabel(prefs);
   const text = edges.size === 1 ? [...edges][0] : null;
   const edge = !on.length ? '' : text == null ? ` · ${label}s vary` : text === 'any edge' ? ` · any ${label}` : ` · ${label} ${text}`;
+  const own = keys.some(k => outRuleOf(prefs, k).mode !== 'paid');
   return `${on.length === keys.length ? 'All' : `${on.length} of ${keys.length}`} markets${edge}`
-    + (prefs.outliers === 'only' ? ' · outliers only' : prefs.outliers === 'off' ? ' · outliers off' : '')
+    + (prefs.outliers === 'only' ? ' · outliers only' : prefs.outliers === 'off' ? ' · outliers off' : own ? ' · outliers set by market' : '')
     + (prefs.autoOpt ? ' · most profitable' : '');
 }
 

@@ -153,6 +153,24 @@
 
         <div id="tiles" class="grid gap-3 grid-cols-2 lg:grid-cols-4 mb-4"></div>
 
+        <section class="card mb-4" aria-labelledby="mt-title">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="min-w-0">
+              <h2 id="mt-title" class="text-sm font-bold text-gray-100">My filters over time</h2>
+              <p id="mt-sub" class="text-[11px] text-gray-500"></p>
+            </div>
+            <div id="mt-y" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="Chart the running">
+              <button type="button" data-y="units">Units</button>
+              <button type="button" data-y="roi">ROI</button>
+            </div>
+          </div>
+          <div id="mt-body">
+            <div id="mt-stats" class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+            <div class="relative h-64 mt-3"><canvas id="mt-chart" role="img" aria-label="Running profit of the bets your filters let through by game day: without outlier bets, with them, and the outlier bets alone"></canvas></div>
+          </div>
+          <p id="mt-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
+
         <section class="card mb-4" aria-labelledby="rules-title">
           <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
             <div class="min-w-0">
@@ -415,21 +433,15 @@
             <table class="w-full text-sm sm:min-w-[62rem]">
               <thead>
                 <tr class="text-xs text-gray-500 uppercase tracking-wider">
-                  <th rowspan="2" class="px-2 py-2 text-left font-semibold align-bottom">Sport · market</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="Settled games the market's thresholds are fitted on">Games</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="The gap where a bet at the best price breaks even, if the other bookies' median price is right: 1 / h − 1, where h is what a unit bet at that median price has returned over every settled selection of the market (h under 1 is the bookies' margin)">Break-even</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="The gap that makes a price an outlier in this market: the most profitable gap (with at least 15 settled bets and 5 winners) at or above a cautious break-even; +25% until a gap has that many to judge; none where none has paid.">Threshold</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="Settled selections whose gap reached the one chosen above, each taken at the best bookie's price the first time it did. Select the number to list them.">Bets</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="How many of them won. A half-win counts as half.">Won</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="Return per unit at the outlier price, with the 90% range (resampling whole games)">ROI</th>
-                  <th colspan="2" class="px-2 pt-2 pb-1 text-center font-semibold border-l border-gray-700/60" title="The model's edge at the median price across the bookies when the gap was reached: what would list the bet without any gap">Edge at median</th>
-                  <th colspan="2" class="px-2 pt-2 pb-1 text-center font-semibold border-l border-gray-700/60" title="The model's edge at the outlier price taken: its chance times the best bookie's odds, less 1">Edge at outlier price</th>
-                </tr>
-                <tr class="text-xs text-gray-500 uppercase tracking-wider">
-                  <th class="px-2 pb-2 text-right font-semibold border-l border-gray-700/60" title="The ones the model also rated at the median price. Select one to list them.">&gt; 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold" title="The ones the model did not rate at the median price (or did not price): listed only because of the gap">≤ 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold border-l border-gray-700/60" title="The ones with a positive edge at the outlier price: every one above 0 at the median, and those only the outlier price made value">&gt; 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold" title="The ones the model rated no value even at the outlier price (or did not price)">≤ 0</th>
+                  <th class="px-2 py-2 text-left font-semibold align-bottom">Sport · market</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="Settled games the market's thresholds are fitted on">Games</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="The gap where a bet at the best price breaks even, if the other bookies' median price is right: 1 / h − 1, where h is what a unit bet at that median price has returned over every settled selection of the market (h under 1 is the bookies' margin)">Break-even</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="The settled outlier bets shown under the gaps above (each class at its own, with Each market's threshold), each at the best bookie's price averaged while it showed as one. Select the number to list them.">Bets</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="How many of them won. A half-win counts as half.">Won</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="Return per unit at the outlier price, with the 90% range (resampling whole games)">ROI</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="Outliers the model also rated at the median price across the bookies (what would list them without any gap), with this class's threshold. Select one to list its bets.">Median edge &gt; 0</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="Outliers with a model edge only at the outlier price, not at the median: the gap made the value">Edge only at outlier price</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="Outliers the model rated no value even at the outlier price (or did not price)">No edge</th>
                 </tr>
               </thead>
               <tbody id="out-markets"></tbody>
@@ -441,20 +453,15 @@
             <table class="w-full text-sm sm:min-w-[56rem]">
               <thead>
                 <tr class="text-xs text-gray-500 uppercase tracking-wider">
-                  <th rowspan="2" class="px-2 py-2 text-left font-semibold align-bottom">Gap at least</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom">Bets</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom">Won</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="Profit in units, 1 unit a bet">Units</th>
-                  <th rowspan="2" class="px-2 py-2 text-right font-semibold align-bottom" title="Return per unit, with the 90% range">ROI</th>
-                  <th rowspan="2" class="px-2 py-2 font-semibold w-1/5 min-w-[8rem] align-bottom" title="The return as a bar out from zero, its 90% range as a whisker, and what the model expected at those prices as the amber tick"><span class="sr-only">Return</span></th>
-                  <th colspan="2" class="px-2 pt-2 pb-1 text-center font-semibold border-l border-gray-700/60" title="The model's edge at the median price across the bookies when the gap was reached">Edge at median</th>
-                  <th colspan="2" class="px-2 pt-2 pb-1 text-center font-semibold border-l border-gray-700/60" title="The model's edge at the outlier price taken">Edge at outlier price</th>
-                </tr>
-                <tr class="text-xs text-gray-500 uppercase tracking-wider">
-                  <th class="px-2 pb-2 text-right font-semibold border-l border-gray-700/60">&gt; 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold">≤ 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold border-l border-gray-700/60">&gt; 0</th>
-                  <th class="px-2 pb-2 text-right font-semibold">≤ 0</th>
+                  <th class="px-2 py-2 text-left font-semibold align-bottom">Gap at least</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom">Bets</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom">Won</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="Profit in units, 1 unit a bet">Units</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom" title="Return per unit, with the 90% range">ROI</th>
+                  <th class="px-2 py-2 font-semibold w-1/5 min-w-[8rem] align-bottom" title="The return as a bar out from zero, its 90% range as a whisker, and what the model expected at those prices as the amber tick"><span class="sr-only">Return</span></th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="Of these, the ones the model also rated at the median price. Amber: the class's threshold">Median edge &gt; 0</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="The ones with a model edge only at the outlier price">Outlier price only</th>
+                  <th class="px-2 py-2 text-right font-semibold align-bottom border-l border-gray-700/60" title="The ones with no model edge even at the outlier price">No edge</th>
                 </tr>
               </thead>
               <tbody id="out-gaps"></tbody>
@@ -468,16 +475,12 @@
                 <h3 id="out-sel-title" class="text-xs font-semibold text-gray-100"></h3>
                 <p id="out-sel-verdict" class="mt-1.5 text-[11px] text-gray-400 leading-snug"></p>
               </div>
-              <div id="out-split" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="Split the chart's bets by"
-                   title="Split the bets by the model's edge at the outlier price taken, or at the median price across the bookies">
-                <button type="button" data-split="book">Edge at outlier price</button>
-                <button type="button" data-split="median">Edge at median</button>
-              </div>
             </div>
             <dl id="out-sel-stats" class="mt-3 grid grid-cols-2 sm:grid-cols-5 gap-x-4 gap-y-2.5"></dl>
             <div class="mt-3 text-[11px] text-gray-500">Running profit by game day, 1 unit a bet</div>
-            <div class="relative h-64"><canvas id="out-chart" role="img" aria-label="Running profit in units of these outlier bets by game day: all of them, and split by the model's edge"></canvas></div>
+            <div class="relative h-64"><canvas id="out-chart" role="img" aria-label="Running profit in units of these outlier bets by game day: all of them, and by the model's edge class"></canvas></div>
             <button type="button" id="out-sel-bets" class="mt-2 text-xs text-blue-400 hover:underline">Show these bets</button>
+            <div id="out-bands" class="mt-4"></div>
           </div>
           <p id="out-note" class="mt-3 text-[11px] text-gray-600 leading-snug"></p>
         </section>

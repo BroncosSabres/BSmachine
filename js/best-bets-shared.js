@@ -96,59 +96,81 @@ export function bestBookHtml(r, median = null) {
 
 // Outlier prices (migration 036): one bookie far above the consensus of the
 // others (the median of the rest; books on one price feed count once). gap =
-// best / consensus - 1. /api/best_bets rows carry `outlier` when the gap is
-// worth showing; a market's threshold is its most profitable gap among its
-// settled outliers, +25% until it has enough of them to judge, none where
-// they haven't paid (betfair-api outliers.py), and an outlier is listed
-// whatever its edge. Picks carry outlier_* once they were one.
-const OUTLIER_WHY = {
-  unprofitable: 'no gap has paid in this market yet',
+// best / consensus - 1. /api/best_bets rows carry `outlier` from a 10% gap
+// with its edge class (the model's edge above 0 at the median price, only
+// at the outlier price, or neither: migration 041) and whether it counts
+// under the fitted thresholds; the page judges it by the viewer's own
+// outlier settings (best-bets-filters.js outlierPasses) and an outlier is
+// listed whatever its edge. Picks carry outlier_* once their gap reached
+// 10%, and their window (out_window) on Live.
+// A gap worth a chip on a bet that isn't an outlier (best_bets_data.DISC_SHOW)
+export const DISC_SHOW = 0.25;
+const CLASS_TEXT = {
+  value: "The model's edge is above 0 at the median price too.",
+  made: 'The model has an edge only at this price, not at the median.',
+  none: 'The model has no edge, even at this price.',
 };
+const CLASS_NOUN = { value: 'a median edge', made: 'an edge only at the outlier price', none: 'no edge' };
 
 // The chip: a button that shows the details when tapped (tap-tips.js).
-// o: {disc, cons, best, book, nBooks, isOutlier, threshold, method, nGames,
-// record, market, at, off}. at: a pick's, when it was flagged as one; off: its
-// market's outliers have turned out not to pay since (outlier_on false).
+// o: {disc, cons, best, book, nBooks, cls, method, record, market, at, view}.
+// view: how the viewer's Filters judge it - { lit (an outlier under them),
+// mode ('paid' | 'custom' | 'off', or 'all-off': Filters' Outliers off),
+// cut (the gap its class needs; null: none counts), byClass (the fitted
+// thresholds are per edge class) }. at: a pick's, when its gap first reached
+// 10%.
 function outlierChipHtml(o) {
   const gap = signedPct(o.disc, 0);
+  const v = o.view || {};
   const lines = [`${o.book || 'One bookie'} ${odds(o.best)} vs ${odds(o.cons)}`
     + (o.nBooks ? `, the median of the other ${o.nBooks - 1} bookie${o.nBooks === 2 ? '' : 's'}` : ' (the others)')
-    + ` — ${gap}.`];
-  if (o.at && o.off) lines.push(`An outlier when it was flagged (${o.at}); ${o.market} outliers have not paid since, so it no longer counts as one.`);
-  else if (o.at) lines.push(`An outlier when it was flagged (${o.at}).`);
-  else if (o.isOutlier) lines.push(`Outlier: ${o.market} counts a gap of ${signedPct(o.threshold, 0)} or more, `
-    + (o.method === 'optimised' ? 'the most profitable gap for its settled outlier bets.'
-      : 'the default until it has enough settled outlier bets and winners to judge.'));
-  else if (o.threshold != null) lines.push(`Not an outlier: ${o.market} needs a gap of ${signedPct(o.threshold, 0)}.`);
-  else lines.push(`Not an outlier: ${o.market} has none — ${OUTLIER_WHY[o.method] || 'its outliers have not paid'}.`);
+    + ` — ${gap}${o.at ? ` (first a 10%+ gap ${o.at})` : ''}.`];
+  if (o.cls) lines.push(CLASS_TEXT[o.cls]);
+  const kind = o.cls && (v.byClass || v.mode === 'custom') ? ` with ${CLASS_NOUN[o.cls]}` : '';
+  const from = cut => `${signedPct(cut, 0)}`;
+  if (v.lit) {
+    lines.push(v.mode === 'custom' ? `Outlier: your Filters count ${o.market} outliers${kind} from a ${from(v.cut)} gap.`
+      : `Outlier: ${o.market} outliers${kind} count from a ${from(v.cut)} gap, where their settled bets have made the most profit.`);
+  } else if (v.mode === 'all-off') lines.push('Not listed as an outlier: Outliers are off in your Filters.');
+  else if (v.mode === 'off') lines.push(`Not listed as an outlier: your Filters have ${o.market} outliers off.`);
+  else if (v.cut != null) lines.push(`Not an outlier: ${o.market} outliers${kind} need a ${from(v.cut)} gap${v.mode === 'custom' ? ' in your Filters' : ''}.`);
+  else lines.push(`Not an outlier: ${o.market} outliers${kind} ${o.method === 'unprofitable' ? 'have lost at every gap'
+    : o.method === 'thin' ? 'are still too few to judge' : v.mode === 'custom' ? 'are off in your Filters' : "haven't paid"}.`);
   const rec = o.record;
-  if (rec && rec.n) lines.push(`Settled bets here at a gap of ${signedPct(rec.cut, 0)}+: ${rec.n}, ${wonCount(rec.wins)} won, ${signedPct(rec.roi, 0)} ROI at the outlier price.`);
-  const lit = o.isOutlier || (o.at && !o.off);
-  const cls = lit
+  if (rec && rec.n) lines.push(`Settled ${o.market} outliers${kind} at a gap of ${signedPct(rec.cut, 0)}+: ${rec.n}, ${wonCount(rec.wins)} won, ${signedPct(rec.roi, 0)} ROI at the outlier price.`);
+  const cls = v.lit
     ? 'border-amber-500/50 text-amber-300 bg-amber-900/30'
     : 'border-gray-600 text-gray-300 bg-gray-800/60';
   return `<button type="button" class="ml-1 inline-flex items-center gap-0.5 rounded border px-1 py-px text-[10px] font-semibold leading-tight whitespace-nowrap align-middle ${cls}"
-    data-tip="${esc(lines.join('\n'))}" aria-label="${esc(lines.join(' '))}">${lit ? '⚡ Outlier' : 'Gap'} ${gap}</button>`;
+    data-tip="${esc(lines.join('\n'))}" aria-label="${esc(lines.join(' '))}">${v.lit ? '⚡ Outlier' : 'Gap'} ${gap}</button>`;
 }
 
 const marketText = r => `${SPORT_LABELS[r.sport] || r.sport} ${(KIND_LABELS[r.market_kind] || r.market_kind).toLowerCase()}`;
 
-// An /api/best_bets row's chip ('' when it has no gap worth showing).
-export function outlierHtml(r) {
+// An /api/best_bets row's chip: '' unless it is an outlier under the
+// viewer's Filters or its gap is at least DISC_SHOW. view: as outlierChipHtml
+// takes it (default: the fitted thresholds' verdict).
+export function outlierHtml(r, view = null) {
   const o = r.outlier;
   if (!o) return '';
+  const v = view || { lit: !!o.is_outlier, mode: 'paid', cut: o.threshold, byClass: !!o.classes };
+  if (!v.lit && o.disc < DISC_SHOW - 1e-9) return '';
   return outlierChipHtml({ disc: o.disc, cons: o.cons, best: r.best_book_back, book: o.book, nBooks: o.n_books,
-                           isOutlier: o.is_outlier, threshold: o.threshold, method: o.method, nGames: o.n_games,
-                           record: o.record, market: marketText(r) });
+                           cls: o.edge_class, method: o.method, record: o.record, market: marketText(r), view: v });
 }
 
-// A pick's chip ('' unless it was an outlier): Live rows, results. Lit only
-// while its market's outliers are on (outlier_on), else a plain Gap chip.
-export function pickOutlierHtml(p) {
+// A pick's chip (Live rows): '' unless it was an outlier under the viewer's
+// Filters, or its gap reached DISC_SHOW. view: as outlierChipHtml takes it,
+// with cls (the edge class it showed in) and disc / best / cons where its
+// window says (default: its first 10%+ gap, lit while outlier_on).
+export function pickOutlierHtml(p, view = null) {
   if (!p.outlier_at) return '';
+  const v = view || { lit: p.outlier_on !== false, mode: 'paid', cut: null };
+  const disc = v.disc ?? p.outlier_disc;
+  if (!v.lit && !(disc >= DISC_SHOW - 1e-9)) return '';
   const at = new Date(p.outlier_at).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-  return outlierChipHtml({ disc: p.outlier_disc, cons: p.outlier_cons_back, best: p.outlier_book_back,
-                           book: p.outlier_book, at, off: p.outlier_on === false, market: marketText(p) });
+  return outlierChipHtml({ disc, cons: v.cons ?? p.outlier_cons_back, best: v.best ?? p.outlier_book_back,
+                           book: v.book ?? p.outlier_book, cls: v.cls ?? null, at, market: marketText(p), view: v });
 }
 
 export const isOutlierRow = r => !!r.outlier?.is_outlier;

@@ -19,7 +19,7 @@ import { BACKEND } from './api-config.js';
 import { getSession, hasBestBetsAccess } from './supabase-client.js';
 import { esc, odds, pct, signedPct, signCls, selectionText, bestBookHtml, outlierHtml } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
-import { marketOf, ruleFor } from './best-bets-filters.js';
+import { marketOf, ruleFor, outlierPasses, outRuleOf } from './best-bets-filters.js';
 import { localPrefs } from './best-bets-prefs.js';
 
 const panel = document.getElementById('match-best-bets');
@@ -30,6 +30,7 @@ const CACHE_MS = 60000;    // as long as the backend keeps its own copy
 let rows = [];
 let showAll = false;
 let seq = 0;               // drops the answer for a game since navigated away from
+let outView = r => ({ lit: !!r.outlier?.is_outlier, mode: 'paid', cut: r.outlier?.threshold });   // how Filters judge an outlier, for its chip
 const cache = new Map();   // 'sport:gameId' -> { rows, ts }
 
 // A row at the price chosen on the Best Bets page: the best bookie's where
@@ -68,11 +69,20 @@ async function load(sel) {
   const prefs = localPrefs();
   // Alternate lines and totals win and lose with the standard one, so only
   // the bookies' standard line is listed (as on the Best Bets page). An
-  // outlier price is listed whatever its edge (Filters → Outliers: only
+  // outlier price is listed whatever its edge, as its market's ⚡ rule in
+  // Filters says, its market switched on or not (Filters → Outliers: only
   // outliers alone; off: an outlier only with an edge, like any bet).
-  const only = prefs.outliers === 'only', outliers = prefs.outliers !== 'off';
-  rows = found.filter(r => !r.alternate && ruleFor(prefs, marketOf(r)).on).map(r => at(r, prefs.basis))
-    .filter(r => (outliers && r.outlier?.is_outlier) || (!only && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
+  const only = prefs.outliers === 'only';
+  const isOut = r => !!r.outlier && outlierPasses(prefs, marketOf(r),
+    { gap: r.outlier.disc, cls: r.outlier.edge_class, paid: r.outlier.is_outlier });
+  rows = found.filter(r => !r.alternate).map(r => ({ ...at(r, prefs.basis), isOut: isOut(r) }))
+    .filter(r => r.isOut || (!only && ruleFor(prefs, marketOf(r)).on && r.shownEdge > 0)).sort((a, b) => b.shownEdge - a.shownEdge);
+  outView = r => {
+    const key = marketOf(r), out = outRuleOf(prefs, key), cls = r.outlier.edge_class;
+    const mode = prefs.outliers === 'off' ? 'all-off' : out.mode;
+    return { lit: r.isOut, mode, byClass: !!r.outlier.classes,
+             cut: mode === 'custom' ? (out.gaps[cls] ? +out.gaps[cls] : null) : r.outlier.threshold };
+  };
   render();
 }
 
@@ -117,7 +127,7 @@ function render() {
                 <span class="font-semibold text-gray-100">${esc(selectionText(r))}</span>
                 <span class="block text-[11px] text-gray-500">${esc(r.market_name)}</span>
                 ${bestBookHtml(r, r.atBook ? r.median : null)}
-                ${r.outlier ? `<div class="mt-0.5">${outlierHtml(r)}</div>` : ''}
+                ${r.outlier && outlierHtml(r, outView(r)) ? `<div class="mt-0.5">${outlierHtml(r, outView(r))}</div>` : ''}
               </td>
               <td class="px-2 py-1.5 text-right tabular-nums font-bold text-amber-400">${odds(r.shownBack)}</td>
               <td class="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-gray-300">${pct(r.model_prob)}</td>

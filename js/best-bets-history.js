@@ -5,16 +5,28 @@
 // A history point (/api/best_bets rows and dropped, /api/best_bets/live picks):
 //   [unix seconds, median price, best bookie's price (null: Betfair),
 //    median edge, flags, that bookie ("A, B" on ties; null: Betfair; absent
-//    from older backends)]
-// flags: HIST_OUTLIER - an outlier price under today's thresholds;
+//    from older backends), the other bookies' median where the best price was
+//    10% or more above it (null otherwise; absent from older backends)]
+// flags: HIST_OUTLIER - an outlier price under today's fitted thresholds
+//        (Filters' "Where they've paid");
 //        HIST_UNLISTED - a check the page never lists (Betfair's closing runs).
 // A point holds from its check until the next one, the last until the end
 // given (now, or kickoff). Runs at the same price and edge are cut to their
 // first and last point by the backend, which this reads the same way.
-import { passesBet } from './best-bets-filters.js';
+import { passesBet, outlierPasses, edgeClass } from './best-bets-filters.js';
 
 export const HIST_OUTLIER = 1;
 export const HIST_UNLISTED = 2;
+
+// Whether a check was an outlier price under the viewer's outlier settings:
+// its gap and edge class (the edge at the best price is the median's scaled
+// to it), or, where the market's rule is "Where they've paid", the backend's
+// flag. A point without the other bookies' median has no gap to judge.
+export function pointOutlier(prefs, key, p) {
+  const cons = p[6], gap = cons > 1 && p[2] != null ? p[2] / cons - 1 : null;
+  const bookEdge = p[3] != null && p[1] > 0 && p[2] != null ? (1 + p[3]) * p[2] / p[1] - 1 : p[3];
+  return outlierPasses(prefs, key, { gap, cls: edgeClass(p[3], bookEdge), paid: !!(p[4] & HIST_OUTLIER) });
+}
 
 // Whether the page listed the bet at this check under these settings: its
 // market switched on, the edge that market needs (at the median), the odds
@@ -23,7 +35,7 @@ export const HIST_UNLISTED = 2;
 // calibrated one, with Filters judging by it).
 export function pointPasses(prefs, key, p, edgeOf = null) {
   if (!Array.isArray(p) || p.length < 5 || p[1] == null || (p[4] & HIST_UNLISTED)) return false;
-  return passesBet(prefs, key, edgeOf ? edgeOf(p) : p[3], p[1], !!(p[4] & HIST_OUTLIER));
+  return passesBet(prefs, key, edgeOf ? edgeOf(p) : p[3], p[1], pointOutlier(prefs, key, p));
 }
 
 // Over points (oldest first) and pass(point): { ever, secs, firstAt,

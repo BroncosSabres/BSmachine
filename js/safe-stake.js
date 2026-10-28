@@ -20,7 +20,8 @@
 // bets past that point are outliers and get no stake.
 import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
 import { profit, gameBootstrap, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
-import { priceAt, closeAt, hasRealClose, lineMoved } from './best-bets-filters.js';
+import { priceAt, closeAt, hasRealClose, lineMoved, OUT_CUTS, OUT_CLASSES, outCutKey, edgeClass, windowKeys,
+         windowTake } from './best-bets-filters.js';
 
 // --- rows from /api/best_bets/analysis -----------------------------------------
 
@@ -89,32 +90,77 @@ export function toBet(r, stage = 'open', basis = 'book') {
   };
 }
 
-// Outlier prices (migration 036; betfair-api outliers.py): the gaps between
-// the best price and the median of the other bookies that a threshold can be,
-// and each selection's first price at each (disc_ladder: {cut: [best price,
-// median edge, book, median, the other books' median]}; the last missing from
-// an older backend).
-export const OUTLIER_CUTS = [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.75, 1.00, 1.50, 2.00, 3.00];
-export const cutKey = cut => cut.toFixed(2);
+// Outlier prices (betfair-api outliers.py): the gaps between the best price
+// and the median of the other bookies that a threshold can be. Each settled
+// selection keeps, per edge class and gap (disc_window, migration 041), its
+// first price there and its average over the time it stayed there
+// (best-bets-filters.js windowKeys / windowTake); games whose checks were
+// pruned before 2026-10-28 have only their ladder (disc_ladder: {cut: [best
+// price, median edge, book, median, the other books' median]}, the first
+// price at each cut - their first and last prices before kickoff).
+export const OUTLIER_CUTS = OUT_CUTS;
+export const cutKey = outCutKey;
 
-// A decoded row as a bet on its outlier price: taken at the best bookie's
-// price the first time its gap reached `cut`, or null if it never did. edge
-// and back are the median's then, as toBet's; bookEdge is the model's
-// expected return at the price taken. gap: the price taken over the other
-// books' median, less 1 (null when not sent).
-export function outlierBet(r, cut) {
-  const e = r.disc_ladder?.[cutKey(cut)];
-  if (!e || e[0] == null) return null;
-  const [taken, edge, book, back, cons = null] = e;
-  const prob = edge != null && back ? (1 + edge) / back : null;
+// A decoded row's outlier window: its own, else one made from its ladder
+// (each cut under the class of its first check there, no time). Kept on the
+// row once made.
+export function rowWindow(r) {
+  if (r.outWin !== undefined) return r.outWin;
+  let win = r.disc_window || null;
+  if (!win && r.disc_ladder) {
+    win = {};
+    for (const [k, e] of Object.entries(r.disc_ladder)) {
+      if (!e || e[0] == null) continue;
+      const [taken, edge, book, back, cons = null] = e;
+      const prob = edge != null && back ? (1 + edge) / back : null;
+      const bookEdge = prob == null ? null : prob * taken - 1;
+      win[`${edgeClass(edge, bookEdge)}:${k}`] = [taken, edge, book, back, cons, taken, edge, bookEdge, 0, null];
+    }
+  }
+  r.outWin = win;
+  return win;
+}
+
+// A decoded row as a bet on its outlier price under these window keys, or
+// null if it never showed there: taken at the average best price while it
+// did (first: its first price there). edge and back are the median's (the
+// edge averaged too), as toBet's; bookEdge the model's expected return at the
+// price taken; gap: the first price over the other books' median, less 1;
+// cls: the edge class it first showed in.
+export function windowBet(r, keys) {
+  const t = windowTake(rowWindow(r), keys);
+  if (!t) return null;
+  const prob = t.firstEdge != null && t.median ? (1 + t.firstEdge) / t.median : null;
   return {
     game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-    edge, prob, back: back ?? taken, taken, book, bookEdge: prob == null ? null : prob * taken - 1,
-    gap: cons ? taken / cons - 1 : null,
+    edge: t.edge, prob, back: t.median ?? t.first, taken: t.taken, first: t.first, book: t.book, bookEdge: t.bookEdge,
+    gap: t.cons ? t.first / t.cons - 1 : null, cls: t.cls, secs: t.secs,
     commission: r.commission, fallback: false, win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r), clv: null,
     market: marketKey(r), prop: propKey(r), checks: r.n_checks, row: r,
   };
+}
+
+// A decoded row as a bet on its outlier price once its gap reached `cut`, in
+// edge class cls (null: any class), or null if it never did
+export const outlierBet = (r, cut, cls = null) => windowBet(r, (cls ? [cls] : OUT_CLASSES).map(c => `${c}:${cutKey(cut)}`));
+
+// The settled outlier bets these settings let through (Filters' per-market
+// outlier rules; fits: outlierFits for "Where they've paid"), one per
+// selection, at the average best price while each showed as one - its first
+// price there for the 'open' and 'first' stages.
+export function outlierBets(rows, prefs, fits, stage = 'avg') {
+  const out = [];
+  for (const r of rows) {
+    if (sourceKey(r) !== 'book') continue;
+    const win = rowWindow(r);
+    const keys = win ? windowKeys(prefs, r.group, win, fits) : [];
+    const b = keys.length ? windowBet(r, keys) : null;
+    if (!b) continue;
+    if (stage === 'open' || stage === 'first') b.taken = b.first;
+    out.push(b);
+  }
+  return out;
 }
 
 // --- settings -------------------------------------------------------------------

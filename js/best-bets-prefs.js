@@ -5,7 +5,8 @@
 // sets every market from its settled bets (best-bets-optimise.js); with
 // "Keep on Most profitable" ticked (prefs.autoOpt, the default until a market
 // is changed by hand) the pages re-run it whenever what it reads comes in
-// (autoOptimise).
+// (autoOptimise). Each market also has its outlier rule (⚡ Outliers: where
+// they've paid, custom gaps per edge class, or off), which neither touches.
 //
 // The settings live in this browser (applied at once) and, signed in, in the
 // account's profile (profiles.best_bets_prefs), so they follow the account:
@@ -14,7 +15,8 @@
 import { supabase, getSession } from './supabase-client.js';
 import { SPORT_LABELS, SPORT_COLORS, PREFS_KEY, esc, signedPct } from './best-bets-shared.js';
 import { MARKETS, BASES, OUTLIER_MODES, normalizePrefs, migrateOldPrefs, defaultPrefs, defaultRule, ruleFor,
-         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf, edgeField, JUDGES } from './best-bets-filters.js';
+         marketLabel, edgeText, typedRange, oddsText, oddsRangeOf, edgeField, JUDGES, OUT_CLASSES, OUT_CLASS_LABELS,
+         OUT_CLASS_SHORT, OUT_CUTS, OUT_MODES, outCutKey, outRuleOf, fittedCut } from './best-bets-filters.js';
 import { applyOptimised, OPT_MIN_BETS } from './best-bets-optimise.js';
 
 const KEY = 'bsm_best_bets_filters';
@@ -72,22 +74,54 @@ export function savePrefs(prefs) {
 // --- the Filters modal ----------------------------------------------------------
 
 let overlay = null;
-let state = null;   // { prefs, keys, counts, countLabel, onChange, optimise, opener, report }
+let state = null;   // { prefs, keys, counts, countLabel, onChange, optimise, opener, report, fits }
 
 const inputCls = 'w-14 bg-gray-900 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums';
+
+// "+25%"
+const gapText = cut => `+${Math.round(cut * 100)}%`;
+const OUT_MODE_LABELS = { paid: "Where they've paid", custom: 'Custom', off: 'Off' };
+
+// A market's ⚡ Outliers line: its rule, and what it lets through per edge
+// class - the fitted gap ("Where they've paid") or the ones chosen
+function outLineHtml(key) {
+  const out = outRuleOf(state.prefs, key);
+  const fits = state.fits;
+  const sel = (attrs, opts, value, label) => `<select ${attrs} aria-label="${esc(label)}"
+      class="bg-gray-900 border border-gray-600 rounded px-1 py-0.5 text-[11px] text-gray-100">${opts.map(([v, t]) =>
+      `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+  let detail;
+  if (out.mode === 'custom') {
+    detail = OUT_CLASSES.map(cls => `<span class="inline-flex items-center gap-1" title="${esc(OUT_CLASS_LABELS[cls])}">${esc(OUT_CLASS_SHORT[cls])}
+      ${sel(`data-out-gap="${cls}"`, [['', 'off'], ...OUT_CUTS.map(c => [outCutKey(c), `${gapText(c)}+`])], out.gaps[cls],
+            `${marketLabel(key)}: gap for outliers with ${OUT_CLASS_SHORT[cls]}`)}</span>`).join('');
+  } else if (out.mode === 'paid') {
+    const m = fits?.markets?.[key];
+    detail = !fits ? '<span class="text-gray-500">loading what has paid…</span>'
+      : OUT_CLASSES.map(cls => {
+        const t = fittedCut(fits, key, cls, null);
+        const why = fits.byClass ? (m?.classes?.[cls]?.method === 'unprofitable' ? 'lost at every gap' : 'too few to judge') : 'none have paid';
+        return `<span class="${t == null ? 'text-gray-500' : 'text-amber-300/90'}" title="${esc(OUT_CLASS_LABELS[cls])}: ${t == null ? `off - ${why}` : `from a ${gapText(t)} gap`}">${esc(OUT_CLASS_SHORT[cls])} ${t == null ? 'off' : `${gapText(t)}+`}</span>`;
+      }).join('<span class="text-gray-700" aria-hidden="true">·</span>');
+  } else detail = '<span class="text-gray-500">no outliers from this market</span>';
+  return `<div class="basis-full flex flex-wrap items-center gap-x-2 gap-y-1 pl-6 text-[11px] text-gray-400">
+      <span class="text-amber-300/80" aria-hidden="true">⚡</span>${sel('data-out-mode', OUT_MODES.map(m => [m, OUT_MODE_LABELS[m]]), out.mode,
+        `${marketLabel(key)} outliers`)}${detail}</div>`;
+}
 
 function rowHtml(key) {
   const rule = ruleFor(state.prefs, key);
   const edge = rule[edgeField(state.prefs)] || ['', ''];
   const n = state.counts?.[key];
+  const dim = rule.on ? '' : 'opacity-60';
   return `
-    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 border-t border-gray-700/60 first:border-t-0 ${rule.on ? '' : 'opacity-60'}" data-key="${esc(key)}">
-      <label class="flex items-center gap-2 flex-1 min-w-[10rem] cursor-pointer">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1.5 border-t border-gray-700/60 first:border-t-0" data-key="${esc(key)}">
+      <label data-dim class="flex items-center gap-2 flex-1 min-w-[10rem] cursor-pointer ${dim}">
         <input type="checkbox" data-on class="accent-amber-400 shrink-0" ${rule.on ? 'checked' : ''}>
         <span class="text-sm text-gray-100 truncate">${esc(marketLabel(key))}</span>
         <span data-count class="text-[11px] tabular-nums text-gray-500 shrink-0">${countText(n)}</span>
       </label>
-      <span class="ml-auto flex items-center gap-1 text-xs text-gray-400 shrink-0" role="group" aria-label="${esc(marketLabel(key))} edge range">
+      <span data-dim class="ml-auto flex items-center gap-1 text-xs text-gray-400 shrink-0 ${dim}" role="group" aria-label="${esc(marketLabel(key))} edge range">
         <input data-edge="0" type="number" step="any" inputmode="decimal" placeholder="any" value="${esc(edge[0])}"
                aria-label="Lowest edge, percent" class="${inputCls}">
         <span aria-hidden="true">–</span>
@@ -97,10 +131,15 @@ function rowHtml(key) {
                 class="ml-1 px-1.5 py-1 rounded border border-gray-700 text-[11px] text-gray-400 hover:text-gray-100 hover:border-gray-500">All</button>
       </span>
       ${reportLine(state.report?.[key])}
+      ${outLineHtml(key)}
     </div>`;
 }
 
-const countText = n => n ? `${n} ${state.countLabel || 'now'}` : '';
+// A count, or { n, out }: the bets and the outlier bets the market's ⚡ rule adds
+const countText = c => {
+  const n = c && typeof c === 'object' ? c.n : c, out = c && typeof c === 'object' ? c.out : 0;
+  return n || out ? `${n || 0} ${state.countLabel || 'now'}${out ? ` (+${out} outlier${out === 1 ? '' : 's'})` : ''}` : '';
+};
 const units = x => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}u`;
 const bets = n => `${n} bet${n === 1 ? '' : 's'}`;
 
@@ -165,15 +204,15 @@ function bodyHtml() {
     </div>
     <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Outliers</div>
-      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['off', 'Off'], ['any', "Where they've paid"], ['only', 'Outliers only']].map(([v, label]) => `
+      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['off', 'Off'], ['any', 'On'], ['only', 'Outliers only']].map(([v, label]) => `
         <button type="button" data-outliers="${v}" aria-pressed="${prefs.outliers === v}"
                 class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.outliers === v
                   ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
-      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">⚡ An outlier is one bookie far above the median of the others, by at least its market's threshold: the most profitable gap among the market's settled outlier bets, +25% while there are too few of them to judge, none where they haven't paid. ${
+      <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">⚡ An outlier is one bookie well above the median of the others. Whether it pays depends on the model's edge as much as the gap, so each market judges three kinds apart: a median edge above 0, an edge only at the outlier price, and no edge. Each market's ⚡ line below says which count: <span class="text-gray-300">Where they've paid</span> (the default) takes each kind from the gap at which its settled outlier bets have made the most profit, and none where they've lost or are still too few to judge; <span class="text-gray-300">Custom</span> takes the gaps you choose; <span class="text-gray-300">Off</span> none. ${
         prefs.outliers === 'off' ? 'Off: an outlier price is listed only when it has an edge, like any other bet.'
-        : prefs.outliers === 'only' ? 'Only outliers are listed, whatever their edge, in the markets switched on below and the odds range.'
-        : "Where they've paid: outliers are listed whatever their edge, in the markets switched on below and the odds range, in each market whose threshold is on."
-      } The same goes for the Live tab and the track record's ⚡ line.</p>
+        : prefs.outliers === 'only' ? 'Outliers only: nothing else is listed. They need only the odds range, not the market switched on or its edge.'
+        : "On: outliers are listed whatever their edge, as each market's ⚡ line says, within the odds range; a market's outliers don't need the market switched on."
+      } The same goes for the Live tab and the track record's ⚡ line, and the analysis page under My filters.</p>
     </div>
     ${sports.map(s => `
       <section class="mb-3">
@@ -268,7 +307,7 @@ function build() {
     } else if (b.hasAttribute('data-reset')) {
       // The defaults are kept on "Most profitable", as new settings are
       state.report = null;
-      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; p.judge = 'model'; p.autoOpt = true; });
+      change(p => { p.markets = Object.fromEntries(state.keys.map(k => [k, defaultRule(k)])); p.basis = 'book'; p.outliers = 'any'; p.judge = 'model'; p.autoOpt = true; });   // outliers back to "Where they've paid"
       optimise();
     }
   });
@@ -281,8 +320,25 @@ function build() {
     }
     const key = e.target.closest('[data-key]')?.dataset.key;
     if (!key) return;
-    if (e.target.hasAttribute('data-on')) {
-      e.target.closest('[data-key]').classList.toggle('opacity-60', !e.target.checked);
+    if (e.target.hasAttribute('data-out-mode')) {
+      // Outlier rules aren't edge ranges: "Keep on Most profitable" stays on.
+      // Custom starts from what has paid.
+      const mode = e.target.value;
+      change(p => {
+        const out = outRuleOf(p, key);
+        if (mode === 'custom' && OUT_CLASSES.every(c => out.gaps[c] === '')) {
+          for (const c of OUT_CLASSES) {
+            const t = fittedCut(state.fits, key, c, null);
+            out.gaps[c] = t == null ? '' : outCutKey(t);
+          }
+        }
+        setRule(p, key, { out: { ...out, mode } });
+      });
+    } else if (e.target.dataset.outGap) {
+      const cls = e.target.dataset.outGap, gap = e.target.value;
+      change(p => { const out = outRuleOf(p, key); setRule(p, key, { out: { ...out, gaps: { ...out.gaps, [cls]: gap } } }); }, false);
+    } else if (e.target.hasAttribute('data-on')) {
+      for (const el of e.target.closest('[data-key]').querySelectorAll('[data-dim]')) el.classList.toggle('opacity-60', !e.target.checked);
       change(p => setRuleByHand(p, key, { on: e.target.checked }), false);
     } else if (e.target.dataset.edge != null) {
       const i = +e.target.dataset.edge;
@@ -329,10 +385,11 @@ const modalOpen = () => !!(overlay && state && !overlay.classList.contains('hidd
 // optimiseMarkets' report, with optimise.ready(prefs) saying whether what it
 // reads (the settled bets, the calibration for its judge) is in; leave it out
 // for no "Most profitable" button. Kept on "Most profitable", the modal opens
-// with what it read.
-export function openFilters({ prefs, keys, counts, countLabel, onChange, optimise: opt, opener }) {
+// with what it read. fits: the fitted outlier thresholds (best-bets-filters.js
+// outlierFits; null while loading), for what "Where they've paid" lets through.
+export function openFilters({ prefs, keys, counts, countLabel, onChange, optimise: opt, opener, fits = null }) {
   if (!overlay) build();
-  state = { prefs: structuredClone(prefs), keys, counts, countLabel, onChange, optimise: opt, opener, report: null };
+  state = { prefs: structuredClone(prefs), keys, counts, countLabel, onChange, optimise: opt, opener, report: null, fits };
   if (state.prefs.autoOpt && opt?.ready?.(state.prefs)) {
     state.report = opt(state.prefs) || null;
     const next = state.report && applyOptimised(state.prefs, state.report);
@@ -350,9 +407,14 @@ export function openFilters({ prefs, keys, counts, countLabel, onChange, optimis
 }
 
 // The page's settled bets (or calibration) have arrived: "Most profitable"
-// can run
-export function filtersDataReady() {
-  if (modalOpen()) syncOptimise();
+// can run, and the outlier lines can say what has paid (fits)
+export function filtersDataReady(fits = undefined) {
+  if (!modalOpen()) return;
+  if (fits !== undefined && fits !== state.fits) {
+    state.fits = fits;
+    paint();
+  }
+  syncOptimise();
 }
 
 // Kept on "Most profitable" (prefs.autoOpt): the settings re-fitted to what
