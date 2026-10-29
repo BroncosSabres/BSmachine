@@ -24,7 +24,10 @@
 // from here and the expected return, with a projected ROI over them all. Live
 // bets are judged by default at their average price while they showed value
 // (at the price basis chosen: the best bookie's by default), and pass the
-// same filters as the upcoming ones. The Filters modal's "Most profitable"
+// same filters as the upcoming ones. The Recent view (/api/best_bets/recent)
+// is the same bets once settled, from games today / in the last 3 days / in
+// the last week: what each returned, and the ROI against what the model
+// expected at kickoff. The Filters modal's "Most profitable"
 // sets each market from the settled bets (best-bets-optimise.js).
 import { BACKEND, apiUrl } from './api-config.js';
 import { supabase, getSession } from './supabase-client.js';
@@ -74,7 +77,7 @@ let day = 'all';           // a local kickoff date 'YYYY-MM-DD' (upcoming view o
 let settled = null;        // settled selections as bets, for the stakes (null until loaded)
 let stakesFailed = false;
 let model = null;          // stakeModel over them at the current settings
-let view = 'upcoming';     // 'upcoming' | 'live'
+let view = 'upcoming';     // 'upcoming' | 'live' | 'recent'
 const stakePrefs = loadStakePrefs();
 
 // The filter settings (best-bets-filters.js): which markets, the edge each
@@ -506,7 +509,7 @@ function renderTabs() {
 }
 
 // The rows behind the view on show
-const viewRows = () => view === 'live' ? (liveData?.rows || []) : bets;
+const viewRows = () => view === 'live' ? (liveData?.rows || []) : view === 'recent' ? (recentData?.rows || []) : bets;
 
 function renderSportPills() {
   const source = viewRows();
@@ -531,12 +534,12 @@ function dayLabel(key) {
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-// The days the upcoming bets start on. Upcoming only: live games have started.
+// The days the upcoming bets start on. Upcoming only: live games have
+// started, and Recent has its periods.
 function renderDayFilter() {
-  const isLive = view === 'live';
   const days = [...new Set(bets.map(r => dayOf(r.kickoff)).filter(Boolean))].sort();
   if (day !== 'all' && !days.includes(day)) day = 'all';
-  $('day-wrap').classList.toggle('hidden', isLive || days.length < 2);
+  $('day-wrap').classList.toggle('hidden', view !== 'upcoming' || days.length < 2);
   $('day-filter').innerHTML = ['all', ...days].map(k =>
     `<option value="${k}"${k === day ? ' selected' : ''}>${k === 'all' ? 'Any' : esc(dayLabel(k))}</option>`).join('');
 }
@@ -1033,8 +1036,9 @@ function booksTableHtml(r, ref, when) {
 }
 
 function openStats(r) {
-  const g = r.game;   // live rows only
-  const d = r.listing ? droppedPrices(r) : null;   // No longer value rows only
+  const g = r.game;   // live and recent rows only
+  const settledRow = g && r.result != null;   // recent rows
+  const d = !g && r.listing ? droppedPrices(r) : null;   // No longer value rows only (live ones have a listing too)
   const [chip, why] = d ? droppedReason(r) : [];
   const basisLabel = bookBasis() ? 'best bookie' : 'average';
   // The bookies' prices are from the last check before kickoff on Live, else the latest
@@ -1047,8 +1051,14 @@ function openStats(r) {
     name: r.player_id != null ? r.selection_name : selectionText(r),
     team: teamOf(r), teams: { home: r.home_team, away: r.away_team },
     subtitle: `${SPORT_LABELS[r.sport]} · ${r.home_team} v ${r.away_team} · ${g
-      ? `${g.home != null ? `${g.home}–${g.away} ` : ''}${g.state === 'pre' ? kickoffText(r.kickoff) : g.label}` : kickoffText(r.kickoff)}`,
-    tiles: g ? [
+      ? `${g.home != null ? `${g.home}–${g.away} ` : ''}${gameState(r)}` : kickoffText(r.kickoff)}`,
+    tiles: settledRow ? [
+      { label: `Odds (${LIVE_STAGE_LABELS[basis()]})`, value: odds(r.back), cls: 'text-amber-400', sub: `Avg ${odds(r.prices.avg)} · Open ${odds(r.prices.open)} · Best ${odds(r.prices.best)} · Close ${odds(r.prices.close)}` },
+      { label: 'Model at kickoff', value: pct(r.model_prob), sub: `expected ${signedPct(r.edge)}` },
+      { label: 'Result', value: (LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown)[0], sub: r.live.detail || '' },
+      { label: 'Return', value: r.live.status === 'void' ? '–' : units(r.ev), cls: r.live.status === 'void' ? 'text-gray-500' : signCls(r.ev),
+        sub: 'per unit staked' },
+    ] : g ? [
       { label: `Odds (${LIVE_STAGE_LABELS[basis()]})`, value: odds(r.back), cls: 'text-amber-400', sub: `Avg ${odds(r.prices.avg)} · Open ${odds(r.prices.open)} · Best ${odds(r.prices.best)} · Close ${odds(r.prices.close)}` },
       { label: 'Model at kickoff', value: pct(r.model_prob) },
       { label: 'Chance now', value: pct(r.live.p_win), sub: (LIVE_STATUS[r.live.status] || LIVE_STATUS.unknown)[0] },
@@ -1143,7 +1153,8 @@ function liveBetAt(p) {
   // What the filters read: the median price and the edge at it
   const avgBack = (basis() === 'avg' && ot ? ot.median : p[`${basis()}_back`]) ?? p.flagged_back;
   const avgEdge = edgeAt(avgBack);
-  const bestEdge = edgeAt(p[`${basis()}_book_back`] ?? avgBack);
+  // (an outlier pick's average: its outlier price, the best bookie's)
+  const bestEdge = edgeAt((basis() === 'avg' && ot ? ot.taken : p[`${basis()}_book_back`]) ?? avgBack);
   // Calibrated: the stage's price judged by the calibrated chance at kickoff,
   // and (judging by it) the live chance moved by the same amount the
   // calibration moved the model's at kickoff
@@ -1175,20 +1186,23 @@ function liveBooks(r) {
     : { books: [...bookNames(r)].map(book => ({ book, price: r.best_book_back, secs: null })), when: '(only the one at its highest price is known)' };
 }
 
+// Shown or not, the tracked bets the list never showed: Live's and Recent's
 const LIVE_ALL_KEY = 'bsm_bb_live_all';
 let liveShowAll = (() => { try { return sessionStorage.getItem(LIVE_ALL_KEY) === '1'; } catch { return false; } })();
 
-// The live picks that pass the sport / My Teams filters, each with whether it
-// was listed under the market filters before kickoff (a pick with no history:
-// whether it passes them at the Odds at stage)
-const liveCandidates = () => liveData ? liveData.rows.map(liveBetAt).filter(passes).map(r => {
+// The tracked picks (/live or /recent rows) that pass the sport / My Teams
+// filters, each with whether it was listed under the market filters before
+// kickoff (a pick with no history: whether it passes them at the Odds at stage)
+const trackedCandidates = data => data ? data.rows.map(liveBetAt).filter(passes).map(r => {
   const listing = liveListing(r);
   return { ...r, listing, listed: listing ? listing.ever : passesFilters(r) };
 }) : [];
+const liveCandidates = () => trackedCandidates(liveData);
 
-// The live rows on show, one line per side (any tab): those listed before
+// The tracked rows on show, one line per side (any tab): those listed before
 // kickoff, and with "show all" the rest too
-const liveAll = () => oneLinePerSide(liveCandidates().filter(r => r.listed || liveShowAll), oddsTyped(prefs));
+const trackedAll = cands => oneLinePerSide(cands.filter(r => r.listed || liveShowAll), oddsTyped(prefs));
+const liveAll = () => trackedAll(liveCandidates());
 
 // "Listed 2h 40m · until 35 min before the start"
 function listingHtml(r) {
@@ -1231,6 +1245,16 @@ function liveRows() {
   return rows.sort(by[prefs.liveSort] || by.best);
 }
 
+// Where a tracked pick's game is: its start before it, else the feed's label
+// ("2nd 12:40", "Final"), a settled one's with the day it was played
+function gameState(r) {
+  const g = r.game;
+  if (g.state === 'pre') return kickoffText(r.kickoff);
+  if (r.result == null) return g.label;
+  const d = new Date(r.kickoff);
+  return isNaN(d) ? g.label : `${g.label} · ${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}`;
+}
+
 function liveGameCell(r) {
   const g = r.game;
   const dot = g.state === 'live' && g.live
@@ -1239,7 +1263,7 @@ function liveGameCell(r) {
   return `<td class="hidden sm:table-cell px-2 py-2">
     <a href="${builderUrl(r)}" title="Open this game in the Multi Builder"
        class="block font-semibold text-gray-100 hover:underline decoration-gray-500 underline-offset-2">${esc(r.home_team)} <span class="text-gray-500 font-normal">v</span> ${esc(r.away_team)}</a>
-    <div class="text-[11px] text-gray-500 whitespace-nowrap">${sportTag(r.sport)} · ${dot}${score}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}</div>
+    <div class="text-[11px] text-gray-500 whitespace-nowrap">${sportTag(r.sport)} · ${dot}${score}${esc(gameState(r))}</div>
   </td>`;
 }
 
@@ -1254,7 +1278,7 @@ function liveSelectionCell(r) {
       : name}${team ? ` <span class="ml-1 text-xs font-medium text-gray-400 whitespace-nowrap">${esc(team)}</span>` : ''}</div>
     <div class="text-[11px] text-gray-500">${esc(r.market_name)}</div>
     ${listingHtml(r)}
-    ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(g.state === 'pre' ? kickoffText(r.kickoff) : g.label)}`)}
+    ${gameLine(r, `${g.home != null ? `<span class="font-semibold tabular-nums text-gray-300">${g.home}–${g.away}</span> ` : ''}${esc(gameState(r))}`)}
     ${booksHtml('Best at', liveBooks(r), 'The bookies that had the best price at a check before kickoff')}
     <div class="mt-1 flex items-center gap-1.5 text-[11px] leading-none">
       <span class="px-1.5 py-0.5 rounded border font-semibold whitespace-nowrap ${cls}">${badge}</span>
@@ -1275,26 +1299,35 @@ function liveLineNote(r) {
     <span class="${signCls(r.line_pts)}">(${ptsText(r, r.line_pts)})</span>${lc ? ` ≈${odds(lc)}` : ''}</div>`;
 }
 
+// A tracked pick's Odds cell: the price chosen in Odds at, then each stage's
+// stacked, the chosen one highlighted (Live and Recent)
+function trackedOddsCell(r) {
+  const at = (key, label) => `<div class="text-[11px] leading-snug ${key === basis() ? 'font-semibold text-amber-400' : 'text-gray-400'}">${label} ${odds(r.prices[key])}</div>`;
+  return `<td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-bold text-amber-400">${odds(r.back)}</div>
+        ${at('avg', 'Avg')}${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}${liveLineNote(r)}
+      </td>`;
+}
+
+// Its Edge cell: the model's at kickoff, at the median and the best bookie's
+// price of the stage chosen, and the calibrated one
+function trackedEdgeCell(r) {
+  return `<td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
+        <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
+        <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
+        ${calLine({ ...r, median: r.avgBack })}
+      </td>`;
+}
+
 function liveRow(r, i) {
   const ch = r.chance ?? r.live.p_win, m = judging() && r.cal ? r.cal.p : r.model_prob;
   const move = ch == null || m == null || LOCKED.has(r.live.status) || Math.abs(ch - m) < 0.005 ? ''
     : ch > m ? '<span class="text-green-400 text-[10px] mr-0.5">▲</span>' : '<span class="text-red-400 text-[10px] mr-0.5">▼</span>';
   const chTitle = ch == null ? 'No estimate' : `Chance it wins from here; ${pct(m)} at kickoff`
     + (r.live.p_push > 0.001 ? `, ${pct(r.live.p_push)} it pushes` : '');
-  // The prices stacked, the one chosen in Odds at highlighted
-  const at = (key, label) => `<div class="text-[11px] leading-snug ${key === basis() ? 'font-semibold text-amber-400' : 'text-gray-400'}">${label} ${odds(r.prices[key])}</div>`;
   return `
     <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${canOpen(r) ? ' cursor-pointer' : ''}"${canOpen(r) ? ` data-row="${i}"` : ''}>
-      ${liveGameCell(r)}${liveSelectionCell(r)}
-      <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
-        <div class="font-bold text-amber-400">${odds(r.back)}</div>
-        ${at('avg', 'Avg')}${at('open', 'Open')}${at('best', 'Best')}${at('close', 'Close')}${liveLineNote(r)}
-      </td>
-      <td class="hidden sm:table-cell px-2 py-2 text-right tabular-nums whitespace-nowrap">
-        <div class="font-semibold ${signCls(r.avgEdge)}" title="At the average (median) price">${signedPct(r.avgEdge)}</div>
-        <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
-        ${calLine({ ...r, median: r.avgBack })}
-      </td>
+      ${liveGameCell(r)}${liveSelectionCell(r)}${trackedOddsCell(r)}${trackedEdgeCell(r)}
       <td class="px-2 py-2 text-right tabular-nums text-gray-100 whitespace-nowrap" title="${esc(chTitle)}">${move}${pct(ch, 0)}</td>
       <td class="px-2 py-2 text-right tabular-nums font-bold ${signCls(r.ev)}">${signedPct(r.ev)}</td>
     </tr>`;
@@ -1353,16 +1386,17 @@ function renderLiveSummary(rows) {
     </div>`;
 }
 
-// The picks in play hidden for never having been listed under the filters
-function renderLiveUnlisted() {
+// The tracked picks hidden for never having been listed under the filters:
+// in play (Live), or settled in the period (Recent); cands from trackedCandidates
+function renderUnlisted(el, cands, where) {
   const kinds = TABS.find(t => t.key === tab).kinds;
-  const n = liveCandidates().filter(r => !r.listed && kinds.includes(r.market_kind)).length;
-  const el = $('live-unlisted');
+  const n = cands.filter(r => !r.listed && kinds.includes(r.market_kind)).length;
   el.classList.toggle('hidden', !n);
   el.innerHTML = !n ? '' : `${liveShowAll ? `Showing ${n} tracked bet${n === 1 ? '' : 's'} the list never showed under your filters.`
-    : `${n} more tracked bet${n === 1 ? '' : 's'} in play the list never showed under your filters.`}
+    : `${n} more tracked bet${n === 1 ? '' : 's'} ${where} the list never showed under your filters.`}
     <button type="button" data-live-all class="ml-1 text-gray-300 underline decoration-dotted hover:text-white">${liveShowAll ? 'Hide them' : 'Show them'}</button>`;
 }
+const renderLiveUnlisted = () => renderUnlisted($('live-unlisted'), liveCandidates(), 'in play');
 
 function renderLive() {
   const body = $('live-body');
@@ -1436,6 +1470,241 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && view === 'live' && Date.now() - liveLoadedAt > LIVE_MS) loadLive();
 });
 setInterval(() => { const el = $('live-updated'); if (el) el.textContent = `Updated ${liveAgo()}`; }, 5000);
+
+// --- recent -----------------------------------------------------------------
+// /api/best_bets/recent: the tracked bets Live showed, once settled, from
+// games in the last week, in Live's shape (live.p_win = win_frac etc.), so
+// liveBetAt's "expected return from here" is what each one returned. Judged
+// as Live judges them (listed under the filters before kickoff, the price at
+// Odds at). Loaded when the view opens, again every RECENT_MS while it is up.
+
+const RECENT_MS = 120_000;
+let recentData = null;     // /api/best_bets/recent (null until loaded)
+let recentFailed = false;
+let recentLoadedAt = 0;
+let recentTimer = 0;
+let recentShown = [];      // the rows on show, in order (data-row indexes it)
+
+// Each period runs from local midnight `days - 1` days ago, by when the game started
+const RECENT_PERIODS = [
+  { key: 'today', label: 'Today', days: 1 },
+  { key: '3d', label: 'Last 3 days', days: 3 },
+  { key: '7d', label: 'Last week', days: 7 },
+];
+const RECENT_SORTS = ['time', 'best', 'edge', 'result', 'return'];
+const RECENT_SORT_LABELS = { ...SORT_LABELS, time: 'newest first', result: 'result', return: 'return' };
+// The period and sort chosen, kept in this browser
+const RECENT_KEY = 'bsm_bb_recent';
+const recentPrefs = (() => {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(RECENT_KEY)) || {}; } catch { /* storage unavailable */ }
+  return { period: RECENT_PERIODS.some(p => p.key === saved.period) ? saved.period : 'today',
+           sort: RECENT_SORTS.includes(saved.sort) ? saved.sort : 'time' };
+})();
+function saveRecentPrefs() {
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(recentPrefs)); } catch { /* storage unavailable */ }
+}
+
+function periodStart(days) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - (days - 1));
+  return d.getTime();
+}
+const inPeriod = (r, days) => Date.parse(r.kickoff) >= periodStart(days);
+const periodOf = key => RECENT_PERIODS.find(p => p.key === key) || RECENT_PERIODS[0];
+
+const recentCandidates = () => trackedCandidates(recentData);
+
+// The settled rows in the view's tab under the filters, over the last week
+function recentInTab() {
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  return trackedAll(recentCandidates()).filter(r => kinds.includes(r.market_kind) && inPeriod(r, 7));
+}
+
+// The rows of the period chosen, sorted
+function recentRows() {
+  const { days } = periodOf(recentPrefs.period);
+  const rows = recentInTab().filter(r => inPeriod(r, days));
+  const game = r => `${r.sport}:${r.game_id}`;
+  const by = {
+    time: (a, b) => byTime(b, a) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge,
+    best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.avgEdge - a.avgEdge,
+    edge: (a, b) => b.avgEdge - a.avgEdge,
+    result: (a, b) => resultRank(a) - resultRank(b) || desc(a.ev, b.ev),
+    return: (a, b) => desc(a.ev, b.ev) || b.avgEdge - a.avgEdge,
+  };
+  return rows.sort(by[recentPrefs.sort] || by.time);
+}
+
+// Settled bets summed, 1 unit each at the odds chosen: what they returned
+// (actual), what the model expected at kickoff (expected; cal: the calibrated
+// chance's, where every bet has one) and the spread of the return the model
+// expected (sd)
+function sums(bets) {
+  const sum = f => bets.reduce((a, r) => a + f(r), 0);
+  const variance = r => {
+    const m = r.model_prob, net = (r.back - 1) * (1 - r.commission);
+    return Math.max(0, m * net * net + (1 - m) - r.edge * r.edge);
+  };
+  const n = bets.length;
+  return { n, wins: sum(r => r.live.p_win), actual: sum(r => r.ev), expected: sum(r => r.edge),
+           sd: Math.sqrt(sum(variance)), cal: n && bets.every(r => r.cal) ? sum(r => r.cal.bookEdge) : null };
+}
+// Voids and bets with no model chance left out. out: the outlier prices among
+// them that never had an edge at the median price (no value window: listed by
+// the Filters' outlier rules alone); value: the rest
+const outlierOnly = r => r.avg_back == null;
+function recentStats(rows) {
+  const counted = rows.filter(r => r.ev != null && r.edge != null && r.live.status !== 'void');
+  return { ...sums(counted), voids: rows.filter(r => r.live.status === 'void').length,
+           out: sums(counted.filter(outlierOnly)), value: sums(counted.filter(r => !outlierOnly(r))) };
+}
+
+// "Today", "Yesterday", else the weekday and date
+function pastDayLabel(key) {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const ago = Math.round((periodStart(1) - date) / 86400000);
+  if (ago === 0) return 'Today';
+  if (ago === 1) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+// One period's tile: the ROI it returned, what the model expected, the bets
+function periodTile(p, st) {
+  const on = p.key === recentPrefs.period;
+  const title = st.n ? `${p.label}: ${st.n} settled bet${st.n === 1 ? '' : 's'}, ${wonCount(st.wins)} won. `
+    + `Returned ${signedPct(st.actual / st.n)} (${units(st.actual)}); the model expected ${signedPct(st.expected / st.n)} (${units(st.expected)}) at kickoff.`
+    : `${p.label}: no settled bets at these filters`;
+  return `<button type="button" data-period="${p.key}" aria-pressed="${on}" title="${esc(title)}"
+      class="min-w-0 text-left rounded-lg border p-2.5 transition-colors ${on ? 'border-amber-400 bg-amber-400/5' : 'border-gray-700 bg-gray-900/60 hover:border-gray-500'}">
+      <div class="text-[10px] uppercase tracking-wider font-semibold ${on ? 'text-amber-400' : 'text-gray-500'}">${p.label}</div>
+      <div class="text-xl font-bold tabular-nums ${st.n ? signCls(st.actual) : 'text-gray-600'}">${st.n ? signedPct(st.actual / st.n) : '–'}</div>
+      <div class="text-[11px] tabular-nums text-gray-400 leading-snug">${st.n ? `expected <span class="${signCls(st.expected)}">${signedPct(st.expected / st.n)}</span>` : 'no bets'}</div>
+      <div class="text-[11px] tabular-nums text-gray-500 leading-snug">${st.n ? `${st.n} bet${st.n === 1 ? '' : 's'} · <span class="${signCls(st.actual)}">${units(st.actual)}</span>` : '&nbsp;'}</div>
+    </button>`;
+}
+
+function renderRecentSummary() {
+  const inTab = recentInTab();
+  const p = periodOf(recentPrefs.period);
+  const st = recentStats(inTab.filter(r => inPeriod(r, p.days)));
+  const tiles = RECENT_PERIODS.map(q => periodTile(q, recentStats(inTab.filter(r => inPeriod(r, q.days))))).join('');
+  const has = sts => inTab.filter(r => inPeriod(r, p.days) && sts.includes(r.live.status)).length;
+  const tally = [
+    [has(['won', 'half_won']), 'won', 'text-green-400'], [has(['lost', 'half_lost']), 'lost', 'text-red-400'],
+    [has(['push']), 'push', 'text-gray-300'], [st.voids, 'void', 'text-gray-400'],
+  ].filter(([k]) => k).map(([k, label, cls]) => `<span class="${cls}">${k} ${label}</span>`).join(' · ');
+  // How far the result is from what the model expected, in its own spread
+  const z = st.n && st.sd > 0 ? (st.actual - st.expected) / st.sd : null;
+  const luck = z == null ? '' : ` <span class="text-gray-500" title="How far the profit is from the model's expectation, in standard deviations of how it could land: within ±1 is ordinary luck, past ±2 unusual">(${z >= 0 ? '+' : '−'}${Math.abs(z).toFixed(1)} SD)</span>`;
+  // Today's bets still in play under the same filters
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  const playing = p.key === 'today' && liveData ? liveAll().filter(r => kinds.includes(r.market_kind) && inPeriod(r, 1)).length : 0;
+  $('recent-summary').innerHTML = `
+    <div class="grid grid-cols-3 gap-2">${tiles}</div>
+    ${st.n ? `<div class="mt-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-[11px] text-gray-500 tabular-nums">
+      <div title="Profit in units (1 unit a bet) against what the model expected at kickoff, ± one standard deviation of how it could land">
+        Got <span class="font-semibold ${signCls(st.actual)}">${units(st.actual)}</span>, expected
+        <span class="font-semibold ${signCls(st.expected)}">${units(st.expected)}</span> ± ${st.sd.toFixed(1)}u${luck}${st.cal == null ? ''
+        : ` · calibrated <span class="font-semibold ${signCls(st.cal)}" title="What the calibrated chance expected of the same bets (the model blended with the bookies' by how far settled bets have trusted it): ${signedPct(st.cal / st.n)} ROI">${units(st.cal)}</span>`}</div>
+      <div>${tally}${playing ? ` · <button type="button" data-view="live" class="text-gray-300 underline decoration-dotted hover:text-white">${playing} more in play</button>` : ''}</div>
+    </div>${st.out.n && st.value.n ? `
+    <div class="mt-1 text-[11px] text-gray-500 tabular-nums" title="Value bets: an edge at the median price at some check before kickoff. Outlier prices: one bookie well above the rest, listed by your Filters' outlier rules (such prices have paid before) without ever having an edge at the median price. The model's expectation for them is at the outlier price, and can be below zero.">
+      Value bets ${st.value.n}: got <span class="font-semibold ${signCls(st.value.actual)}">${signedPct(st.value.actual / st.value.n)}</span>,
+      expected <span class="${signCls(st.value.expected)}">${signedPct(st.value.expected / st.value.n)}</span>
+      · ⚡ outlier prices only ${st.out.n}: got <span class="font-semibold ${signCls(st.out.actual)}">${signedPct(st.out.actual / st.out.n)}</span>,
+      expected <span class="${signCls(st.out.expected)}">${signedPct(st.out.expected / st.out.n)}</span></div>` : ''}` : ''}`;
+}
+
+// A settled pick: Live's cells, then its chance at kickoff and what it returned
+function recentRow(r, i) {
+  const m = judging() && r.cal ? r.cal.p : r.model_prob;
+  const voided = r.live.status === 'void';
+  const retTitle = voided ? 'Void: the stake back' : `${units(r.ev)} per unit staked at ${odds(r.back)}, after commission`
+    + (r.edge == null ? '' : `; the model expected ${signedPct(r.edge)} at kickoff`);
+  return `
+    <tr class="group border-t border-gray-700/60 hover:bg-gray-700/20 align-top${canOpen(r) ? ' cursor-pointer' : ''}"${canOpen(r) ? ` data-row="${i}"` : ''}>
+      ${liveGameCell(r)}${liveSelectionCell(r)}${trackedOddsCell(r)}${trackedEdgeCell(r)}
+      <td class="px-2 py-2 text-right tabular-nums text-gray-300 whitespace-nowrap" title="${judging() && r.cal
+        ? `The calibrated chance at kickoff; the model's was ${pct(r.model_prob)}` : "The model's chance at kickoff"}">${pct(m, 0)}</td>
+      <td class="px-2 py-2 text-right tabular-nums font-bold ${voided ? 'text-gray-500' : signCls(r.ev)}" title="${esc(retTitle)}">${voided ? '–' : units(r.ev)}</td>
+    </tr>`;
+}
+
+// A day's line above its bets, sorted newest first over more than one day
+function dayHeadRow(key, rows) {
+  const st = recentStats(rows);
+  return `<tr class="border-t border-gray-600"><td colspan="6" class="px-2 pt-3 pb-1 text-[11px] tabular-nums text-gray-400">
+    <span class="font-semibold text-gray-200">${esc(pastDayLabel(key))}</span>${st.n ? ` · ${st.n} bet${st.n === 1 ? '' : 's'}, ${wonCount(st.wins)} won
+    · <span class="font-semibold ${signCls(st.actual)}">${signedPct(st.actual / st.n)}</span>
+    <span class="text-gray-500">(${units(st.actual)}, expected ${signedPct(st.expected / st.n)})</span>` : ''}</td></tr>`;
+}
+
+function renderRecent() {
+  const body = $('recent-body');
+  const rows = recentRows();
+  recentShown = rows;
+  renderUnlisted($('recent-unlisted'), recentCandidates().filter(r => inPeriod(r, periodOf(recentPrefs.period).days)), 'settled in this period');
+  let summary = '';
+  if (!recentData) {
+    $('recent-summary').innerHTML = '';
+    body.innerHTML = recentFailed
+      ? '<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">Could not load the settled bets. Trying again shortly.</td></tr>'
+      : Array.from({ length: 4 }, () => '<tr><td colspan="6" class="px-2 py-2"><span class="bsm-skeleton h-8 w-full block"></span></td></tr>').join('');
+  } else {
+    renderRecentSummary();
+    if (!rows.length) {
+      body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
+        !recentData.rows.length ? 'Nothing settled in the last week.' : `No settled bets ${recentPrefs.period === 'today' ? 'today' : 'in this period'} match these filters.`}</td></tr>`;
+    } else {
+      loadLogs(rows);
+      const days = recentPrefs.sort === 'time' ? [...new Set(rows.map(r => dayOf(r.kickoff)))] : [];
+      body.innerHTML = days.length > 1
+        ? days.map(k => dayHeadRow(k, rows.filter(r => dayOf(r.kickoff) === k))
+            + rows.map((r, i) => (dayOf(r.kickoff) === k ? recentRow(r, i) : '')).join('')).join('')
+        : rows.map(recentRow).join('');
+      summary = `${rows.length} bet${rows.length === 1 ? '' : 's'} settled · sorted by ${RECENT_SORT_LABELS[recentPrefs.sort] || 'newest first'}`;
+    }
+  }
+  $('status').textContent = summary;
+  $('method-note').textContent = 'The bets Live showed, once settled: every tracked bet the list showed under your filters at some check '
+    + 'before kickoff (Show them for the others), from games that started today, in the last 3 days or in the last week (from midnight, '
+    + 'your time). 1 unit each at the odds chosen in Odds at (Avg, the default: the average price while the bet showed value before kickoff, '
+    + 'weighted by time), at the price chosen in Filters (the best bookie\'s by default), after commission. Return: what the bet returned; '
+    + 'expected: the model\'s edge at kickoff at the same odds, as Live\'s "At kickoff". Voided bets are left out of the ROI. A half-win counts '
+    + 'as half. Settled from our own results data; a few bets a week can be settled again later (NFL snap counts), and move with it. '
+    + 'Small samples swing a lot: ± is the spread the model expected.';
+}
+
+function scheduleRecent() {
+  clearTimeout(recentTimer);
+  if (view === 'recent' && !document.hidden) recentTimer = setTimeout(loadRecent, RECENT_MS);
+}
+
+async function loadRecent() {
+  clearTimeout(recentTimer);
+  try {
+    const data = await api('best_bets/recent');
+    if (!data) return;   // signed out / restricted: the gate card is up
+    recentData = data;
+    recentFailed = false;
+    recentLoadedAt = Date.now();
+  } catch {
+    recentFailed = true;
+  }
+  if (view === 'recent') {
+    renderSportPills();
+    renderRecent();
+  }
+  scheduleRecent();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || view !== 'recent') return;
+  if (Date.now() - recentLoadedAt > RECENT_MS) loadRecent(); else scheduleRecent();
+});
 
 // --- track record -----------------------------------------------------------
 // Settled picks for the current tab's markets, by the edge they were first
@@ -1604,7 +1873,7 @@ async function loadResults() {
 
 // --- view switching ---------------------------------------------------------
 
-// Upcoming / Live, with how many bets are in play under the current filters
+// Upcoming / Live / Recent, with how many bets are in play under the current filters
 function renderViewSwitch() {
   const n = liveData ? liveRows().length : null;
   const item = (key, label, extra = '') => `
@@ -1613,17 +1882,18 @@ function renderViewSwitch() {
               ? 'border-amber-400 text-gray-100' : 'border-transparent text-gray-400 hover:text-gray-200'}">${label}${extra}</button>`;
   $('view-switch').innerHTML = item('upcoming', 'Upcoming')
     + item('live', 'Live', n ? `<span class="inline-flex items-center gap-1 rounded-full bg-red-500/15 text-red-300 px-1.5 text-[11px] tabular-nums">
-        <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true"></span>${n}</span>` : '');
+        <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true"></span>${n}</span>` : '')
+    + item('recent', 'Recent');
 }
 
-const renderView = () => view === 'live' ? renderLive() : renderBets();
+const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent() : renderBets();
 
 // --- filters ------------------------------------------------------------------
 
 // The markets the Filters modal lists: every one of the sports on the page
 // (upcoming, in play or settled), then any other market the data has
 function modalKeys() {
-  const rows = [...bets, ...(liveData?.rows || []), ...(results?.picks || [])];
+  const rows = [...bets, ...(liveData?.rows || []), ...(recentData?.rows || []), ...(results?.picks || [])];
   const sports = Object.keys(SPORT_LABELS).filter(s => rows.some(r => r.sport === s));
   return filterKeys(sports.length ? sports : ['nfl', 'nhl'], rows.map(marketOf));
 }
@@ -1631,7 +1901,8 @@ function modalKeys() {
 // { market: bets on show now in the view up, whatever the tab }
 function marketCounts() {
   const counts = {};
-  for (const r of view === 'live' ? liveAll() : upcomingRows()) counts[marketOf(r)] = (counts[marketOf(r)] || 0) + 1;
+  const rows = view === 'live' ? liveAll() : view === 'recent' ? recentRows() : upcomingRows();
+  for (const r of rows) counts[marketOf(r)] = (counts[marketOf(r)] || 0) + 1;
   return counts;
 }
 
@@ -1646,7 +1917,7 @@ function renderHeads() {
   $('dth-odds').title = `All at ${price}. Top: the price now, with ▲ / ▼ for its latest move; – once the bookies have taken it down, `
     + "or ≈ where they moved the line: about what this bet's line is worth now. Open: the first price recorded. Best: the highest seen "
     + 'since it first showed value. Was: the price when it was last listed under your filters. The line: the price at every check, the dot the latest.';
-  $('lth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Avg: the average while it showed value before kickoff, `
+  $('lth-odds').title = $('rth-odds').title = `All at ${price}. Top: the price chosen in Odds at. Avg: the average while it showed value before kickoff, `
     + 'weighted by time. Open: the first price recorded. Best: the highest from when it first showed value to kickoff. Close: the last before kickoff.';
   $('filters-summary').textContent = `${prefsSummary(prefs, modalKeys())} · ${BASES[prefs.basis].toLowerCase()}`;
   const favs = prefs.books.length === 1 ? `★ ${bookLabel(prefs.books[0])}` : prefs.books.length ? `★ ${prefs.books.length}` : '';
@@ -1655,17 +1926,19 @@ function renderHeads() {
 
 function render() {
   noteSeen(upcomingRows(), true);
-  const isLive = view === 'live';
+  const isLive = view === 'live', isRecent = view === 'recent', upcoming = !isLive && !isRecent;
   renderViewSwitch();
   renderTabs();
-  $('bets-view').classList.toggle('hidden', isLive);
+  $('bets-view').classList.toggle('hidden', !upcoming);
   $('live-view').classList.toggle('hidden', !isLive);
-  $('risk-wrap').classList.toggle('hidden', isLive);
-  $('bank-wrap').classList.toggle('hidden', isLive);
-  $('basis-wrap').classList.toggle('hidden', !isLive);
-  $('sort-wrap').classList.toggle('hidden', isLive);
+  $('recent-view').classList.toggle('hidden', !isRecent);
+  $('risk-wrap').classList.toggle('hidden', !upcoming);
+  $('bank-wrap').classList.toggle('hidden', !upcoming);
+  $('basis-wrap').classList.toggle('hidden', upcoming);
+  $('sort-wrap').classList.toggle('hidden', !upcoming);
   $('live-sort-wrap').classList.toggle('hidden', !isLive);
   $('live-final-wrap').classList.toggle('hidden', !isLive);
+  $('recent-sort-wrap').classList.toggle('hidden', !isRecent);
   $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams());
   renderHeads();
   renderSportPills();
@@ -1686,17 +1959,35 @@ function setTab(next) {
   render();
 }
 
+const VIEWS = ['upcoming', 'live', 'recent'];
 function setView(next) {
   view = next;
   setParam('view', view);
   render();
   if (view === 'live' && Date.now() - liveLoadedAt > LIVE_MS) loadLive();
   else scheduleLive();   // 30 s while Live is up, 2 min otherwise
+  if (view === 'recent' && Date.now() - recentLoadedAt > RECENT_MS) loadRecent();
+  else scheduleRecent();   // every RECENT_MS while Recent is up
 }
 
-$('view-switch').addEventListener('click', e => {
-  const b = e.target.closest('[data-view]');
-  if (b && b.dataset.view !== view) setView(b.dataset.view);
+// The view switch, and Recent's "in play" link to Live
+for (const id of ['view-switch', 'recent-summary']) {
+  $(id).addEventListener('click', e => {
+    const b = e.target.closest('[data-view]');
+    if (b && b.dataset.view !== view) setView(b.dataset.view);
+  });
+}
+$('recent-summary').addEventListener('click', e => {
+  const b = e.target.closest('[data-period]');
+  if (!b || b.dataset.period === recentPrefs.period) return;
+  recentPrefs.period = b.dataset.period;
+  saveRecentPrefs();
+  renderRecent();
+});
+$('recent-sort').addEventListener('change', e => {
+  recentPrefs.sort = RECENT_SORTS.includes(e.target.value) ? e.target.value : 'time';
+  saveRecentPrefs();
+  render();
 });
 
 $('view-tabs').addEventListener('click', e => {
@@ -1747,6 +2038,11 @@ $('live-body').addEventListener('click', e => {
   if (e.target.closest('a')) return;
   const row = e.target.closest('tr[data-row]');
   if (row && liveShown[row.dataset.row]) openStats(liveShown[row.dataset.row]);
+});
+$('recent-body').addEventListener('click', e => {
+  if (e.target.closest('a')) return;
+  const row = e.target.closest('tr[data-row]');
+  if (row && recentShown[row.dataset.row]) openStats(recentShown[row.dataset.row]);
 });
 $('stake-risk').addEventListener('change', e => {
   stakePrefs.risk = e.target.value;
@@ -1865,12 +2161,14 @@ $('alerts-btn').addEventListener('click', async () => {
   scheduleBets();
 });
 
-$('live-unlisted').addEventListener('click', e => {
-  if (!e.target.closest('[data-live-all]')) return;
-  liveShowAll = !liveShowAll;
-  try { sessionStorage.setItem(LIVE_ALL_KEY, liveShowAll ? '1' : '0'); } catch { /* storage unavailable */ }
-  render();
-});
+for (const id of ['live-unlisted', 'recent-unlisted']) {
+  $(id).addEventListener('click', e => {
+    if (!e.target.closest('[data-live-all]')) return;
+    liveShowAll = !liveShowAll;
+    try { sessionStorage.setItem(LIVE_ALL_KEY, liveShowAll ? '1' : '0'); } catch { /* storage unavailable */ }
+    render();
+  });
+}
 
 async function init() {
   let data;
@@ -1888,15 +2186,18 @@ async function init() {
   applyPrefs();
   $('stake-risk').value = stakePrefs.risk;
   $('stake-balance').value = stakePrefs.balance ?? '';
+  $('recent-sort').value = recentPrefs.sort;
   loadMyTeams();   // profile teams may arrive later; MY_TEAMS_CHANGED re-renders
   const wanted = new URLSearchParams(location.search).get('tab');
   tab = TABS.some(t => t.key === wanted) ? wanted : 'all';
-  view = new URLSearchParams(location.search).get('view') === 'live' ? 'live' : 'upcoming';
+  const wantedView = new URLSearchParams(location.search).get('view');
+  view = VIEWS.includes(wantedView) ? wantedView : 'upcoming';
   render();
   scheduleBets();  // and keeps itself current
   loadResults();   // the track record fills in when it arrives
   loadStakes();    // and the Stake column
   loadLive();      // and the bets in play (the Live tab's count too)
+  if (view === 'recent') loadRecent();   // the settled ones only once looked at
   // The account's filters, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
