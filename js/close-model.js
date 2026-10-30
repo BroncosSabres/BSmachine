@@ -24,7 +24,7 @@
 // as calibrate.js. Each market is pulled toward its sport and each sport toward
 // all markets (empirical Bayes, n0 by the walk-forward's squared error on the
 // moments the model liked), with cluster-robust intervals by game.
-import { logit, sigmoid, overrounds, marketChance, realClose, leafKey, fitHierarchy, fitFor, observations, edgeAt,
+import { logit, sigmoid, overrounds, marketChance, realClose, leafKey, inFits, fitHierarchy, fitFor, observations, edgeAt,
          solve, inv, mat, mul, add, quad, dot, groupBy } from './calibrate.js';
 
 export const MOVE_TERMS = 6;
@@ -52,15 +52,16 @@ export function stateOf({ back, taken = back, prob, overround = null, hrs }) {
 }
 
 // Settled rows (decoded, with open_hrs / first_hrs) -> move points: { key,
-// sport, game, date, stage, x, y, w, d, row }. Only selections with a real
+// sport, game, date, stage, x, y, w, d, row }. The selections in the fits
+// (calibrate.js inFits) with a real
 // close (calibrate.js realClose): priced more than once and still in their
 // market at the end, or a main line whose line moved, judged by the close at
 // its own line - so a line move counts as the price move it is worth.
 export function movePoints(rows) {
-  const oOpen = overrounds(rows, 'open'), oClose = overrounds(rows, 'close');
+  const oOpen = overrounds(rows, 'open'), oClose = overrounds(rows, 'close'), fits = inFits(rows);
   const out = [];
   for (const r of rows) {
-    const close = realClose(r, oClose);
+    const close = fits(r) && realClose(r, oClose);
     if (!close) continue;
     const half = (oClose.get(r) && !(r.market_kind === 'match_odds' && r.three_way)) ? 0.5 : 1;
     for (const stage of ['open', 'first']) {

@@ -2,19 +2,22 @@
 // shows it). Insurance multis built from every selection one bookie prices
 // (/api/best_bets/pool: each at its latest check, every bookie's price):
 // n legs, the stake back when at least k win but not all. The multis are
-// searched in a Worker (multi-gen-worker.js, multi-gen.js) and ranked by the
-// chance the insurance pays when the multi loses, among those whose total
-// price reaches the minimum asked. Chances are the model's, or the calibrated
+// searched in a Worker (multi-gen-worker.js, multi-gen.js) for the least
+// chance of losing the stake outright (fewer than k legs win: neither the
+// multi nor the insurance pays), among those whose total price reaches the
+// minimum asked, and shown by that or by EV (Sort by). Chances are the model's, or the calibrated
 // ones when Filters judges by them (and the calibration is in). A regular
 // multi takes at most one leg a game, over the games starting up to a day
-// chosen; a Same Game Multi's legs are one game's. Settings are kept in this
-// browser (bsm_bb_multi); locked and excluded legs for the visit only.
+// chosen (all of them, all but some, or only some: Games); a Same Game
+// Multi's legs are one game's. With "My Best Bets filters" (on by default) the
+// legs are only bets the Upcoming list's filters pass. Settings are kept in
+// this browser (bsm_bb_multi); locked and excluded legs for the visit only.
 import { esc, odds, pct, signedPct, signCls, selectionText, bookLabel, sportTag, kickoffText, SPORT_LABELS } from './best-bets-shared.js';
 import { MARKETS, marketOf, marketLabel } from './best-bets-filters.js';
 import { KNOWN_BOOKS } from './best-bets-books.js';
 import { calibrateBet, commissionOf } from './calibrate-client.js';
 import { edgeAt } from './calibrate.js';
-import { refundRate, evOf } from './multi-gen.js';
+import { refundRate, evOf, RANKS, comparer } from './multi-gen.js';
 import { gameState, legOf, SGM_SPORTS } from './sgm-legs.js';
 import { apiUrl } from './api-config.js';
 
@@ -25,12 +28,13 @@ const TOP = 10;
 const MAX_LEGS = { regular: 10, sgm: 6 };
 const DAYS_AHEAD = 8;              // the pool's games: the next 8 days
 const KINDS = { regular: 'Regular multi', sgm: 'Same Game Multi' };
+const rankOf = x => (RANKS.includes(x) ? x : null);
 
 // --- settings ---------------------------------------------------------------------
 
 const DEFAULTS = { kind: 'regular', book: '', n: '3', k: '2', minLeg: '1.20', maxLeg: '', minTotal: '3', until: 0,
-                   sportsOff: [], marketsOff: [], valueOnly: false, game: '', stake: '50', cap: '50', refund: 'bonus',
-                   bonusPct: '75' };
+                   sportsOff: [], marketsOff: [], valueOnly: false, myFilters: true, gamesOff: [], gamesOnly: null, game: '',
+                   stake: '50', cap: '50', refund: 'bonus', bonusPct: '75', sort: 'lose' };
 
 function loadSettings() {
   let s = {};
@@ -40,8 +44,10 @@ function loadSettings() {
   return { type: 'insurance', kind: s.kind === 'sgm' ? 'sgm' : 'regular', book: str('book'), n: str('n'), k: str('k'),
            minLeg: str('minLeg'), maxLeg: str('maxLeg'), minTotal: str('minTotal'),
            until: Number.isInteger(s.until) && s.until >= 0 && s.until < DAYS_AHEAD ? s.until : 0,
-           sportsOff: list('sportsOff'), marketsOff: list('marketsOff'), valueOnly: !!s.valueOnly, game: str('game'),
-           stake: str('stake'), cap: str('cap'), refund: s.refund === 'cash' ? 'cash' : 'bonus', bonusPct: str('bonusPct') };
+           sportsOff: list('sportsOff'), marketsOff: list('marketsOff'), valueOnly: !!s.valueOnly, myFilters: s.myFilters !== false,
+           gamesOff: list('gamesOff'), gamesOnly: Array.isArray(s.gamesOnly) ? list('gamesOnly') : null, game: str('game'),
+           stake: str('stake'), cap: str('cap'), refund: s.refund === 'cash' ? 'cash' : 'bonus', bonusPct: str('bonusPct'),
+           sort: rankOf(s.sort) || DEFAULTS.sort };
 }
 
 let settings = loadSettings();
@@ -103,13 +109,23 @@ function dayName(offset) {
 const bookOf = () => settings.book || ctx?.prefs?.use?.[0] || ctx?.prefs?.books?.[0] || 'SportsBet';
 const judgeCal = () => ctx?.judge === 'cal' && !!ctx?.calib;
 
+// Games: every one but those left out (gamesOff), or only those chosen
+// (gamesOnly, after None): a game that comes into the window later is in
+// the first way, out the second
+const gameOn = key => (settings.gamesOnly ? settings.gamesOnly.includes(key) : !settings.gamesOff.includes(key));
+
+// A regular multi's games: the window's, of the sports ticked
+function windowRows() {
+  const end = dayEnd(settings.until);
+  return upcoming().filter(r => Date.parse(r.kickoff) < end && !settings.sportsOff.includes(r.sport));
+}
+
 // The rows in scope before the bookie and the leg filters: the window's
-// games (regular) or the game chosen (SGM), the sports and markets ticked
+// games chosen (regular) or the game picked (SGM), the markets ticked
 function scoped() {
   const s = settings;
   if (s.kind === 'sgm') return upcoming().filter(r => gameKey(r) === s.game && !s.marketsOff.includes(marketOf(r)));
-  const end = dayEnd(s.until);
-  return upcoming().filter(r => Date.parse(r.kickoff) < end && !s.sportsOff.includes(r.sport) && !s.marketsOff.includes(marketOf(r)));
+  return windowRows().filter(r => gameOn(gameKey(r)) && !s.marketsOff.includes(marketOf(r)));
 }
 
 // A leg's chance: the calibrated one when Filters judges by it (calibrate-
@@ -164,6 +180,7 @@ function candidates() {
   const lo = num(s.minLeg, 1), hi = num(s.maxLeg);
   const sgm = s.kind === 'sgm' ? sgmGame() : null;
   if (s.kind === 'sgm' && !sgm) return [];
+  const passed = s.myFilters && ctx?.filtered ? ctx.filtered() : null;   // the Upcoming list's filters
   const sport = s.game.split(':')[0];
   const out = [];
   for (const r of scoped()) {
@@ -171,7 +188,7 @@ function candidates() {
     if (!(price > 1) || price < lo - 1e-9 || (hi != null && price > hi + 1e-9)) continue;
     if (!(r.model_prob > 0 && r.model_prob < 1)) continue;
     const id = legId(r);
-    if (excluded.has(id)) continue;
+    if (excluded.has(id) || (passed && !passed.has(id))) continue;
     const leg = sgm ? legOf(sport, sgm.gs, r) : null;
     if (sgm && !leg) continue;
     const c = chanceOf(r, price);
@@ -283,7 +300,7 @@ function finish(data) {
   };
   results = { ...data, settings: r.settings, book: r.book, basis: r.basis, rate: r.rate, missing: r.missing, at: Date.now(),
               nLegs: r.nLegs, nGroups: r.nGroups, secs: (Date.now() - r.started) / 1000,
-              results: data.results.map(x => ({ ...x, legs: x.legs.map(legOfId), quote: '' })) };
+              results: data.results.map(x => ({ ...x, legs: x.legs.map(legOfId), quote: '' })).sort(comparer(settings.sort)) };
   renderResults();
 }
 
@@ -341,6 +358,7 @@ function renderOptions() {
   }).join('');
   const on = keys.filter(k => !settings.marketsOff.includes(k)).length;
   $('mg-markets-summary').textContent = on === keys.length ? '· all' : `· ${on} of ${keys.length}`;
+  renderGames();
 }
 
 function fillForm() {
@@ -351,6 +369,7 @@ function fillForm() {
   $('mg-max-leg').value = s.maxLeg;
   $('mg-min-total').value = s.minTotal;
   $('mg-value').checked = s.valueOnly;
+  $('mg-filters').checked = s.myFilters;
   $('mg-stake').value = s.stake;
   $('mg-cap').value = s.cap;
   $('mg-refund').value = s.refund;
@@ -361,11 +380,29 @@ function fillForm() {
 function readForm() {
   const v = id => $(id).value.trim();
   settings = { ...settings, n: v('mg-n'), k: v('mg-k'), minLeg: v('mg-min-leg'), maxLeg: v('mg-max-leg'), minTotal: v('mg-min-total'),
-               valueOnly: $('mg-value').checked, stake: v('mg-stake'), cap: v('mg-cap'),
+               valueOnly: $('mg-value').checked, myFilters: $('mg-filters').checked, stake: v('mg-stake'), cap: v('mg-cap'),
                refund: $('mg-refund').value === 'cash' ? 'cash' : 'bonus', bonusPct: v('mg-bonus'),
                book: $('mg-book').value || settings.book, until: +$('mg-until').value || 0,
                game: settings.kind === 'sgm' ? $('mg-game').value || settings.game : settings.game };
   saveSettings();
+}
+
+// Games (regular multis): the window's games of the sports ticked, ticked
+// when in. Keys of games no longer priced are dropped.
+function renderGames() {
+  $('mg-games-wrap').classList.toggle('hidden', settings.kind === 'sgm');
+  if (pool) {
+    const live = new Set(upcoming().map(gameKey));
+    settings.gamesOff = settings.gamesOff.filter(k => live.has(k));
+    if (settings.gamesOnly) settings.gamesOnly = settings.gamesOnly.filter(k => live.has(k));
+  }
+  const games = [...new Map(windowRows().map(r => [gameKey(r), r])).values()].sort((a, b) => Date.parse(a.kickoff) - Date.parse(b.kickoff));
+  $('mg-games').innerHTML = games.length ? games.map(g => `<label class="flex items-center gap-1.5 cursor-pointer min-w-0">
+      <input type="checkbox" data-game="${esc(gameKey(g))}" class="accent-amber-400"${gameOn(gameKey(g)) ? ' checked' : ''}>
+      <span class="truncate">${sportTag(g.sport)} ${esc(g.home_team)} v ${esc(g.away_team)} <span class="text-[11px] text-gray-500">${esc(kickoffText(g.kickoff))}</span></span></label>`).join('')
+    : `<span class="text-xs text-gray-500">${pool ? 'No games in this window.' : 'Loading…'}</span>`;
+  const on = games.filter(g => gameOn(gameKey(g))).length;
+  $('mg-games-summary').textContent = !games.length ? '' : on === games.length ? '· all' : on ? `· ${on} of ${games.length}` : '· none';
 }
 
 // How many legs the settings leave, under the Generate button
@@ -382,7 +419,7 @@ function renderPoolNote() {
   }
   const legs = candidates();
   const groups = new Set(legs.map(l => l.group)).size;
-  const basis = judgeCal() ? 'calibrated chances' : 'model chances';
+  const basis = `${settings.myFilters ? 'your filters · ' : ''}${judgeCal() ? 'calibrated chances' : 'model chances'}`;
   note.textContent = settings.kind === 'sgm'
     ? `${legs.length.toLocaleString()} legs at ${bookLabel(bookOf())} in this game · ${basis}`
     : `${legs.length.toLocaleString()} legs at ${bookLabel(bookOf())} in ${groups} game${groups === 1 ? '' : 's'} · ${basis}`;
@@ -459,7 +496,7 @@ function quoteHtml(res, out) {
 }
 
 function card(res, i, out) {
-  const s = out.settings, n = +s.n, k = +s.k, sgm = s.kind === 'sgm';
+  const s = out.settings, n = +s.n, k = +s.k, sgm = s.kind === 'sgm', sortBy = settings.sort;
   const refund = s.refund === 'cash' ? 'cash' : `a bonus bet worth ${num(s.bonusPct, 0)}%`;
   return `<div class="rounded-xl border border-gray-700 bg-gray-800/40 p-3">
     <div class="flex items-baseline justify-between gap-3 flex-wrap">
@@ -469,13 +506,13 @@ function card(res, i, out) {
       <button type="button" data-copy="${i}" class="text-xs text-blue-400 hover:underline">Copy legs</button>
     </div>
     <div class="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
-      ${tile('Insurance when it loses', pct(res.cond), `What it is ranked by: the chance at least ${k} of the ${n} legs win when not all of them do`, true)}
       ${tile('All win', pct(res.pAll), `The chance every leg wins: the multi pays ${odds(res.price)}`)}
       ${tile('Insurance pays', pct(res.pIns), `The chance at least ${k} but not all ${n} legs win: the stake back`)}
-      ${tile('Lose', pct(res.pLose), `The chance fewer than ${k} legs win`)}
-      ${tile('EV', `<span class="${signCls(res.ev)}">${signedPct(res.ev)}</span>`, `Expected return per unit staked: ${odds(res.price)} times the chance all win, plus the refund (${refund}${
+      ${tile('Lose', pct(res.pLose), `${sortBy === 'lose' ? 'What they are sorted by: the' : 'The'} chance fewer than ${k} legs win: the stake lost, no refund. All win, Insurance pays and Lose add up to 100%.`, sortBy === 'lose')}
+      ${tile('Insurance when it loses', pct(res.cond), `Of the times the multi doesn't win, how often the insurance pays: Insurance pays ÷ (Insurance pays + Lose), ${pct(res.pIns)} of ${pct(res.pIns + res.pLose)}`)}
+      ${tile('EV', `<span class="${signCls(res.ev)}">${signedPct(res.ev)}</span>`, `${sortBy === 'ev' ? 'What they are sorted by. ' : ''}Expected return per unit staked: ${odds(res.price)} times the chance all win, plus the refund (${refund}${
         num(s.cap) > 0 && num(s.cap) < num(s.stake, Infinity) ? `, up to $${num(s.cap)} of the $${num(s.stake)} stake` : ''}) times the chance the insurance pays, less the stake${
-        sgm ? ". At the estimated price: type the bookie's quote below for the EV at it" : ''}`)}
+        sgm ? ". At the estimated price: type the bookie's quote below for the EV at it" : ''}`, sortBy === 'ev')}
     </div>${sgm ? sgmPriceHtml(res, i, out) : ''}
     <div class="mt-2">${res.legs.map(l => legRow(l, out)).join('')}</div>
   </div>`;
@@ -506,10 +543,15 @@ function renderResults() {
     out.missing.map(r => esc(selectionText(r))).join(', ')}.</p>` : '';
   const sgm = s.kind === 'sgm';
   const scope = sgm ? 'this game' : `${out.nGroups} game${out.nGroups === 1 ? '' : 's'}`;
-  const head = `<p class="text-xs text-gray-500">${out.results.length ? `The best ${out.results.length}` : 'No'} multi${out.results.length === 1 ? '' : 's'} from
+  const sortSel = `<label class="flex items-center gap-1.5 text-xs text-gray-400" title="The order the multis found are shown in">Sort by
+    <select data-sort class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-xs text-white">${
+      RANKS.map(x => `<option value="${x}"${x === settings.sort ? ' selected' : ''}>${x === 'ev' ? 'EV' : 'Lose chance'}</option>`).join('')}</select></label>`;
+  const head = `<div class="flex items-start justify-between gap-3 flex-wrap"><p class="text-xs text-gray-500 min-w-0 flex-1">${
+    out.results.length ? `The best ${out.results.length}` : 'No'} multi${out.results.length === 1 ? '' : 's'} from
     ${out.nLegs.toLocaleString()} legs at ${esc(bookLabel(out.book))} in ${scope}, ${out.basis === 'cal' ? 'calibrated' : 'model'} chances${
     sgm && out.scored ? ` · the best ${out.scored} assuming independent legs, priced again with the game's model` : ''}${
-    out.complete ? '' : ' · the search was cut short: the best found'} · ${new Date(out.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</p>`;
+    out.complete ? '' : ' · the search was cut short: the best found'} · ${new Date(out.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</p>${
+    out.results.length > 1 ? sortSel : ''}</div>`;
   if (!out.results.length) {
     const why = out.reason === 'few-groups' ? (sgm
       ? `Only ${out.groups} market${out.groups === 1 ? '' : 's'} or player${out.groups === 1 ? '' : 's'} with legs left in this game (one leg each): fewer than the ${s.n} legs asked for. Allow more markets or lower the min leg price.`
@@ -535,8 +577,10 @@ function renderNotes() {
   else if (poolFailed && !pool) $('status').textContent = 'Could not load the prices. Trying again shortly.';
   else $('status').textContent = '';
   $('method-note').textContent = 'Insurance multis from every selection the bookie prices, at its price when last checked (each leg shows how long ago: '
-    + 'check the price at the bookie before you bet). Ranked by the chance the insurance pays when the multi loses - at least the number chosen '
-    + 'win, but not all - among the multis whose total price reaches the minimum. A regular multi takes at most one leg a game, and its legs are '
+    + 'check the price at the bookie before you bet). The best by the least chance of losing the stake outright - fewer than the number chosen '
+    + 'win, so neither the multi nor the insurance pays - among the multis whose total price reaches the minimum; Sort by shows them by that or by EV. '
+    + 'With My Best Bets filters on, legs are only bets the Upcoming list shows under your Filters. '
+    + 'A regular multi takes at most one leg a game (of the games ticked), and its legs are '
     + "independent. Chances are the model's, or the calibrated ones when Filters judges by the calibrated edge. EV: the price times the chance "
     + "all win, plus the refund's worth times the chance the insurance pays, less the stake. Players are assumed to play: a leg voided at the "
     + "bookie changes the multi. A Same Game Multi takes one leg per market or player, and its legs are priced together with the game's model "
@@ -560,10 +604,23 @@ function bind() {
       settings.sportsOff = t.checked ? settings.sportsOff.filter(x => x !== t.dataset.sport) : [...settings.sportsOff, t.dataset.sport];
     } else if (t.dataset.market) {
       settings.marketsOff = t.checked ? settings.marketsOff.filter(x => x !== t.dataset.market) : [...settings.marketsOff, t.dataset.market];
+    } else if (t.dataset.game) {
+      const key = t.dataset.game;
+      if (settings.gamesOnly) settings.gamesOnly = t.checked ? [...settings.gamesOnly, key] : settings.gamesOnly.filter(x => x !== key);
+      else settings.gamesOff = t.checked ? settings.gamesOff.filter(x => x !== key) : [...settings.gamesOff, key];
     }
     readForm();
     if (t.id === 'mg-game') { locked.clear(); excluded.clear(); results = null; renderResults(); }
     renderOptions();
+    renderPoolNote();
+  });
+  $('mg-games-wrap').addEventListener('click', e => {
+    const b = e.target.closest('[data-games]');
+    if (!b) return;
+    settings.gamesOff = [];
+    settings.gamesOnly = b.dataset.games === 'none' ? [] : null;
+    saveSettings();
+    renderGames();
     renderPoolNote();
   });
   $('mg-kind').addEventListener('click', e => {
@@ -578,6 +635,14 @@ function bind() {
     renderKind();
     renderOptions();
     renderPoolNote();
+    renderResults();
+  });
+  $('mg-results').addEventListener('change', e => {
+    const sel = e.target.closest('[data-sort]');
+    if (!sel || !results?.results) return;
+    settings.sort = rankOf(sel.value) || 'lose';
+    saveSettings();
+    results.results.sort(comparer(settings.sort));
     renderResults();
   });
   $('mg-results').addEventListener('input', e => {

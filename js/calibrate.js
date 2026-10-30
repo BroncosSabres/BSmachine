@@ -144,18 +144,49 @@ export function realClose(r, ovr) {
 
 export const leafKey = r => `${r.sport}|${kindKey(r)}|${r.source ? sourceKey(r) : (String(r.market_id || '').startsWith('oddsapi:') ? 'book' : 'betfair')}`;
 
+// The fits learn from main lines and the alternates near them: within the
+// range of a main line its market had that the odds sync kept alternates to
+// until 2026-10-31 (betfair-api sync_odds_api now prices every one, for the
+// Multi Generator). That is the data the calibration was validated on; main
+// lines alone did worse out of sample (-8.6% against -2.5% at calibrated
+// edge > 0, as the alternates are most of the NFL line and total data), and
+// the far lines carry the bookmakers' tail margins, untested. Every
+// alternate is still judged by its market's fit.
+const FIT_ALT_RANGE = { nfl: { handicap: 10, total: 10 }, nhl: { handicap: 1.5, total: 1.5 } };
+const isAlternate = r => /:alternate_/.test(r.market_id || '');
+// A line's family: its game (the Odds API event in its market id), kind and side
+const familyOf = r => `${String(r.market_id).split(':')[1]}|${r.market_kind}|${r.side}`;
+
+// rows -> whether a row is in the fits: every selection but an alternate
+// further than FIT_ALT_RANGE from each of its market's main lines in rows
+// (a line move gives a market more than one); none there to tell: in
+export function inFits(rows) {
+  const mains = new Map();
+  for (const r of rows) {
+    if (isAlternate(r) || r.line == null || (r.market_kind !== 'handicap' && r.market_kind !== 'total')) continue;
+    const k = familyOf(r);
+    if (!mains.has(k)) mains.set(k, []);
+    mains.get(k).push(+r.line);
+  }
+  return r => {
+    if (!isAlternate(r)) return true;
+    const range = FIT_ALT_RANGE[r.sport]?.[r.market_kind], lines = mains.get(familyOf(r));
+    return range == null || !lines || lines.some(m => Math.abs(+r.line - m) <= range + 1e-9);
+  };
+}
+
 // Settled rows (safe-stake.js decodeRows) -> observations: one per decided
-// selection, at its average while it showed value (value: true) or else at
+// selection in the fits (inFits), at its average while it showed value (value: true) or else at
 // the close, the margin out by the close's overround. Both sides of a two-way
 // market whose overround is known at half weight (the pair is one result,
 // mirrored), every side of a 3-way at full. { key, sport, game, date, x:
 // features(lm, d), d, y, w, value, row }. atClose: every selection at the
 // close (the market-only fit of a fair closing price, close-model.js).
 export function observations(rows, { atClose = false } = {}) {
-  const ovr = overrounds(rows, 'close');
+  const ovr = overrounds(rows, 'close'), fits = inFits(rows);
   const out = [];
   for (const r of rows) {
-    if (r.win_frac == null || r.push_frac >= 1) continue;
+    if (r.win_frac == null || r.push_frac >= 1 || !fits(r)) continue;
     const value = !atClose && r.avg_back > 1 && r.avg_prob > 0 && r.avg_prob < 1;
     const st = value ? 'avg' : stageOf(r, 'close');
     const back = r[`${st}_back`], prob = r[`${st}_prob`];

@@ -3,9 +3,10 @@
 //
 // An insurance multi: n legs; it pays the multi's price when all n win, and
 // the stake back (a bonus bet, often capped) when at least k win but not all.
-// Multis are ranked by the chance the insurance pays when the multi loses,
-// P(k <= W <= n-1) / P(W <= n-1), W the number of legs that win, among those
-// whose total price reaches the minimum asked.
+// Multis are ranked by the chance of losing the stake outright - fewer than
+// k legs win, so neither the multi nor the insurance pays: P(W < k), W the
+// number of legs that win - lowest first, among those whose total price
+// reaches the minimum asked.
 //
 // A leg here is { id, group, price, p, sig }: group, at most one leg each
 // (the game, for a regular multi; a Same Game Multi's market family); price,
@@ -50,12 +51,13 @@ function chances(pAll, pIns) {
 }
 
 // What the refund is worth per unit staked: the stake back up to the cap, a
-// bonus bet counted at its value (bonusPct of face), cash in full.
-// { stake, cap, refund: 'bonus' | 'cash', bonusPct } as typed.
+// bonus bet counted at its value (bonusPct of face: (1 + edge) x (1 - 1 /
+// odds) where it is bet, so over 100 for a bettor with an edge at long odds),
+// cash in full. { stake, cap, refund: 'bonus' | 'cash', bonusPct } as typed.
 export function refundRate({ stake, cap, refund = 'bonus', bonusPct = 75 } = {}) {
   const s = +stake > 0 ? +stake : 1;
   const back = +cap > 0 ? Math.min(s, +cap) : s;
-  const worth = refund === 'cash' ? 1 : Math.min(100, Math.max(0, +bonusPct || 0)) / 100;
+  const worth = refund === 'cash' ? 1 : Math.max(0, +bonusPct || 0) / 100;
   return back / s * worth;
 }
 
@@ -63,12 +65,20 @@ export function refundRate({ stake, cap, refund = 'bonus', bonusPct = 75 } = {})
 // refund's worth when the insurance pays
 export const evOf = (price, m, rate) => price * m.pAll + rate * m.pIns - 1;
 
-const better = (a, b) => b.cond - a.cond || b.ev - a.ev;
+// What the searches look for: the least chance of losing the stake, ties to
+// the higher EV
+const better = (a, b) => a.pLose - b.pLose || b.ev - a.ev;
+
+// The orders the page can show results in (Sort by): 'lose', the chance of
+// losing the stake, lowest first (the searches' order), or 'ev', highest
+// first. Ties go to the other.
+export const RANKS = ['lose', 'ev'];
+export const comparer = by => (by === 'ev' ? (a, b) => b.ev - a.ev || a.pLose - b.pLose : better);
 
 // Per group, only the legs no other leg of it beats on both chance and price:
-// swapping one for a leg with a higher chance and price never lowers the
-// ranking (cond rises with every leg's chance) or the total price. Legs
-// sorted by chance, highest first.
+// swapping one for a leg with a higher chance and price never raises the
+// chance of losing the stake (at least k winning gets likelier with every
+// leg's chance) or lowers the total price. Legs sorted by chance, highest first.
 export function paretoGroups(legs) {
   const by = new Map();
   for (const l of legs) {
@@ -91,9 +101,10 @@ export function paretoGroups(legs) {
 // locked legs in every one, the total price at least minTotal. Exact
 // branch and bound over the groups: a branch is cut when even the highest
 // prices left can't reach minTotal, or when even the highest chances left
-// can't beat the top-th best so far (cond rises with every leg's chance, so
-// that is a bound). budget caps the nodes visited: complete is false when it
-// ran out (the best found so far). rate: refundRate, for the EV.
+// can't beat the top-th best so far (the chance of losing the stake falls
+// with every leg's chance, so that is a bound). budget caps the nodes
+// visited: complete is false when it ran out (the best found so far). rate:
+// refundRate, for the EV.
 // -> { results: [{ legs, price, pAll, pIns, pLose, cond, ev }], complete, nodes, groups }
 export function searchIndependent(legs, { n, k, minTotal = 1, top = 10, locked = [], rate = 0, budget = 2e6 } = {}) {
   const none = reason => ({ results: [], complete: true, nodes: 0, groups: 0, reason });
@@ -132,21 +143,22 @@ export function searchIndependent(legs, { n, k, minTotal = 1, top = 10, locked =
   const need = Math.log(minTotal) - 1e-9;
   const best = [];
   let nodes = 0, complete = true;
-  const floor = () => (best.length < top ? -Infinity : best[best.length - 1].cond);
-  // cond rises with every leg's chance, so the highest chances the last r
-  // legs could have bound it: the r highest of the groups left, and, to make
-  // up the price still needed (L), legs priced high enough - the j-th dearest
-  // of them at log price (L - (j-1) maxLog) / (r - j + 1) or more. The
-  // tighter of the two.
+  // The top-th best's chance of losing the stake: a branch must beat it
+  const toBeat = () => (best.length < top ? Infinity : best[best.length - 1].pLose);
+  // The chance of losing the stake falls with every leg's chance, so the
+  // highest chances the last r legs could have bound it from below: the r
+  // highest of the groups left, and, to make up the price still needed (L),
+  // legs priced high enough - the j-th dearest of them at log price
+  // (L - (j-1) maxLog) / (r - j + 1) or more. The tighter of the two.
   const bound = (dist, g, r, logP) => {
     let d = dist;
     for (let i = 0; i < r; i++) d = extend(d, sufP[g][i]);
-    const byChance = insuranceOf(d, k).cond;
+    const byChance = insuranceOf(d, k).pLose;
     const L = need - logP;
     if (!(L > 0)) return byChance;
     d = dist;
     for (let j = 1; j <= r; j++) d = extend(d, capAt(g, (L - (j - 1) * sufLegs[g].maxLog) / (r - j + 1)));
-    return Math.min(byChance, insuranceOf(d, k).cond);
+    return Math.max(byChance, insuranceOf(d, k).pLose);
   };
   // Multis that differ only in a leg's line (the same bets, by sig) count
   // once, at their best: the list is of different multis. A cut branch still
@@ -172,7 +184,7 @@ export function searchIndependent(legs, { n, k, minTotal = 1, top = 10, locked =
     if (++nodes > budget) { complete = false; return; }
     if (r === 0) { if (logP >= need) keep(chosen, dist, logP); return; }
     if (G - g < r || logP + sufLog[g][r] < need) return;
-    if (bound(dist, g, r, logP) <= floor()) return;
+    if (bound(dist, g, r, logP) >= toBeat()) return;
     for (const l of groups[g].legs) {
       const lp = Math.log(l.price);
       if (logP + lp + sufLog[g + 1][Math.min(r - 1, sufLog[g + 1].length - 1)] < need) continue;

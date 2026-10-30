@@ -1880,8 +1880,17 @@ function renderViewSwitch() {
     + item('recent', 'Recent');
 }
 
-// The Multi Generator's view of the page: the judge (its chances), the calibration, My bookies
-const multiCtx = () => ({ api, calib, judge: judgeBy(), prefs });
+// The bets the Upcoming list's filters pass - each market's switch and edge
+// range (by the judge), the odds range, the outlier rules - whatever the sport
+// pills, day, My Teams or one line per side say, by rowKey: the Multi
+// Generator's legs under "My Best Bets filters"
+const filteredKeys = () => new Set(bets.filter(notStarted).map(r => upcomingAt(r)).filter(passesFilters).map(rowKey));
+// The Multi Generator's view of the page: the judge (its chances), the
+// calibration, My bookies, and those bets (worked out when first asked for)
+function multiCtx() {
+  let keys = null;
+  return { api, calib, judge: judgeBy(), prefs, filtered: () => (keys ||= filteredKeys()) };
+}
 const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
   : view === 'multi' ? renderMulti(multiCtx()) : renderBets();
 
