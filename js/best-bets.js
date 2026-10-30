@@ -27,15 +27,17 @@
 // same filters as the upcoming ones. The Recent view (/api/best_bets/recent)
 // is the same bets once settled, from games today / in the last 3 days / in
 // the last week: what each returned, and the ROI against what the model
-// expected at kickoff. The Filters modal's "Most profitable"
+// expected at kickoff. The Multi Generator view (best-bets-multi.js) builds
+// insurance multis at one bookie from every selection priced
+// (/api/best_bets/pool). The Filters modal's "Most profitable"
 // sets each market from the settled bets (best-bets-optimise.js).
 import { BACKEND, apiUrl } from './api-config.js';
 import { supabase, getSession } from './supabase-client.js';
 import { involvesMyTeam, hasAnyTeams, loadMyTeams, MY_TEAMS_CHANGED } from './my-teams.js';
 import { openPlayerStats, STATS_SPORTS } from './player-stats-modal.js';
-import { SPORT_LABELS, SPORT_COLORS, esc, odds, pct, signedPct, signCls, wonCount,
+import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
          selectionText, bestBookHtml, bookPricesHtml, bookLabel, STAR, edgeAtPrice, usesBook, usedPrice, usedWarning, usedWarnHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
-         PROP_KINDS, isProp, outlierHtml, pickOutlierHtml } from './best-bets-shared.js';
+         PROP_KINDS, isProp, outlierHtml, pickOutlierHtml, sportTag, kickoffText } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
 import { openBooks } from './best-bets-books.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS, outlierBets } from './safe-stake.js';
@@ -50,6 +52,7 @@ import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
 import { loadCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint, commissionOf } from './calibrate-client.js';
+import { renderMulti, loadPool, poolStale } from './best-bets-multi.js';
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -77,7 +80,7 @@ let day = 'all';           // a local kickoff date 'YYYY-MM-DD' (upcoming view o
 let settled = null;        // settled selections as bets, for the stakes (null until loaded)
 let stakesFailed = false;
 let model = null;          // stakeModel over them at the current settings
-let view = 'upcoming';     // 'upcoming' | 'live' | 'recent'
+let view = 'upcoming';     // 'upcoming' | 'multi' | 'live' | 'recent'
 const stakePrefs = loadStakePrefs();
 
 // The filter settings (best-bets-filters.js): which markets, the edge each
@@ -244,16 +247,6 @@ async function api(path) {
 }
 
 // --- shared rendering -------------------------------------------------------
-
-function sportTag(s) {
-  return `<span class="text-[10px] font-bold tracking-wide" style="color:${SPORT_COLORS[s] || '#8892a4'}">${SPORT_LABELS[s] || esc(s)}</span>`;
-}
-
-function kickoffText(iso) {
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-}
 
 // The game's Multi Builder. NFL needs the week as well as the game.
 function builderUrl(r) {
@@ -1873,7 +1866,7 @@ async function loadResults() {
 
 // --- view switching ---------------------------------------------------------
 
-// Upcoming / Live / Recent, with how many bets are in play under the current filters
+// Upcoming / Multi Generator / Live / Recent, with how many bets are in play under the current filters
 function renderViewSwitch() {
   const n = liveData ? liveRows().length : null;
   const item = (key, label, extra = '') => `
@@ -1881,12 +1874,16 @@ function renderViewSwitch() {
             class="-mb-px pb-2 border-b-2 text-sm font-semibold flex items-center gap-1.5 transition-colors ${key === view
               ? 'border-amber-400 text-gray-100' : 'border-transparent text-gray-400 hover:text-gray-200'}">${label}${extra}</button>`;
   $('view-switch').innerHTML = item('upcoming', 'Upcoming')
+    + item('multi', 'Multi Generator')
     + item('live', 'Live', n ? `<span class="inline-flex items-center gap-1 rounded-full bg-red-500/15 text-red-300 px-1.5 text-[11px] tabular-nums">
         <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" aria-hidden="true"></span>${n}</span>` : '')
     + item('recent', 'Recent');
 }
 
-const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent() : renderBets();
+// The Multi Generator's view of the page: the judge (its chances), the calibration, My bookies
+const multiCtx = () => ({ api, calib, judge: judgeBy(), prefs });
+const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
+  : view === 'multi' ? renderMulti(multiCtx()) : renderBets();
 
 // --- filters ------------------------------------------------------------------
 
@@ -1926,22 +1923,26 @@ function renderHeads() {
 
 function render() {
   noteSeen(upcomingRows(), true);
-  const isLive = view === 'live', isRecent = view === 'recent', upcoming = !isLive && !isRecent;
+  const isLive = view === 'live', isRecent = view === 'recent', isMulti = view === 'multi', upcoming = view === 'upcoming';
   renderViewSwitch();
   renderTabs();
   $('bets-view').classList.toggle('hidden', !upcoming);
+  $('multi-view').classList.toggle('hidden', !isMulti);
   $('live-view').classList.toggle('hidden', !isLive);
   $('recent-view').classList.toggle('hidden', !isRecent);
+  // The Multi Generator has its own settings: the market tabs, sports, odds
+  // range and My bookies don't apply (Filters does: its Judge by)
+  for (const id of ['view-tabs', 'sport-pills', 'odds-wrap', 'books-btn']) $(id).classList.toggle('hidden', isMulti);
   $('risk-wrap').classList.toggle('hidden', !upcoming);
   $('bank-wrap').classList.toggle('hidden', !upcoming);
-  $('basis-wrap').classList.toggle('hidden', upcoming);
+  $('basis-wrap').classList.toggle('hidden', !isLive && !isRecent);
   $('sort-wrap').classList.toggle('hidden', !upcoming);
   $('live-sort-wrap').classList.toggle('hidden', !isLive);
   $('live-final-wrap').classList.toggle('hidden', !isLive);
   $('recent-sort-wrap').classList.toggle('hidden', !isRecent);
-  $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams());
+  $('my-teams-wrap').classList.toggle('hidden', !hasAnyTeams() || isMulti);
   renderHeads();
-  renderSportPills();
+  if (!isMulti) renderSportPills();   // its sports are the generator's own: the page's choice is kept
   renderDayFilter();
   renderView();
   renderTrackRecord();
@@ -1959,7 +1960,7 @@ function setTab(next) {
   render();
 }
 
-const VIEWS = ['upcoming', 'live', 'recent'];
+const VIEWS = ['upcoming', 'multi', 'live', 'recent'];
 function setView(next) {
   view = next;
   setParam('view', view);
@@ -1968,6 +1969,7 @@ function setView(next) {
   else scheduleLive();   // 30 s while Live is up, 2 min otherwise
   if (view === 'recent' && Date.now() - recentLoadedAt > RECENT_MS) loadRecent();
   else scheduleRecent();   // every RECENT_MS while Recent is up
+  if (view === 'multi' && poolStale()) loadPool(api);   // the generator's prices, once looked at
 }
 
 // The view switch, and Recent's "in play" link to Live

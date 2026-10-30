@@ -60,7 +60,7 @@
                 <span aria-hidden="true" class="text-amber-400">★</span>
                 My bookies <span id="books-summary" class="text-xs text-gray-400"></span>
               </button>
-              <div class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with odds in this range, both ends included, in every market. Leave an end blank for no limit.">Odds $
+              <div id="odds-wrap" class="flex items-center gap-1" role="group" aria-label="Odds range" title="Only selections with odds in this range, both ends included, in every market. Leave an end blank for no limit.">Odds $
                 <input id="odds-min" type="number" min="1" step="any" inputmode="decimal" placeholder="any" aria-label="Lowest odds"
                        class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 <span aria-hidden="true">–</span> $
@@ -169,6 +169,88 @@
                 </table>
               </div>
             </details>
+          </div>
+
+          <!-- Multi Generator: insurance multis built from every selection one bookie prices (best-bets-multi.js) -->
+          <div id="multi-view" class="hidden">
+            <form id="mg-form" class="space-y-3 text-sm text-gray-300" autocomplete="off" novalidate>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label class="flex items-center gap-1.5" title="The kind of multi to build. Insurance: the stake comes back (as a bonus bet, or cash) when enough legs win but not all.">Type
+                  <select id="mg-type" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                    <option value="insurance">Insurance</option>
+                  </select>
+                </label>
+                <div id="mg-kind" role="group" aria-label="Multi" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5"></div>
+                <label class="flex items-center gap-1.5" title="The bookie you'll place it with: legs are only the selections it prices, at its prices">Bookie
+                  <select id="mg-book" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white"></select>
+                </label>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label class="flex items-center gap-1.5">Legs
+                  <input id="mg-n" type="number" min="2" max="10" step="1" inputmode="numeric"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="The insurance pays when at least this many legs win but not all of them">Insurance if at least
+                  <input id="mg-k" type="number" min="1" max="9" step="1" inputmode="numeric"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums"> win
+                </label>
+                <label class="flex items-center gap-1.5" title="Each leg's price at the bookie, at least">Min leg $
+                  <input id="mg-min-leg" type="number" min="1" step="any" inputmode="decimal" placeholder="any"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="Each leg's price at the bookie, at most. Leave blank for no limit.">Max leg $
+                  <input id="mg-max-leg" type="number" min="1" step="any" inputmode="decimal" placeholder="any"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="The multi's total price, at least. A Same Game Multi's is the bookie's price as the model's correlation between its legs would make it.">Min total $
+                  <input id="mg-min-total" type="number" min="1" step="any" inputmode="decimal" placeholder="any"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label id="mg-until-wrap" class="flex items-center gap-1.5" title="Legs from games starting from now to the end of this day (your local time)">Games up to
+                  <select id="mg-until" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white"></select>
+                </label>
+                <div id="mg-sports" class="flex items-center gap-3"></div>
+                <label id="mg-game-wrap" class="hidden flex items-center gap-1.5 min-w-0">Game
+                  <select id="mg-game" class="min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white"></select>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer" title="Only legs with value: the model's (or the calibrated) edge at the average price across the bookies above zero, as the Upcoming list needs">
+                  <input id="mg-value" type="checkbox" class="accent-amber-400"> Value legs only
+                </label>
+              </div>
+              <details id="mg-markets-wrap" class="border border-gray-700 rounded-lg px-3 py-2">
+                <summary class="cursor-pointer select-none text-sm text-gray-200">Markets <span id="mg-markets-summary" class="text-xs text-gray-500"></span></summary>
+                <div id="mg-markets" class="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2"></div>
+              </details>
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label class="flex items-center gap-1.5" title="What you'll stake, for the refund cap">Stake $
+                  <input id="mg-stake" type="number" min="0" step="any" inputmode="decimal"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="The most the insurance gives back. Leave blank for the whole stake.">Refund up to $
+                  <input id="mg-cap" type="number" min="0" step="any" inputmode="decimal" placeholder="stake"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5">as
+                  <select id="mg-refund" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                    <option value="bonus">Bonus bet</option>
+                    <option value="cash">Cash</option>
+                  </select>
+                </label>
+                <label id="mg-bonus-wrap" class="flex items-center gap-1.5" title="What a bonus bet is worth to you, as a share of its face value: you don't get its stake back when it wins. Around 70–80% is typical, betting it at short odds less.">worth
+                  <input id="mg-bonus" type="number" min="0" max="100" step="any" inputmode="decimal"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">%
+                </label>
+              </div>
+              <div class="flex flex-wrap items-center gap-3">
+                <button id="mg-go" type="submit"
+                        class="px-4 py-1.5 rounded-md bg-amber-400 hover:bg-amber-300 text-gray-900 text-sm font-bold disabled:opacity-50 disabled:cursor-wait">Generate</button>
+                <span id="mg-pool-note" class="text-xs text-gray-500"></span>
+              </div>
+            </form>
+            <div id="mg-locks" class="mt-3"></div>
+            <div id="mg-results" class="mt-4 space-y-3"></div>
           </div>
 
           <!-- Live: tracked bets whose game has started, until they settle -->
