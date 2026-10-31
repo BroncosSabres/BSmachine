@@ -52,7 +52,7 @@ import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
 import { loadCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint, commissionOf } from './calibrate-client.js';
-import { renderMulti, loadPool, poolStale } from './best-bets-multi.js';
+import { renderMulti, loadPool, poolStale, multiType } from './best-bets-multi.js';
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -1885,11 +1885,34 @@ function renderViewSwitch() {
 // pills, day, My Teams or one line per side say, by rowKey: the Multi
 // Generator's legs under "My Best Bets filters"
 const filteredKeys = () => new Set(bets.filter(notStarted).map(r => upcomingAt(r)).filter(passesFilters).map(rowKey));
+// A leg's chance as the Stake column stakes on it at `price` (the Multi
+// Generator's system multis): judging by the calibrated or predicted-close
+// edge, its 90% low end; by the model, its edge cut to what settled bets like
+// it have proven. null when the column would stake nothing on it there.
+function stakeChance(r, price) {
+  const judge = judgeBy();
+  const at = { ...r, median: r.back, back: price };
+  if (judge === 'cal') {
+    const c = calib && calibrateBet(calib, at, { median: r.back, taken: price });
+    return c && c.bookEdgeLo > 0 ? c.lo : null;
+  }
+  if (judge === 'close') {
+    const lo = calib ? closeBet(calib, at, { median: r.back, taken: price })?.edgeLo : null;
+    return lo > 0 ? Math.min(0.999, (1 + lo) / price) : null;
+  }
+  if (!model) return null;
+  const s = stakeFor(liveBet(at), model);
+  return s.kelly ? Math.min(0.999, (1 + s.kelly.edge) / price) : null;
+}
 // The Multi Generator's view of the page: the judge (its chances), the
-// calibration, My bookies, and those bets (worked out when first asked for)
+// calibration, My bookies, and those bets (worked out when first asked for);
+// the stake settings and each leg's staking chance (system multis), and a
+// redraw for when its type changes what the page shows
 function multiCtx() {
   let keys = null;
-  return { api, calib, judge: judgeBy(), prefs, filtered: () => (keys ||= filteredKeys()) };
+  const judge = judgeBy();
+  return { api, calib, judge, prefs, filtered: () => (keys ||= filteredKeys()),
+           stake: stakePrefs, stakeReady: judge === 'model' ? !!model || stakesFailed : calib !== null, stakeChance, refresh: render };
 }
 const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
   : view === 'multi' ? renderMulti(multiCtx()) : renderBets();
@@ -1942,8 +1965,10 @@ function render() {
   // The Multi Generator has its own settings: the market tabs, sports, odds
   // range and My bookies don't apply (Filters does: its Judge by)
   for (const id of ['view-tabs', 'sport-pills', 'odds-wrap', 'books-btn']) $(id).classList.toggle('hidden', isMulti);
-  $('risk-wrap').classList.toggle('hidden', !upcoming);
-  $('bank-wrap').classList.toggle('hidden', !upcoming);
+  // The Multi Generator's system multis are staked from the bank and Risk level too
+  const staking = upcoming || (isMulti && multiType() === 'system');
+  $('risk-wrap').classList.toggle('hidden', !staking);
+  $('bank-wrap').classList.toggle('hidden', !staking);
   $('basis-wrap').classList.toggle('hidden', !isLive && !isRecent);
   $('sort-wrap').classList.toggle('hidden', !upcoming);
   $('live-sort-wrap').classList.toggle('hidden', !isLive);

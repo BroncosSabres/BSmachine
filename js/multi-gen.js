@@ -202,7 +202,7 @@ export function searchIndependent(legs, { n, k, minTotal = 1, top = 10, locked =
 // --- Same Game Multis -----------------------------------------------------------
 
 const popcount = x => { let c = 0; for (; x; x &= x - 1) c++; return c; };
-const binom = (n, r) => { let c = 1; for (let i = 1; i <= r; i++) c = c * (n - r + i) / i; return c; };
+export const binom = (n, r) => { let c = 1; for (let i = 1; i <= r; i++) c = c * (n - r + i) / i; return c; };
 
 // Insurance chances from joint chances: joint(mask) is the chance every leg
 // in the subset `mask` (bit i: leg i) wins. By inclusion-exclusion over the

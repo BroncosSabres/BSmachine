@@ -171,13 +171,15 @@
             </details>
           </div>
 
-          <!-- Multi Generator: insurance multis built from every selection one bookie prices (best-bets-multi.js) -->
+          <!-- Multi Generator: insurance multis, bonus bet combos and system multis built from every selection one bookie prices (best-bets-multi.js) -->
           <div id="multi-view" class="hidden">
             <form id="mg-form" class="space-y-3 text-sm text-gray-300" autocomplete="off" novalidate>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <label class="flex items-center gap-1.5" title="The kind of multi to build. Insurance: the stake comes back (as a bonus bet, or cash) when enough legs win but not all.">Type
+                <label class="flex items-center gap-1.5" title="The kind of multi to build. Insurance: the stake comes back (as a bonus bet, or cash) when enough legs win but not all. Bonus bet combos: a bonus split into equal bets on every combination of some legs, each at about the odds you want. System multi: every combination of N legs at each size (doubles, trebles, ...), staked for your bank.">Type
                   <select id="mg-type" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                     <option value="insurance">Insurance</option>
+                    <option value="combos">Bonus bet combos</option>
+                    <option value="system">System multi</option>
                   </select>
                 </label>
                 <div id="mg-kind" role="group" aria-label="Multi" class="flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5"></div>
@@ -186,11 +188,11 @@
                 </label>
               </div>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <label class="flex items-center gap-1.5">Legs
+                <label data-only="insurance" class="flex items-center gap-1.5">Legs
                   <input id="mg-n" type="number" min="2" max="10" step="1" inputmode="numeric"
                          class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 </label>
-                <label class="flex items-center gap-1.5" title="The insurance pays when at least this many legs win but not all of them">Insurance if at least
+                <label data-only="insurance" class="flex items-center gap-1.5" title="The insurance pays when at least this many legs win but not all of them">Insurance if at least
                   <input id="mg-k" type="number" min="1" max="9" step="1" inputmode="numeric"
                          class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums"> win
                 </label>
@@ -202,9 +204,48 @@
                   <input id="mg-max-leg" type="number" min="1" step="any" inputmode="decimal" placeholder="any"
                          class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 </label>
-                <label class="flex items-center gap-1.5" title="The multi's total price, at least. A Same Game Multi's is the bookie's price as the model's correlation between its legs would make it.">Min total $
+                <label data-only="insurance" class="flex items-center gap-1.5" title="The multi's total price, at least. A Same Game Multi's is the bookie's price as the model's correlation between its legs would make it.">Min total $
                   <input id="mg-min-total" type="number" min="1" step="any" inputmode="decimal" placeholder="any"
                          class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+              </div>
+              <div data-only="combos" class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label class="flex items-center gap-1.5" title="The bonus bets to use, split evenly over the combos">Bonus $
+                  <input id="mg-bonus-total" type="number" min="0" step="any" inputmode="decimal"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="About how many bets to split it into: for each number of legs per combo, the number of legs whose combinations come closest">in about
+                  <input id="mg-bets" type="number" min="1" max="200" step="1" inputmode="numeric"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums"> bets
+                </label>
+                <label class="flex items-center gap-1.5" title="Legs in each combo. Any: every number from 2 to 6 is tried, and the best of each shown">Legs per combo
+                  <select id="mg-per" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
+                    <option value="any">Any</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                  </select>
+                </label>
+                <label class="flex items-center gap-1.5" title="Every combo's price has to be within this much of the target (from the target ÷ (1 + it) to the target × (1 + it))">Combo odds $
+                  <input id="mg-target" type="number" min="1" step="any" inputmode="decimal"
+                         class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums"> ±
+                  <input id="mg-tol" type="number" min="0" step="any" inputmode="decimal"
+                         class="w-12 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">%
+                  <span id="mg-window" class="text-xs text-gray-500 tabular-nums"></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer" title="Let a combo take legs of the same game: the bookie then prices those legs as a Same Game Multi inside it. They are priced at the model's correlation (an estimate of the bookie's price). Some bookies won't take these.">
+                  <input id="mg-same" type="checkbox" class="accent-amber-400"> Same-game legs in a combo
+                </label>
+              </div>
+              <div data-only="system" class="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <label class="flex items-center gap-1.5" title="How many legs: one a game">Legs
+                  <input id="mg-sys-n" type="number" min="2" max="10" step="1" inputmode="numeric"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
+                </label>
+                <label class="flex items-center gap-1.5" title="The smallest combos to bet: 1 for singles, 2 for doubles and up. Every size from it to all the legs is staked as Kelly says (some may get nothing).">Sizes from
+                  <input id="mg-sys-min" type="number" min="1" max="10" step="1" inputmode="numeric"
+                         class="w-14 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums"> up
+                </label>
+                <label class="flex items-center gap-1.5" title="Leave blank for stakes from your bank and Risk level (top of the page). Or type an amount to spend: it is split over the sizes in the same proportions.">Spend $
+                  <input id="mg-spend" type="number" min="0" step="any" inputmode="decimal" placeholder="Kelly"
+                         class="w-20 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
                 </label>
               </div>
               <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -235,7 +276,7 @@
                 <summary class="cursor-pointer select-none text-sm text-gray-200">Markets <span id="mg-markets-summary" class="text-xs text-gray-500"></span></summary>
                 <div id="mg-markets" class="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-2"></div>
               </details>
-              <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div data-only="insurance" class="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label class="flex items-center gap-1.5" title="What you'll stake, for the refund cap">Stake $
                   <input id="mg-stake" type="number" min="0" step="any" inputmode="decimal"
                          class="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">

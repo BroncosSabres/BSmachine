@@ -93,6 +93,31 @@ export function legOf(sport, gs, r) {
   return null;
 }
 
+// A pool row's family by the row alone - 'margin', 'total' or 'player:<id>',
+// as legOf would make it - or null where legOf never makes the row a leg. The
+// Multi Generator's combos group legs by it before any game's model is in;
+// legOf can still say no once it is (a player not active, a line past what
+// the model prices).
+export function familyOf(sport, r) {
+  if (!ENGINES[sport]) return null;
+  const halfPoint = r.line != null && Math.abs(r.line * 2) % 2 === 1;
+  const player = r.player_id != null ? `player:${r.player_id}` : null;
+  const propKind = PROP_LEGS[sport][r.market_kind];
+  if (propKind) {
+    const under = r.side === 'under';
+    return halfPoint && (r.side === 'over' || (under && sport === 'nfl' && NFL_UNDERS.has(propKind))) ? player : null;
+  }
+  if (r.market_kind === 'anytime_scorer' || r.market_kind === 'multi_scorer') return player;
+  if (!['home', 'away', 'over', 'under'].includes(r.side)) return null;
+  const caps = LINE_CAPS[sport];
+  if (r.market_kind === 'match_odds') return r.three_way ? null : 'margin';
+  if (r.market_kind === 'handicap') return halfPoint && Math.abs(r.line) <= caps.margin ? 'margin' : null;
+  if (r.market_kind === 'total' && !/:reg$/.test(r.market_id || '')) {
+    return halfPoint && r.line > 0 && r.line + 0.5 <= caps.total ? 'total' : null;
+  }
+  return null;
+}
+
 // The chance every leg in `legs` (legOf's, one per family) wins, or null when
 // the engine can't price them (no bins; yards legs without the yards model)
 export function jointProb(sport, gs, legs) {
