@@ -36,7 +36,7 @@ import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, 
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
-import { loadCalibration, calibrateBet, closeBet } from './calibrate-client.js';
+import { loadCalibration, cachedCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, outlierBet, outlierBets, rowWindow, windowBet, OUTLIER_CUTS,
          RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
@@ -748,10 +748,17 @@ document.addEventListener('keydown', e => {
 });
 
 // One row per sport and market: its best-supported rule, whatever Sport and
-// Market are set to. Only the stage, count, odds range and risk change it.
+// Market are set to. Kept until the bets behind it change (the stage and price
+// they are read at, and which rows: count, odds, period, My filters and the
+// edge they judge by all pick those) or the risk does.
+const rowIds = new WeakMap();   // decoded row -> a number for the key
+let nextRowId = 0;
 function renderBestRules(base) {
-  const key = [$('f-stage').value, basis(), $('f-count').value, $('f-odds-min').value, $('f-odds-max').value, stakePrefs.risk, raw.length,
-               mine() && JSON.stringify([prefs.markets, prefs.odds])].join('|');
+  const ids = base.map(b => {
+    if (!rowIds.has(b.row)) rowIds.set(b.row, nextRowId++);
+    return rowIds.get(b.row);
+  });
+  const key = [$('f-stage').value, basis(), stakePrefs.risk, ids.join(',')].join('|');
   if (bestCache.key !== key) {
     const rows = [...new Set(base.map(b => b.group))].sort().map(g => {
       const bets = base.filter(b => b.group === g), pos = bets.filter(b => b.edge >= 0), best = bestRule(bets);
@@ -1049,15 +1056,29 @@ const VERDICTS = {
   thin: ['Too few to judge', 'text-gray-500', `Under ${MIN_JUDGE_BETS} settled selections or ${MIN_JUDGE_GAMES} games: it leans on its sport's fit.`],
 };
 
+let calibBasis = null;   // the price basis calib is for, or is being fitted for
+
 function startCalibration() {
-  const b = basis();
+  const b = calibBasis = basis();
   loadCalibration(raw, { version: dataVersion, basis: b, prefs }).then(c => {
-    if (b !== basis()) return;
-    calib = c || false;
-    keepOptimised();   // judging by the calibrated edge, it waited for this
-    filtersDataReady();
+    if (b !== basis()) return;   // the basis changed meanwhile: its own fit is under way
+    applyCalibration(c);
     render();
   });
+}
+
+function applyCalibration(c) {
+  calib = c || false;
+  keepOptimised();   // judging by the calibrated edge, it waited for this
+  filtersDataReady();
+}
+
+// The calibration again when the basis has changed since it was started,
+// whether it has landed or is still being fitted (once the page has data)
+function ensureCalibration() {
+  if (calibBasis === null || calibBasis === basis()) return;
+  calib = null;
+  startCalibration();
 }
 
 // Kept on "Most profitable" (prefs.autoOpt): the filters re-fitted to the
@@ -1389,7 +1410,10 @@ function runningChart(canvas, lines, y = 'units') {
   const start = dayMs(days[0]) - DAY_MS;
   const datasets = lines.map(({ label, color, width, bets }) => {
     const byDay = new Map();
-    for (const b of bets) byDay.set(b.date, [...(byDay.get(b.date) || []), b]);
+    for (const b of bets) {
+      if (!byDay.has(b.date)) byDay.set(b.date, []);
+      byDay.get(b.date).push(b);
+    }
     let run = 0, n = 0;
     const data = [{ x: start, y: 0 }];
     for (const d of days) {
@@ -1494,16 +1518,32 @@ function outRoi(st) {
   return `<span class="font-bold ${signCls(st.roi)}">${signedPct(st.roi, 0)}</span>${st.roiCI ? `<span class="block text-[10px] text-gray-500">${range(st.roiCI)}</span>` : ''}`;
 }
 
+let outKey = null;   // what the outlier tables on show were drawn from
+
 function renderOutliers() {
+  // Drawn again only when something they read has changed: they are the
+  // page's slowest tables, and most controls (stage, price, odds, risk, the
+  // grid, the charts) don't touch them. The data and fits are set once.
+  const key = [$('f-period').value, new Date().toDateString(), $('f-sport').value, $('f-market').value, mine(),
+               JSON.stringify(outPrefs()), $('out-cut').value, outSel].join('|');
+  if (key === outKey) return;
+  outKey = key;
   const when = periodTest();
-  const rows = raw.filter(r => sourceKey(r) === 'book' && (!when || when(r)));
-  const groups = [...new Set([...rows.filter(r => rowWindow(r)).map(r => r.group), ...Object.keys(fits.markets)])].sort();
+  // Only rows that ever showed a gap: the rest have no window, so they are no
+  // bet in any of the tables below, which go over these rows some 50 times
+  const rows = raw.filter(r => sourceKey(r) === 'book' && (!when || when(r)) && rowWindow(r));
+  const byGroup = new Map();
+  for (const r of rows) {
+    if (!byGroup.has(r.group)) byGroup.set(r.group, []);
+    byGroup.get(r.group).push(r);
+  }
+  const groups = [...new Set([...byGroup.keys(), ...Object.keys(fits.markets)])].sort();
   const mm = marketMode();
   $('out-sub').textContent = 'One bookie well above the median of the others, bet at that price averaged while the gap was '
     + `${mm ? `at least ${mine() ? 'what your Filters set' : "its class's threshold"} (each market and edge class apart)` : `${gapText(+$('out-cut').value)} or more`}. `
     + 'Select a market to see it by gap, or a cell to list its bets.';
   outLists = {};
-  if (!rows.some(r => rowWindow(r))) {
+  if (!rows.length) {
     $('out-markets').innerHTML = '<tr><td colspan="9" class="px-2 py-8 text-center text-sm text-gray-500">No outlier prices recorded yet.</td></tr>';
     $('out-gaps').innerHTML = '';
     $('out-gap-title').textContent = '';
@@ -1515,7 +1555,7 @@ function renderOutliers() {
   const current = $('f-sport').value !== 'all' && $('f-market').value !== 'all' ? `${$('f-sport').value}|${$('f-market').value}` : null;
   $('out-markets').innerHTML = groups.map(g => {
     const m = fits.markets[g]?.all;
-    const mineRows = rows.filter(r => r.group === g);
+    const mineRows = byGroup.get(g) || [];
     // The bets shown: under each class's threshold (the union), or every class at the gap chosen
     const bets = mm ? mineRows.map(r => { const k = windowKeys(outPrefs(), g, rowWindow(r), fits); return k.length ? windowBet(r, k) : null; }).filter(Boolean)
       : outBets(mineRows, +$('out-cut').value);
@@ -1742,7 +1782,7 @@ $('f-price').value = prefs.basis;
 $('f-price').addEventListener('change', () => {
   prefs = { ...prefs, basis: basis() };
   savePrefs(prefs);
-  if (calib !== null) { calib = null; startCalibration(); }
+  ensureCalibration();
   keepOptimised();
   render();
 });
@@ -1892,14 +1932,24 @@ async function init() {
   $('gate').innerHTML = '';
   $('content').classList.remove('hidden');
   keepOptimised();
+  // This browser's calibration when the data hasn't changed since, so the page
+  // renders once, with it; else it is fitted in a Worker, started first so it
+  // runs while the page renders
+  const hit = cachedCalibration(dataVersion, basis());
+  if (hit) {
+    calibBasis = basis();
+    applyCalibration(hit);
+  } else {
+    startCalibration();
+  }
   render();
-  startCalibration();
   // The account's filters and price basis, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
     prefs = remote;
     keepOptimised();
     $('f-price').value = prefs.basis;
+    ensureCalibration();
     render();
   }).catch(() => {});
 }

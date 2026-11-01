@@ -20,6 +20,21 @@
     <meta name="robots" content="noindex">
     <title>Best Bets</title>
     <link rel="stylesheet" href="/css/style.css">
+    <!-- The page's modules fetched up front: supabase-js and its own imports are otherwise found
+         four levels down, a round trip each (keep the versions in step with supabase-client.js) -->
+    <link rel="modulepreload" href="/js/best-bets.js">
+    <link rel="modulepreload" href="/js/supabase-client.js">
+    <link rel="modulepreload" href="/js/calibrate-client.js">
+    <link rel="modulepreload" href="/js/close-model.js">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/functions-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/postgrest-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/realtime-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/storage-js@2.117.3/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/tslib@2.8.1/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/phoenix@0.4.5/+esm">
+    <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/iceberg-js@0.8.1/+esm">
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
   <body class="bg-gray-900 text-white">

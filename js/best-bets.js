@@ -51,8 +51,11 @@ import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePoints
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
-import { loadCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint, commissionOf } from './calibrate-client.js';
-import { renderMulti, loadPool, poolStale, multiType } from './best-bets-multi.js';
+import { loadCalibration, cachedCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint,
+         commissionOf } from './calibrate-client.js';
+// The Multi Generator (best-bets-multi.js and the engines it imports, a third
+// of the page's code) is loaded once the page is up, or when its view is
+// opened first (loadMulti)
 
 const TABS = [
   { key: 'all',     label: 'All',          kinds: ['match_odds', 'handicap', 'anytime_scorer', 'multi_scorer', 'total', ...PROP_KINDS] },
@@ -230,9 +233,9 @@ const showRestricted = () => gateCard('Restricted', "This page is restricted. Yo
 // and the Live poll outlives that. getSession hands back a refreshed one once
 // it has expired. A 401 refreshes and retries once before the sign-in card,
 // since the backend also answers 401 when Supabase's token check blips.
-async function api(path) {
+async function api(path, known = null) {
   const call = session => fetch(`${BACKEND}/${path}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
-  let session = await getSession();
+  let session = known || await getSession();   // known: just read, so the request goes out at once
   if (!session) { showSignIn(); return null; }
   let res = await call(session);
   if (res.status === 401) {
@@ -245,6 +248,17 @@ async function api(path) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+// A request sent ahead, before the list is in (the backend builds each in
+// its own time, so the page needn't wait for one to ask for the next): ->
+// its data, or null for anything but a 200. Nothing else: its loader takes
+// it, or asks again through api(), which handles signing in and access.
+function prefetch(path, session) {
+  return fetch(`${BACKEND}/${path}`, { headers: { Authorization: `Bearer ${session.access_token}` } })
+    .then(res => (res.ok ? res.json() : null)).catch(() => null);
+}
+// The prefetched data, else api(path) as usual
+const fetched = async (pre, path) => (pre && await pre) || api(path);
 
 // --- shared rendering -------------------------------------------------------
 
@@ -567,9 +581,10 @@ function buildModel() {
 
 let settledVersion = null;  // /api/best_bets/analysis version (what the calibration is cached by)
 
-async function loadStakes() {
+async function loadStakes(pre) {
+  let landed = false;
   try {
-    const data = await api('best_bets/analysis');
+    const data = await fetched(pre, 'best_bets/analysis');
     if (!data) return;
     settledRows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
     settledVersion = data.version ?? null;
@@ -578,26 +593,48 @@ async function loadStakes() {
     keepOptimised();
     buildModel();
     filtersDataReady(fits);
-    startCalibration();
+    landed = startCalibration();
   } catch {
     stakesFailed = true;
   }
+  // With this browser's calibration in already, the whole page at once (as
+  // its own redraw would have, straight after)
+  if (landed) { render(); return; }
   renderView();
   renderTrackRecord();
 }
 
-// The calibration (calibrate-client.js): from this browser's cache, else
-// fitted in a Worker; the page redraws when it lands
+let calibBasis = null;   // the price basis calib is for, or is being fitted for
+
+// The calibration (calibrate-client.js): from this browser's cache, applied
+// at once (-> true: the caller redraws), else fitted in a Worker, and the page
+// redraws when it lands
 function startCalibration() {
-  if (!settledRows) return;
-  const basisNow = prefs.basis;
+  if (!settledRows) return false;
+  const basisNow = calibBasis = prefs.basis;
+  const hit = cachedCalibration(settledVersion, basisNow);
+  if (hit) {
+    applyCalibration(hit);
+    return true;
+  }
   loadCalibration(settledRows, { version: settledVersion, basis: basisNow, prefs }).then(c => {
-    if (basisNow !== prefs.basis) return;
-    calib = c || false;
-    keepOptimised();   // judging by the calibrated edge, it waited for this
-    filtersDataReady();
+    if (basisNow !== prefs.basis) return;   // the basis changed meanwhile: its own fit is under way
+    applyCalibration(c);
     render();
   });
+  return false;
+}
+
+function applyCalibration(c) {
+  calib = c || false;
+  keepOptimised();   // judging by the calibrated edge, it waited for this
+  filtersDataReady();
+}
+
+// The calibration again when the price basis has changed since it was
+// started (the account's filters arriving), whether it has landed or not
+function ensureCalibration() {
+  if (calibBasis !== null && calibBasis !== prefs.basis) startCalibration();
 }
 
 // Kept on "Most profitable" (prefs.autoOpt): the filters re-fitted to the
@@ -1440,10 +1477,10 @@ function scheduleLive() {
   liveTimer = setTimeout(loadLive, view === 'live' && !document.hidden ? LIVE_MS : LIVE_IDLE_MS);
 }
 
-async function loadLive() {
+async function loadLive(pre) {
   clearTimeout(liveTimer);
   try {
-    const data = await api('best_bets/live');
+    const data = await fetched(pre, 'best_bets/live');
     if (!data) return;   // signed out / restricted: the gate card is up
     liveData = data;
     liveFailed = false;
@@ -1676,10 +1713,10 @@ function scheduleRecent() {
   if (view === 'recent' && !document.hidden) recentTimer = setTimeout(loadRecent, RECENT_MS);
 }
 
-async function loadRecent() {
+async function loadRecent(pre) {
   clearTimeout(recentTimer);
   try {
-    const data = await api('best_bets/recent');
+    const data = await fetched(pre, 'best_bets/recent');
     if (!data) return;   // signed out / restricted: the gate card is up
     recentData = data;
     recentFailed = false;
@@ -1857,9 +1894,9 @@ function renderTrackRecord() {
 }
 
 // The tracked picks: the track record's pending count
-async function loadResults() {
+async function loadResults(pre) {
   try {
-    results = await api('best_bets/results');
+    results = await fetched(pre, 'best_bets/results');
   } catch { /* the track record goes without them */ }
   renderTrackRecord();
 }
@@ -1915,7 +1952,19 @@ function multiCtx() {
            stake: stakePrefs, stakeReady: judge === 'model' ? !!model || stakesFailed : calib !== null, stakeChance, refresh: render };
 }
 const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
-  : view === 'multi' ? renderMulti(multiCtx()) : renderBets();
+  : view === 'multi' ? (multi ? multi.renderMulti(multiCtx()) : loadMulti()) : renderBets();
+
+let multi = null;          // best-bets-multi.js, once loaded
+let multiLoading = null;
+// Loads the Multi Generator, and draws it if its view is up by then (the view
+// is shown once it can be drawn)
+function loadMulti() {
+  multiLoading ??= import('./best-bets-multi.js').then(m => {
+    multi = m;
+    if (view === 'multi') render();
+  });
+  return multiLoading;
+}
 
 // --- filters ------------------------------------------------------------------
 
@@ -1959,14 +2008,14 @@ function render() {
   renderViewSwitch();
   renderTabs();
   $('bets-view').classList.toggle('hidden', !upcoming);
-  $('multi-view').classList.toggle('hidden', !isMulti);
+  $('multi-view').classList.toggle('hidden', !isMulti || !multi);
   $('live-view').classList.toggle('hidden', !isLive);
   $('recent-view').classList.toggle('hidden', !isRecent);
   // The Multi Generator has its own settings: the market tabs, sports, odds
   // range and My bookies don't apply (Filters does: its Judge by)
   for (const id of ['view-tabs', 'sport-pills', 'odds-wrap', 'books-btn']) $(id).classList.toggle('hidden', isMulti);
   // The Multi Generator's system multis are staked from the bank and Risk level too
-  const staking = upcoming || (isMulti && multiType() === 'system');
+  const staking = upcoming || (isMulti && multi?.multiType() === 'system');
   $('risk-wrap').classList.toggle('hidden', !staking);
   $('bank-wrap').classList.toggle('hidden', !staking);
   $('basis-wrap').classList.toggle('hidden', !isLive && !isRecent);
@@ -2003,7 +2052,7 @@ function setView(next) {
   else scheduleLive();   // 30 s while Live is up, 2 min otherwise
   if (view === 'recent' && Date.now() - recentLoadedAt > RECENT_MS) loadRecent();
   else scheduleRecent();   // every RECENT_MS while Recent is up
-  if (view === 'multi' && poolStale()) loadPool(api);   // the generator's prices, once looked at
+  if (view === 'multi' && multi?.poolStale()) multi.loadPool(api);   // the generator's prices, once looked at
 }
 
 // The view switch, and Recent's "in play" link to Live
@@ -2207,9 +2256,16 @@ for (const id of ['live-unlisted', 'recent-unlisted']) {
 }
 
 async function init() {
+  // The list first, then everything else the page opens with, asked for at
+  // once rather than after the list is in (prefetch)
+  const session = await getSession().catch(() => null);   // a failure: api() reads it again, inside the try below
+  const list = api('best_bets', session);
+  const urlView = new URLSearchParams(location.search).get('view');
+  const ahead = !session ? {} : Object.fromEntries(['results', 'analysis', 'live', ...(urlView === 'recent' ? ['recent'] : [])]
+    .map(p => [p, prefetch(`best_bets/${p}`, session)]));
   let data;
   try {
-    data = await api('best_bets');
+    data = await list;
   } catch {
     gateCard('Could not load Best Bets', 'Try again in a moment.');
     return;
@@ -2230,10 +2286,10 @@ async function init() {
   view = VIEWS.includes(wantedView) ? wantedView : 'upcoming';
   render();
   scheduleBets();  // and keeps itself current
-  loadResults();   // the track record fills in when it arrives
-  loadStakes();    // and the Stake column
-  loadLive();      // and the bets in play (the Live tab's count too)
-  if (view === 'recent') loadRecent();   // the settled ones only once looked at
+  loadResults(ahead.results);   // the track record fills in when it arrives
+  loadStakes(ahead.analysis);   // and the Stake column
+  loadLive(ahead.live);         // and the bets in play (the Live tab's count too)
+  if (view === 'recent') loadRecent(ahead.recent);   // the settled ones only once looked at
   // The account's filters, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;
@@ -2241,8 +2297,12 @@ async function init() {
     keepOptimised();
     applyPrefs();
     buildModel();
+    ensureCalibration();   // a price basis of its own: the calibration for it
     render();
   }).catch(() => {});
+  // The Multi Generator's code once the page is idle, so it opens at once later
+  if ('requestIdleCallback' in window) requestIdleCallback(() => loadMulti(), { timeout: 10_000 });
+  else setTimeout(loadMulti, 2000);
 }
 
 init();

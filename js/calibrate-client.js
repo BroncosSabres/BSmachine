@@ -14,6 +14,11 @@ function cached(version, basis) {
   } catch { return null; }
 }
 
+// This browser's cached calibration for the data version and basis, or null,
+// read at once: a page can use it in its first render rather than render
+// again a moment later when loadCalibration's promise settles
+export const cachedCalibration = (version, basis = 'book') => (version && cached(version, basis)) || null;
+
 // -> Promise of the worker's result ({ hierarchy, markets, all, ... }), or
 // null when it can't be had (no Worker, or it failed)
 export function loadCalibration(rows, { version, basis = 'book', prefs = null } = {}) {

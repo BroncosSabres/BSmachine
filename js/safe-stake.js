@@ -51,7 +51,10 @@ export const propKey = r => r.market_id == null ? null
 export function decodeRows(data) {
   const cols = data.columns;
   return data.rows.map(row => {
-    const r = Object.fromEntries(cols.map((c, i) => [c, row[i]]));
+    // A plain loop: Object.fromEntries over a pair per column took four times
+    // as long on the analysis endpoint's ~14k rows
+    const r = {};
+    for (let i = 0; i < cols.length; i++) r[cols[i]] = row[i];
     r.kind = kindKey(r);
     r.group = `${r.sport}|${r.kind}`;
     return r;
