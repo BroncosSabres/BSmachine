@@ -90,7 +90,7 @@
                   <option value="close">Close</option>
                 </select>
               </label>
-              <label id="risk-wrap" class="flex items-center gap-1.5" title="How cautious the Stake column is. Low: 99% sure of the edge, under 1% chance of ever losing a quarter of the bank. Medium: 95% sure, under 1% chance of ever losing half. High: 80% sure, under 5% chance of ever losing half.">Risk
+              <label id="risk-wrap" class="flex items-center gap-1.5" title="How cautious the Stake column is. Low: 99% sure of the edge (less staked at 97.5% or 95%), under 1% chance of ever losing a quarter of the bank. Medium: 95% sure (less at 90% or 85%), under 1% chance of ever losing half. High: 80% sure (less at 75% or 70%), under 5% chance of ever losing half.">Risk
                 <select id="stake-risk" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
@@ -156,7 +156,7 @@
                     <th id="th-odds" class="px-2 py-2 text-right font-semibold">Odds</th>
                     <th class="hidden sm:table-cell px-2 py-2 text-right font-semibold" title="The model's chance, and the fair odds that makes">Model</th>
                     <th class="px-2 py-2 text-right font-semibold" title="Top: the expected return per unit staked at the average (median) price across the bookies, after commission. A bet is only listed when this is positive, and the edge filters read it. Below: the same at the best price any one bookie offers (Betfair markets: the exchange's, so the same).">Edge</th>
-                    <th class="px-2 py-2 text-right font-semibold" title="How much of the bank to stake, from how settled bets like it have done: the same market (or all markets), an edge no higher, odds from half its own to the next step up. Nothing until those bets have proven a profit at the Risk level chosen. Hover a stake for where it comes from.">Stake</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="How much of the bank to stake, from how settled bets like it have done: the same market, in the same edge band (as the analysis page bands them). The Risk level's fraction of Kelly on the low end of their return, smaller fractions when only a less sure low end is a profit, nothing until one is. Hover a stake for where it comes from.">Stake</th>
                   </tr>
                 </thead>
                 <tbody id="bets-body"></tbody>

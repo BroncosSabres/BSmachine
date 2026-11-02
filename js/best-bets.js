@@ -40,7 +40,7 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml, sportTag, kickoffText } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
 import { openBooks } from './best-bets-books.js';
-import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, RISK_LEVELS, outlierBets } from './safe-stake.js';
+import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
@@ -660,11 +660,14 @@ function stakeTitle(s) {
     : `Stake ${pct(s.frac, 2)} of the bank${s.dollars != null ? ` (${money(s.dollars)})` : ''}`,
   ];
   if (s.thin) lines.push(`⚠ Not proven yet: this rests on ${s.used.stats.n} bet${s.used.stats.n === 1 ? '' : 's'} over ${s.used.stats.games} game${s.used.stats.games === 1 ? '' : 's'}. `
-    + `A pool is called proven at ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games; with fewer, its range runs narrower than it should, so the stake is less sure than it looks.`);
-  if (s.warning) lines.push("⚠ This market's own bets have lost so far (not proven either way): the stake comes from all markets.");
-  if (s.path.length) lines.push('', 'Bets like this (edge no higher, odds from half to the next step up), its own market first:',
-    ...s.path.map(t => `${t === s.used ? '→' : '·'} ${binText(t)}`));
-  if (s.kelly) lines.push('', `${s.kelly.k.toFixed(2)} × Kelly on a ${signedPct(s.kelly.edge)} edge (full Kelly ${pct(s.kelly.kelly)})`,
+    + `A band is called proven at ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games; with fewer, its range runs narrower than it should, so the stake is less sure than it looks.`);
+  const band = s.used || s.path[0];
+  if (band) {
+    lines.push('', "Bets like this (this market's settled bets in its edge band, as the analysis page and Most profitable band them):", `→ ${binText(band)}`);
+    if (band.stats.low != null) lines.push(...tierLows(band.stats, risk).map(t =>
+      `${t.conf === s.kelly?.conf ? '→' : '·'} ${+(t.conf * 100).toFixed(1)}% sure: low end ${signedPct(t.low)}${t.low > 0 ? `, ${t.k.toFixed(2)} × Kelly` : ''}`));
+  }
+  if (s.kelly) lines.push('', `${s.kelly.k.toFixed(2)} × Kelly on a ${signedPct(s.kelly.edge)} edge (full Kelly ${pct(s.kelly.kelly)}), the biggest stake of those clear of zero`,
     `About ${s.kelly.betsToSure.toLocaleString()} bets at this edge to be 99% sure of a profit`);
   lines.push('', `${risk.label} risk: ${risk.text}.`);
   return lines.join('\n');
@@ -705,7 +708,7 @@ function stakeCell(r) {
   if (s.reason === 'behind') return td('<span class="text-[11px] text-red-400/80">Losing</span>', title);
   if (s.reason) return td('<span class="text-gray-500">–</span>', title);
   const share = pct(s.frac, s.frac < 0.01 ? 2 : 1);
-  const warn = s.warning || s.thin ? `<span class="text-amber-400 mr-1" aria-label="${s.thin ? 'not proven yet' : 'warning'}">⚠</span>` : '';
+  const warn = s.thin ? '<span class="text-amber-400 mr-1" aria-label="not proven yet">⚠</span>' : '';
   return td(s.dollars != null
     ? `<div class="font-bold text-gray-100">${warn}${money(s.dollars)}</div><div class="text-[11px] text-gray-500">${share}</div>`
     : `<span class="font-bold text-gray-100">${warn}${share}</span>`, title);
@@ -907,9 +910,9 @@ function renderBets() {
     + "from the gap at which its settled outlier bets have made the most profit, and none where they have lost or are still too few to judge; "
     + 'Custom counts the gaps you choose. Outliers are listed even without a model edge or the market switched on, within the odds '
     + 'range; Filters → Outliers only lists nothing else.';
-  const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (same market, '
-    + 'edge no higher, odds from half its own to the next step up), '
-    + 'falling back to all markets where that market has not proven anything either way. None until that low end is a profit, and none past the edge or odds '
+  const stakeNote = ' Stake: a share of the bank, sized off the low end of what settled bets like it have returned (its market\'s bets '
+    + 'in the same edge band, as the analysis page bands them): the Risk level\'s fraction of Kelly on the low end at its own confidence, '
+    + 'smaller fractions on the low end at two less sure levels when only those are a profit. None until one of them is, and none past the edge or odds '
     + `where bets have turned to losing again (outliers). ⚠ marks a stake resting on fewer than ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games: not proven yet.`;
   const exchangeNote = 'Other bookie odds are the best back price on the Betfair Exchange at the last check (delayed, and '
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
@@ -1938,8 +1941,10 @@ function stakeChance(r, price) {
     return lo > 0 ? Math.min(0.999, (1 + lo) / price) : null;
   }
   if (!model) return null;
+  // The multis are staked at the level's Kelly fraction: a stake from a less
+  // sure tier (a smaller fraction) comes in as the edge that makes it the same
   const s = stakeFor(liveBet(at), model);
-  return s.kelly ? Math.min(0.999, (1 + s.kelly.edge) / price) : null;
+  return s.kelly ? Math.min(0.999, (1 + s.kelly.edge * s.kelly.k / model.k) / price) : null;
 }
 // The Multi Generator's view of the page: the judge (its chances), the
 // calibration, My bookies, and those bets (worked out when first asked for);

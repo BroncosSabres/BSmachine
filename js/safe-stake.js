@@ -7,11 +7,13 @@
 // on the stake: the stake sets how deep the dips on the way get. So "safe"
 // covers two risks apart:
 //   1. the edge is smaller than it looks. The stake is sized off the low end
-//      of the bin's return, and only once that low end is above zero. The low
-//      end is the more cautious of two: resampling whole games (bets in one
-//      game win and lose together) and an exact count of winners against
-//      what break-even odds expect (right for long odds, where a handful of
-//      winners decides it and resampling them misleads).
+//      of the return of the bet's band (its market's settled bets in the same
+//      edge band), and only once that low end is above zero. The low end is
+//      the more cautious of two: resampling whole games (bets in one game win
+//      and lose together) and an exact count of winners against what
+//      break-even odds expect (right for long odds, where a handful of
+//      winners decides it and resampling them misleads). The Risk level sets
+//      how sure; a band only less sure of a profit gets a smaller fraction.
 //   2. a bad run on the way. A fraction k of the Kelly stake on that edge.
 //      At k, the chance of ever falling to x of the bank is about
 //      x^(2/k - 1), so k = 2 / (1 + ln(ruin) / ln(1 - drawdown)).
@@ -19,7 +21,7 @@
 // biggest edges are often its own error. Where that loss is clear of luck,
 // bets past that point are outliers and get no stake.
 import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
-import { profit, gameBootstrap, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { profit, gameBootstrap, edgeCuts, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { priceAt, closeAt, hasRealClose, lineMoved, OUT_CUTS, OUT_CLASSES, outCutKey, edgeClass, windowKeys,
          windowTake } from './best-bets-filters.js';
 
@@ -170,16 +172,31 @@ export function outlierBets(rows, prefs, fits, stage = 'avg') {
 
 // conf: how sure the low end of a bin's return is (one-sided). ruin / drawdown:
 // the chance, at most, of ever falling by `drawdown` of the bank if the edge
-// is only that low end.
+// is only that low end. lower: the less sure levels a stake still comes from
+// when the low end at conf isn't a profit, each at a smaller fraction
+// (TIER_SCALE), so the stake grows with the evidence instead of jumping from
+// nothing to the full fraction (user, 2026-11-03: 0.38 × Kelly on the 95% low
+// end alone left out too much).
 export const RISK_LEVELS = {
-  low:    { label: 'Low',    conf: 0.99, ruin: 0.01, drawdown: 0.25,
-            text: '99% sure of the edge; under 1% chance of ever losing a quarter of the bank' },
-  medium: { label: 'Medium', conf: 0.95, ruin: 0.01, drawdown: 0.5,
-            text: '95% sure of the edge; under 1% chance of ever losing half the bank' },
-  high:   { label: 'High',   conf: 0.80, ruin: 0.05, drawdown: 0.5,
-            text: '80% sure of the edge; under 5% chance of ever losing half the bank' },
+  low:    { label: 'Low',    conf: 0.99, lower: [0.975, 0.95], ruin: 0.01, drawdown: 0.25,
+            text: '99% sure of the edge (less staked when only 97.5% or 95% sure); under 1% chance of ever losing a quarter of the bank' },
+  medium: { label: 'Medium', conf: 0.95, lower: [0.90, 0.85], ruin: 0.01, drawdown: 0.5,
+            text: '95% sure of the edge (less staked when only 90% or 85% sure); under 1% chance of ever losing half the bank' },
+  high:   { label: 'High',   conf: 0.80, lower: [0.75, 0.70], ruin: 0.05, drawdown: 0.5,
+            text: '80% sure of the edge (less staked when only 75% or 70% sure); under 5% chance of ever losing half the bank' },
 };
 export const kellyFraction = risk => 2 / (1 + Math.log(risk.ruin) / Math.log(1 - risk.drawdown));
+
+// The fraction of the level's Kelly fraction each tier stakes, from the most
+// sure down. Each tier's k is below the level's, so its promise on ruin holds
+// at every tier's own low end. As the evidence grows the top tier takes over
+// and the stake tends to the level's fraction of Kelly on the estimate: never
+// past it (0.75 at the top would have tended to 0.75 × Kelly, about a 30%
+// chance of ever losing half the bank even with the edge exactly right).
+export const TIER_SCALE = [1, 0.75, 0.55];
+// -> [{ conf, k }], the most sure first
+export const riskTiers = risk => [risk.conf, ...(risk.lower || [])]
+  .map((conf, i) => ({ conf, k: kellyFraction(risk) * TIER_SCALE[i] }));
 
 // Bins: edge bands by bookie-odds bands, set in advance rather than fitted to
 // results. Finer ones are for looking closer as results come in: each cell
@@ -355,21 +372,57 @@ export function binGrid(bets, risk, detail) {
 
 const Z99 = 2.326;   // one-sided 99%
 
-// Fractional Kelly on `edge` (return per unit) at `back` odds:
-// { frac, kelly, k, edge, betsToSure }, or null when there is no edge.
-// betsToSure: bets at this edge until a profit is 99% sure.
-export function kellyStake(edge, back, commission, risk) {
+// Fractional Kelly (k, the Risk level's own by default) on `edge` (return per
+// unit) at `back` odds: { frac, kelly, k, edge, betsToSure }, or null when
+// there is no edge. betsToSure: bets at this edge until a profit is 99% sure.
+export function kellyStake(edge, back, commission, risk, k = kellyFraction(risk)) {
   const b = (back - 1) * (1 - (commission || 0));   // profit per unit on a win
   if (!(edge > 0) || !(b > 0)) return null;
-  const k = kellyFraction(risk);
   const p = Math.min(0.999, (1 + edge) / (b + 1));
   const sd = (b + 1) * Math.sqrt(p * (1 - p));
   return { frac: k * edge / b, kelly: edge / b, k, edge, betsToSure: Math.ceil((Z99 * sd / edge) ** 2) };
 }
 
+// The low end of a group of bets' return at each of the Risk level's tiers
+// (riskTiers), from st (binStats at the level) and its bets; kept on st.
+// -> [{ conf, k, low }], low null when there is no range
+export function tierLows(st, risk) {
+  if (st.tiers) return st.tiers;
+  st.tiers = riskTiers(risk).map((t, i) => {
+    if (i === 0) return { ...t, low: st.low };
+    const r = st.low == null ? null : returnRange(st.bets, 1 - t.conf);
+    return { ...t, low: r ? r[0] : null };
+  });
+  return st.tiers;
+}
+
+// The stake on a group of bets (st: binStats at the level) at `back` odds:
+// the biggest of each tier's fraction of Kelly on its own low end, over the
+// tiers whose low end is a profit, the edge staked on cut to `edge` (a bet's
+// own). The biggest, not the most sure tier's that is a profit: as a group's
+// evidence crosses into a surer tier its low end there starts at zero, and
+// taking that tier's stake would drop the stake as the evidence grew.
+// -> kellyStake's result plus { conf, low } of the tier used, or null
+export function ladderStake(st, risk, back, commission, edge = Infinity) {
+  let best = null;
+  for (const t of tierLows(st, risk)) {
+    if (!(t.low > 0)) continue;
+    const s = kellyStake(Math.min(t.low, edge), back, commission, risk, t.k);
+    if (s && (!best || s.frac > best.frac)) best = { ...s, conf: t.conf, low: t.low };
+  }
+  return best;
+}
+
+// Every market's settled bets are cut into the edge bands the analysis page
+// and Filters' "Most profitable" cut them into (roi-stats.js edgeCuts: the
+// fixed ladder 0, 2, 5, 10, 15, 20, 30, 40, 50, 75, 100% ..., neighbours
+// joined until each holds enough bets), so a bet is judged on the same band
+// it shows in there. Odds keep the detail's bands, for the outlier ceilings.
+const stakeGrid = (bets, risk, detail) => binGrid(bets, risk, { edge: [...edgeCuts(bets), Infinity], odds: detail.odds });
+
 // Everything a stake is worked out from, over settled bets (edge 0 and over):
-// the bets themselves, by market, for each bet's own pool, and a grid per
-// market and one for all markets for the outlier ceilings.
+// a grid per market (its edge bands are the bets' pools) and one for all
+// markets, for the outlier ceilings.
 export function stakeModel(bets, riskKey, detailKey) {
   const risk = RISK_LEVELS[riskKey] || RISK_LEVELS.medium;
   const detail = BIN_DETAIL[detailKey] || BIN_DETAIL.coarse;
@@ -380,101 +433,72 @@ export function stakeModel(bets, riskKey, detailKey) {
     groups.get(b.group).push(b);
   }
   return {
-    risk, detail, k: kellyFraction(risk), bets: pos, byGroup: groups, pools: new Map(),
-    all: binGrid(pos, risk, detail),
-    grids: new Map([...groups].map(([g, bs]) => [g, binGrid(bs, risk, detail)])),
+    risk, detail, k: kellyFraction(risk), bets: pos, byGroup: groups, bands: new Map(),
+    all: stakeGrid(pos, risk, detail),
+    grids: new Map([...groups].map(([g, bs]) => [g, stakeGrid(bs, risk, detail)])),
   };
 }
 
-// Each bet is judged on settled bets like it, made from its own edge and odds
-// so nobody picks the bin after seeing results:
-//   edge  0% up to its own, rounded up to a whole percent. Only bets the model
-//         rated no better: if bigger edges do return more, the pool understates
-//         this bet, so a profit proven on it is a floor.
-//   odds  half its own up to the next step above (POOL_ODDS_STEPS), so a long
-//         price is judged on long-ish prices, not mostly on favourites.
-export const POOL_ODDS_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 30, 50, Infinity];
-
-export function poolFor(bet) {
-  return {
-    edgeHi: Math.ceil(bet.edge * 100 - 1e-9) / 100,
-    oddsLo: Math.max(1, bet.back / 2),
-    oddsHi: POOL_ODDS_STEPS.find(s => s > bet.back),
-  };
-}
-const poolLabel = p => `edge up to ${Math.round(p.edgeHi * 100)}% · ${price(p.oddsLo)}–${isFinite(p.oddsHi) ? price(p.oddsHi) : 'any'}`;
-
-// One pool's stats, kept on the model: bets on the page share most pools.
-function poolStats(model, scope, p) {
-  const key = `${scope}|${p.edgeHi}|${p.oddsLo}|${p.oddsHi}`;
-  if (!model.pools.has(key)) {
-    const from = scope === 'all' ? model.bets : model.byGroup.get(scope) || [];
-    const inPool = from.filter(b => b.edge < p.edgeHi + 1e-9 && b.back >= p.oddsLo && b.back < p.oddsHi);
-    model.pools.set(key, binStats(inPool, model.risk, { callThin: true }));
-  }
-  return model.pools.get(key);
+// A market's edge band i called however few bets it has, kept on the model:
+// bets on the page share bands.
+function bandStats(model, group, i) {
+  const key = `${group}|${i}`;
+  if (!model.bands.has(key)) model.bands.set(key, binStats(model.grids.get(group).rows[i].bets, model.risk, { callThin: true }));
+  return model.bands.get(key);
 }
 
 // The stake for one bet { group, edge, back, commission } (balance: the bank
-// in dollars, or null). Its pool is tried in its own market, then in all
-// markets, moving on only while the market's is unproven (its range spans
-// zero). A proven loser stops it. Outliers (past a ceiling) get nothing. A pool
-// is called however few bets it has; `thin` flags a stake that rests on fewer
-// than RULE_MIN_BETS over RULE_MIN_GAMES.
-// -> { frac, dollars, reason, used, path, warning, thin, outlier, kelly }
+// in dollars, or null), from its market's settled bets in the same edge band
+// (user, 2026-11-03: each market on its own, judged on its own band's range,
+// not pooled with other markets). A band that has proven a loss stops it, and
+// outliers (past a ceiling) get nothing. A band is called however few bets it
+// has: few bets make a wide range, so a low end, and a small stake or none;
+// `thin` flags a stake that rests on fewer than RULE_MIN_BETS over
+// RULE_MIN_GAMES.
+// -> { frac, dollars, reason, used, path, thin, outlier, kelly }
 //   reason   null (a stake), 'negative', 'outlier', 'behind' or 'unproven'
-//   path     [{ label, scope, stats }] each pool tried, in order
-//   warning  the stake is from all markets though this market's own bets
-//            have lost so far (unproven)
+//   used     { label, scope, stats, band } the band judged on (path: [used])
+//   kelly    ladderStake's result: k and conf of the tier the stake is from
 export function stakeFor(bet, model, balance = null) {
-  const { detail } = model;
-  const E = detail.edge, O = detail.odds;
-  const ei = bandIndex(E, bet.edge), oi = bandIndex(O, bet.back);
-  const none = (reason, extra = {}) => ({ frac: 0, dollars: balance ? 0 : null, reason, used: null, path: [], warning: false, thin: false, outlier: null, kelly: null, ...extra });
-  if (ei < 0 || oi < 0) return none('negative');
+  const none = (reason, extra = {}) => ({ frac: 0, dollars: balance ? 0 : null, reason, used: null, path: [], thin: false, outlier: null, kelly: null, ...extra });
+  if (!(bet.edge >= 0) || bandIndex(model.detail.odds, bet.back) < 0) return none('negative');
 
   const own = model.grids.get(bet.group), all = model.all;
   const market = groupLabel(bet.group);
 
-  const outlier = outlierOf(ei, oi, own, all, market);
+  const outlier = outlierOf(bet, own, all, market);
   if (outlier) return none('outlier', { outlier });
+  if (!own) return none('unproven');
 
-  const p = poolFor(bet), pl = poolLabel(p);
-  const tries = [
-    { scope: 'market', label: `${market} · ${pl}`, stats: poolStats(model, bet.group, p) },
-    { scope: 'all', label: `All markets · ${pl}`, stats: poolStats(model, 'all', p) },
-  ];
-  const path = [];
-  let used = null;
-  for (const t of tries) {
-    path.push(t);
-    if (t.stats.verdict === 'behind') return none('behind', { path, used: t });
-    if (t.stats.verdict === 'ahead') { used = t; break; }
-  }
-  if (!used) return none('unproven', { path });
+  const ei = bandIndex(own.edge, bet.edge);
+  const stats = bandStats(model, bet.group, ei);
+  const used = { scope: 'market', band: ei, stats, label: `${market} · ${edgeBandLabel(own.edge, ei)}` };
+  const path = [used];
+  if (stats.verdict === 'behind') return none('behind', { path, used });
 
-  const warning = used.scope === 'all' && path.some(t => t.scope === 'market' && t.stats.n && t.stats.roi < 0);
-  const kelly = kellyStake(Math.min(used.stats.low, bet.edge), bet.taken ?? bet.back, bet.commission, model.risk);
-  const frac = kelly ? kelly.frac : 0;
-  return { frac, dollars: balance ? balance * frac : null, reason: kelly ? null : 'unproven', used, path, warning, thin: used.stats.thin, outlier: null, kelly };
+  const kelly = ladderStake(stats, model.risk, bet.taken ?? bet.back, bet.commission, bet.edge);
+  if (!kelly) return none('unproven', { path });
+  return { frac: kelly.frac, dollars: balance ? balance * kelly.frac : null, reason: null, used, path, thin: stats.thin, outlier: null, kelly };
 }
 
 // Past a ceiling on edge or odds. The market's own ceiling decides where it
 // has one; where it has none, the all-markets ceiling does, unless the
-// market's own band there has enough bets and made a profit.
-function outlierOf(ei, oi, own, all, market) {
-  for (const [dim, idx] of [['edge', ei], ['odds', oi]]) {
-    const cuts = dim === 'edge' ? all.edge : all.odds;
-    const label = i => dim === 'edge' ? edgeBandLabel(cuts, i) : `odds ${oddsBandLabel(cuts, i)}`;
+// market's own band there has enough bets and made a profit. Each grid has
+// its own edge bands, so the bet's band is found in each.
+function outlierOf(bet, own, all, market) {
+  for (const dim of ['edge', 'odds']) {
+    const x = dim === 'edge' ? bet.edge : bet.back;
+    const label = (g, i) => dim === 'edge' ? edgeBandLabel(g.edge, i) : `odds ${oddsBandLabel(g.odds, i)}`;
     const mine = own?.ceil[dim];
+    const idx = own ? bandIndex(own[dim], x) : -1;
     if (mine != null) {
-      if (idx >= mine) return { dim, scope: market, from: cuts[mine], label: `${market}: bets from ${label(mine)} up have lost, clear of luck` };
+      if (idx >= mine) return { dim, scope: market, from: own[dim][mine], label: `${market}: bets from ${label(own, mine)} up have lost, clear of luck` };
       continue;
     }
-    const band = own && (dim === 'edge' ? own.rows[idx] : own.cols[idx]);
+    const band = own && idx >= 0 && (dim === 'edge' ? own.rows[idx] : own.cols[idx]);
     if (band && ceilingCounts(band) && band.roi >= 0) continue;
     const theirs = all.ceil[dim];
-    if (theirs != null && idx >= theirs) return { dim, scope: 'All markets', from: cuts[theirs], label: `All markets: bets from ${label(theirs)} up have lost, clear of luck` };
+    if (theirs != null && bandIndex(all[dim], x) >= theirs) return { dim, scope: 'All markets', from: all[dim][theirs], label: `All markets: bets from ${label(all, theirs)} up have lost, clear of luck` };
   }
   return null;
 }

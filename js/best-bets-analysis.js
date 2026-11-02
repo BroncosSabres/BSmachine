@@ -39,7 +39,7 @@ import { installTapTips } from './tap-tips.js';
 import { loadCalibration, cachedCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
 import { kindLabel, groupLabel, sourceKey, decodeRows, toBet, outlierBet, outlierBets, rowWindow, windowBet, OUTLIER_CUTS,
-         RISK_LEVELS, BIN_DETAIL, binGrid, binStats, kellyStake,
+         RISK_LEVELS, BIN_DETAIL, binGrid, binStats, ladderStake,
          edgeBandLabel, oddsBandLabel, CEILING_MIN_BETS, CEILING_MIN_GAMES, CEILING_CONF } from './safe-stake.js';
 
 const $ = id => document.getElementById(id);
@@ -554,17 +554,21 @@ function renderRuleTable(rows, fit) {
 
 // --- stakes -------------------------------------------------------------------
 // What a group of bets earns at the Risk level: Kelly scaled down, off the
-// low end of its return at that level, at its median odds. Only once that low
-// end is above zero. -> { st (binStats), stake (kellyStake) or null }
+// low end of its return, at its median odds, as the Best Bets page stakes a
+// band (safe-stake.js ladderStake): the level's fraction on its low end, less
+// on the low end of a less sure tier. Only once one of those low ends is
+// above zero. -> { st (binStats), stake (ladderStake) or null }
 function stakeOfBets(bets) {
   const st = binStats(bets, riskOf(), { callThin: true });   // called on few bets too, with a warning
-  return { st, stake: st.verdict === 'ahead' ? kellyStake(st.low, st.odds, st.commission, riskOf()) : null };
+  return { st, stake: st.verdict === 'behind' ? null : ladderStake(st, riskOf(), st.odds, st.commission) };
 }
 const share = f => pct(f, f < 0.01 ? 2 : 1);
 const thinMark = s => s.stake && s.st.thin ? '<span class="text-amber-400 mr-1" aria-label="not proven yet">⚠</span>' : '';
 const stakeText = s => !s.stake ? '–' : thinMark(s) + (stakePrefs.balance ? `${money(stakePrefs.balance * s.stake.frac)} <span class="text-gray-500 font-normal">${share(s.stake.frac)}</span>` : share(s.stake.frac));
 const lowText = st => `${Math.round(riskOf().conf * 100)}% low end ${signedPct(st.low)}`;
-const stakeSub = s => s.stake ? `at ${odds(s.st.odds)} · about ${s.stake.betsToSure.toLocaleString()} bets to be 99% sure of a profit`
+const confText = c => `${+(c * 100).toFixed(1)}%`;
+const stakeSub = s => s.stake ? `at ${odds(s.st.odds)} · ${s.stake.k.toFixed(2)} × Kelly on the ${confText(s.stake.conf)} low end ${signedPct(s.stake.low)}`
+    + ` · about ${s.stake.betsToSure.toLocaleString()} bets to be 99% sure of a profit`
     + (s.st.thin ? ` · ⚠ not proven yet: under ${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games, so less sure than it looks` : '')
   : !s.st.n ? 'no bets' : s.st.verdict === 'behind' ? 'a loss, clear of zero' : `no profit clear of zero: ${lowText(s.st)}`;
 
@@ -849,9 +853,9 @@ function renderGrid(anyOdds) {
         <div class="font-semibold text-gray-100">${signedPct(ce, 1)}</div>
         <div class="text-[10px] text-gray-400">${signedPct(st.roi, 0)}</div></td>`;
     }
-    const s = st.verdict === 'ahead' ? kellyStake(st.low, st.odds, st.commission, risk) : null;
+    const s = st.low != null && st.verdict !== 'behind' ? ladderStake(st, risk, st.odds, st.commission) : null;
     lines.push(`${capital(GRID_VERDICT[st.verdict])}${st.low != null ? `: ${signedPct(st.low)} to ${signedPct(st.high)}, each end ${Math.round(risk.conf * 100)}% sure (${risk.label} risk)` : ''}`);
-    if (s) lines.push(`Safe stake ${share(s.frac)}${stakePrefs.balance ? ` (${money(stakePrefs.balance * s.frac)})` : ''} at ${odds(st.odds)}, about ${s.betsToSure.toLocaleString()} bets to be 99% sure of a profit`);
+    if (s) lines.push(`Safe stake ${share(s.frac)}${stakePrefs.balance ? ` (${money(stakePrefs.balance * s.frac)})` : ''} at ${odds(st.odds)}: ${s.k.toFixed(2)} × Kelly on the ${confText(s.conf)} low end ${signedPct(s.low)}, about ${s.betsToSure.toLocaleString()} bets to be 99% sure of a profit`);
     lines.push('Select to list the bets');
     gridLists.set(key, { title: `${marketText()}: ${label}`, bets: st.bets });
     return `<td data-cell="${key}" class="px-1.5 py-1 text-center cursor-pointer hover:outline hover:outline-1 hover:outline-gray-400 tabular-nums ${strong ? 'border-l border-gray-700' : ''}"
@@ -908,8 +912,8 @@ function renderGrid(anyOdds) {
     : `${count(called.length, 'cell')} of ${grid.cells.flat().length} ${called.length === 1 ? 'has' : 'have'} enough bets to call (${RULE_MIN_BETS} bets over ${RULE_MIN_GAMES} games). `
       + `If there were no edge anywhere, about ${byLuck.toFixed(1)} of them would still show a proven profit by luck at ${risk.label} risk; ${proven} ${proven === 1 ? 'does' : 'do'}. `
       + 'Finer bins look closer but each needs longer to prove anything, and more of them look good by luck. '
-      + "The Best Bets page doesn't stake from these cells but from each bet's own pool: settled bets in its market at an edge no higher than its own, "
-      + 'at odds from half its own to the next step up (all markets where its own market has proven nothing either way), '
+      + "The Best Bets page doesn't stake from these cells but from each bet's own band: settled bets in its market in the same edge band, "
+      + 'cut as the rule table and Most profitable cut them (0, 2, 5, 10, 15, 20, 30% ..., joined until each band holds enough bets), any odds, '
       + 'at the average price while showing value (at the price chosen here, which the Best Bets page shares), every source, one bet per market. The outlier lines here apply to it.';
 }
 

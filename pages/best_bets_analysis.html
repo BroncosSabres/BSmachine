@@ -143,7 +143,7 @@
                 <option value="c:15">15 equal-size</option>
               </select>
             </label>
-            <label class="flex items-center gap-1.5" title="How cautious the safe stakes are. Low: 99% sure of the edge, under 1% chance of ever losing a quarter of the bank. Medium: 95% sure, under 1% chance of ever losing half. High: 80% sure, under 5% chance of ever losing half. Shared with the Best Bets page.">Risk
+            <label class="flex items-center gap-1.5" title="How cautious the safe stakes are. Low: 99% sure of the edge (less staked at 97.5% or 95%), under 1% chance of ever losing a quarter of the bank. Medium: 95% sure (less at 90% or 85%), under 1% chance of ever losing half. High: 80% sure (less at 75% or 70%), under 5% chance of ever losing half. Shared with the Best Bets page.">Risk
               <select id="f-risk" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
@@ -251,7 +251,7 @@
                   <th class="px-2 py-2 text-right font-semibold" title="Return on 1 unit a bet, with the 90% range">Returned</th>
                   <th class="px-2 py-2 text-right font-semibold" title="The return with the rule's most profitable game taken out. A rule that lives off one game falls over here.">Without best game</th>
                   <th class="px-2 py-2 text-right font-semibold" title="Closing line value: the odds taken against the closing odds, for the rule's bets with a closing price (a line or total whose line moved: the close at its own line)">CLV</th>
-                  <th class="px-2 py-2 text-right font-semibold" title="A share of the bank per bet at the Risk level chosen, off the low end of the rule's return, at its median odds. Nothing until that low end is a profit.">Safe stake</th>
+                  <th class="px-2 py-2 text-right font-semibold" title="A share of the bank per bet at the Risk level chosen, off the low end of the rule's return, at its median odds: the level's fraction of Kelly on the low end at its own confidence, smaller fractions when only a less sure low end is a profit. Nothing until one is.">Safe stake</th>
                 </tr>
               </thead>
               <tbody id="best-rules"></tbody>
