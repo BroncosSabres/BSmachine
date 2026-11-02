@@ -32,9 +32,10 @@ import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFr
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
          dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText,
-         outlierFits, OUT_CLASSES, OUT_CLASS_LABELS, OUT_DEFAULT_CUT, outCutsFor, outRuleOf, windowKeys, fittedCut } from './best-bets-filters.js';
+         outlierFits, OUT_CLASSES, OUT_CLASS_LABELS, OUT_DEFAULT_CUT, outCutsFor, outRuleOf, windowKeys, fittedCut,
+         edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
-import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
+import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
 import { loadCalibration, cachedCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
@@ -636,8 +637,11 @@ function renderRuleDetail(cell, fit) {
     options: {
       responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', axis: 'x', intersect: false },
       scales: {
+        // By bet, each tick's game day under its number
         x: { type: 'linear', min: 0, max: Math.max(1, data.length), title: { display: true, text: 'Bets, in date order', color: C_INK, font: { size: 10 } },
-             ticks: { color: C_INK, precision: 0, font: { size: 10 } }, grid: { display: false }, border: { color: 'rgba(255,255,255,0.1)' } },
+             ticks: { color: C_INK, precision: 0, font: { size: 10 }, maxRotation: 0, autoSkipPadding: 8,
+                      callback: v => { const b = data[Math.round(v) - 1]; return b ? [String(Math.round(v)), dayText(b.date)] : String(Math.round(v)); } },
+             grid: { display: false }, border: { color: 'rgba(255,255,255,0.1)' } },
         y: { title: { display: true, text: 'Units', color: C_INK, font: { size: 10 } }, ticks: { color: C_INK, font: { size: 10 } },
              grid: { color: ctx => ctx.tick.value === 0 ? 'rgba(255,255,255,0.35)' : GRID }, border: { color: 'rgba(255,255,255,0.1)' } },
       },
@@ -1712,6 +1716,182 @@ function renderMineTime() {
     + 'would have bet. Sport, Market, Period, the odds slider and your odds range apply to both.';
 }
 
+// --- Most profitable since last change ------------------------------------------
+// Each market's "Most profitable" rule rebuilt game day by game day from the
+// settled bets (best-bets-optimise.js rulesOverTime), read as Most profitable
+// reads them (the Price above, the Best Bets Filters' odds range and judge),
+// whatever Sport, Market, Period, Count, Odds taken and the slider say: the
+// rule each market has now, the game day whose results set it, what its bets
+// have done since, and every rule it has had in turn. A row (or All markets)
+// is charted below, with its rules listed.
+
+let sinceChart = null;
+let sinceY = 'units';
+let sinceSel = 'all';      // the market charted, or 'all'
+let sinceLists = {};       // data-since-list -> the bets behind a count
+let sinceCache = { raw: null, calib: null, key: null, report: null };
+
+// -> the report, or undefined while the calibration it judges by is coming
+function sinceReport() {
+  const edgeOf = judgeEdgeOf(raw, prefs, calib);
+  if (edgeOf === undefined) return undefined;
+  const keys = modalKeys();
+  const key = [prefs.basis, prefs.judge, prefs.odds.join('-'), keys.join(',')].join('|');
+  if (sinceCache.raw !== raw || sinceCache.calib !== calib || sinceCache.key !== key) {
+    sinceCache = { raw, calib, key, report: rulesOverTime(raw, prefs, keys, edgeOf) };
+  }
+  return sinceCache.report;
+}
+
+const nextDay = d => new Date(dayMs(d) + DAY_MS).toISOString().slice(0, 10);
+const sumUnits = bets => bets.reduce((a, b) => a + profit(b), 0);
+
+function renderSince() {
+  sinceChart?.destroy();
+  sinceChart = null;
+  for (const b of $('since-y').children) {
+    const on = b.dataset.y === sinceY;
+    b.className = `px-2.5 py-1 ${b.previousElementSibling ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
+    b.setAttribute('aria-pressed', on);
+  }
+  const report = sinceReport();
+  $('since-body').classList.toggle('hidden', !report);
+  $('since-y').classList.toggle('hidden', !report);
+  if (!report) {
+    $('since-sub').textContent = 'Waiting for the calibrated edges your Filters judge by…';
+    $('since-note').textContent = '';
+    return;
+  }
+  const odds = rangeText(oddsRangeOf(prefs));
+  const label = judgeLabel(minePrefs());
+  $('since-sub').textContent = `Settled bets at the ${basis() === 'book' ? 'best bookie' : 'median'} price averaged while they showed value, one bet per market`
+    + `${odds ? `, ${odds}` : ''}, judged by the ${label}, as Most profitable reads them · whatever Sport, Market, Period and the odds slider say`;
+  const edgeOn = r => { const t = edgeText(typedRange(r.edge, 0.01)); return t === 'any edge' ? `any ${label}` : `${label} ${t}`; };
+  const ruleText = r => (r.status === 'on' ? edgeOn(r) : r.status === 'off' ? 'Off' : 'Not set');
+
+  const keys = modalKeys().filter(k => report[k]);
+  const on = keys.filter(k => report[k].status === 'on');
+  // Every rule in turn: the bets of each stretch a rule was on
+  const turns = k => report[k].periods.filter(p => p.rule.status === 'on').flatMap(p => p.bets);
+  const all = {
+    since: on.flatMap(k => report[k].since.bets),
+    turns: keys.flatMap(turns),
+    value: keys.flatMap(k => report[k].value),
+    set: on.reduce((a, k) => ({ n: a.n + report[k].n, units: a.units + report[k].units }), { n: 0, units: 0 }),
+  };
+  sinceLists = {};
+  const listBtn = (id, title, bets, text = bets.length.toLocaleString()) => {
+    if (!bets.length) return '0';
+    sinceLists[id] = { title, bets: [...bets].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)) };
+    return `<button type="button" data-since-list="${esc(id)}" class="text-blue-400 hover:underline">${text}</button>`;
+  };
+
+  const tile = (name, bets, id, sub) => {
+    const st = ruleStats(bets, { thinRange: true });
+    return `<div class="rounded-lg border border-gray-700/70 p-3">
+      <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">${name}</div>
+      <div class="text-xl font-bold tabular-nums mt-0.5">${st.n ? `<span class="${signCls(st.units)}">${units(st.units)}</span>
+        <span class="text-sm ${signCls(st.roi)}">${signedPct(st.roi)}</span>` : '–'}</div>
+      <div class="text-[11px] text-gray-500">${st.n ? `${listBtn(id, name, bets, count(st.n, 'bet'))}, ${wonCount(st.wins)} won${st.roiCI ? ` · 90% range ${range(st.roiCI)}` : ''}` : 'No settled bets yet'}</div>
+      <div class="text-[11px] text-gray-600 mt-1 leading-snug">${sub}</div>
+    </div>`;
+  };
+  $('since-stats').innerHTML = tile('Since last change', all.since, 'all|since',
+      `The rules each market has now, on the game days after the results that set them (${on.length} market${on.length === 1 ? '' : 's'} on)`)
+    + tile('Every rule in turn', all.turns, 'all|turns', 'Every rule each market has had, each on the game days it stood: following Most profitable from the start')
+    + `<div class="rounded-lg border border-gray-700/70 p-3">
+      <div class="text-[10px] uppercase tracking-wider text-gray-500 font-semibold">When set</div>
+      <div class="text-xl font-bold tabular-nums mt-0.5">${all.set.n ? `<span class="${signCls(all.set.units)}">${units(all.set.units)}</span>
+        <span class="text-sm ${signCls(all.set.units)}">${signedPct(all.set.units / all.set.n)}</span>` : '–'}</div>
+      <div class="text-[11px] text-gray-500">${count(all.set.n, 'bet')}</div>
+      <div class="text-[11px] text-gray-600 mt-1 leading-snug">What the rules now had made on the bets they were fitted to: fitted to them, so expect less going forward</div>
+    </div>`;
+
+  // A row: what the rule has done since it changed (an off market's: the
+  // bets with value it has left out, greyed), what it promised, every rule
+  const statCells = (bets, id, title, grey) => {
+    const st = ruleStats(bets, { thinRange: true });
+    const g = grey ? 'text-gray-500' : '';
+    return `<td class="px-2 py-2 text-right ${g || 'text-gray-300'}">${listBtn(id, title, bets)}</td>
+      <td class="px-2 py-2 text-right ${g || 'text-gray-300'}">${st.n ? wonCount(st.wins) : '–'}</td>
+      <td class="px-2 py-2 text-right ${g || signCls(st.units)}">${st.n ? units(st.units) : '–'}</td>
+      <td class="px-2 py-2 text-right ${g}">${st.n ? `<span class="${g || signCls(st.roi)}">${signedPct(st.roi)}</span>${st.roiCI ? `<span class="block text-[10px] text-gray-500">${range(st.roiCI)}</span>` : ''}` : '–'}</td>`;
+  };
+  const turnsCell = bets => {
+    if (!bets.length) return '<td class="px-2 py-2 text-right text-gray-500">–</td>';
+    const u = sumUnits(bets);
+    return `<td class="px-2 py-2 text-right"><span class="${signCls(u)}">${units(u)}</span><span class="block text-[10px] text-gray-500">${signedPct(u / bets.length)} on ${bets.length}</span></td>`;
+  };
+  const rowCls = sel => `border-t border-gray-700/60 cursor-pointer hover:bg-gray-700/20 tabular-nums align-top ${sel ? 'bg-gray-700/40' : ''}`;
+  const mark = sel => (sel ? 'box-shadow:inset 3px 0 0 #d97706;' : '');
+  const allSel = sinceSel === 'all' || !report[sinceSel];
+  const allRow = `<tr data-since="all" class="${rowCls(allSel)}">
+      <td class="px-2 py-2 text-left font-semibold text-gray-100" style="${mark(allSel)}">All markets</td>
+      <td class="px-2 py-2 text-left text-gray-400">${on.length} on</td>
+      <td class="px-2 py-2 text-left text-gray-500">–</td>
+      ${statCells(all.since, 'all|since', 'Since last change · all markets', false)}
+      <td class="px-2 py-2 text-right text-gray-300">${all.set.n ? `<span class="${signCls(all.set.units)}">${units(all.set.units)}</span><span class="block text-[10px] text-gray-500">${signedPct(all.set.units / all.set.n)} on ${all.set.n}</span>` : '–'}</td>
+      ${turnsCell(all.turns)}
+    </tr>`;
+  $('since-rows').innerHTML = allRow + keys.map(k => {
+    const r = report[k], sel = k === sinceSel, isOn = r.status === 'on', thin = r.status === 'thin';
+    const name = groupLabel(k);
+    const was = r.prev && r.prev.status !== 'thin' ? `was ${ruleText(r.prev)}` : 'its first rule';
+    return `<tr data-since="${esc(k)}" class="${rowCls(sel)}${thin ? ' opacity-50' : ''}">
+      <td class="px-2 py-2 text-left font-semibold text-gray-100" style="${mark(sel)}">${esc(name)}</td>
+      <td class="px-2 py-2 text-left ${isOn ? 'text-gray-200' : thin ? 'text-gray-500' : 'text-red-400/90'}">${esc(ruleText(r))}</td>
+      <td class="px-2 py-2 text-left text-gray-300">${thin ? `<span class="text-gray-500">${count(r.n, 'bet')}, under ${OPT_MIN_BETS}</span>`
+        : `${dayText(r.changed)}<span class="block text-[10px] text-gray-500">${esc(was)}</span>`}</td>
+      ${thin ? '<td colspan="5" class="px-2 py-2"></td>' : `${statCells(r.since.bets, `${k}|since`, `${name} · ${isOn ? `${ruleText(r)} since ${dayText(r.changed)}` : `left out since ${dayText(r.changed)}`}`, !isOn)}
+      <td class="px-2 py-2 text-right text-gray-300"><span class="${signCls(r.units)}">${units(r.units)}</span><span class="block text-[10px] text-gray-500">${r.roi != null ? `${signedPct(r.roi)} on ${r.n}` : ''}</span></td>`}
+      ${turnsCell(turns(k))}
+    </tr>`;
+  }).join('');
+
+  // The row charted: every rule in turn, the rules now since they were set,
+  // and every bet with value (betting them all); its rules, newest first
+  const one = allSel ? null : report[sinceSel];
+  const scope = one ? groupLabel(sinceSel) : 'All markets';
+  $('since-sel-title').textContent = `${scope} · Most profitable's rules in turn`;
+  $('since-sel-sub').textContent = one
+    ? (one.status === 'thin' ? `Under ${OPT_MIN_BETS} settled bets with value: no rule yet.`
+      : `${ruleText(one)} since the results of ${dayText(one.changed)}${one.prev && one.prev.status !== 'thin' ? `, ${one.prev.status === 'off' ? 'off' : ruleText(one.prev)} before that` : ''}. `
+        + `Every bet with value: ${units(sumUnits(one.value))} on ${count(one.value.length, 'bet')}.`)
+    : `Every market together. Every bet with value: ${units(sumUnits(all.value))} on ${count(all.value.length, 'bet')}.`;
+  const lineBets = one ? { turns: turns(sinceSel), since: one.status === 'on' ? one.since.bets : [], value: one.value } : all;
+  sinceChart = runningChart($('since-chart'), [
+    { label: 'Every rule in turn', color: C_ALL, width: 2.5, bets: lineBets.turns },
+    { label: 'Since last change', color: C_ACTUAL, width: 2, bets: lineBets.since },
+    { label: 'Every bet with value', color: C_SECOND, width: 1.5, bets: lineBets.value },
+  ], sinceY);
+  $('since-th-market').classList.toggle('hidden', !!one);
+  const periods = (one ? [sinceSel] : keys).flatMap(k => report[k].periods.filter(p => p.rule.status !== 'thin').map(p => ({ ...p, k })))
+    .sort((a, b) => (a.set < b.set ? 1 : a.set > b.set ? -1 : groupLabel(a.k).localeCompare(groupLabel(b.k))));
+  $('since-periods').innerHTML = periods.map((p, i) => {
+    const isOn = p.rule.status === 'on', st = ruleStats(p.bets);
+    const span = `${dayText(nextDay(p.set))} – ${p.to ? dayText(p.to) : 'now'}`;
+    const title = `${groupLabel(p.k)} · ${isOn ? ruleText(p.rule) : 'off: bets with value left out'} · ${span}`;
+    return `<tr class="border-t border-gray-700/60 tabular-nums align-top ${isOn ? 'text-gray-300' : 'text-gray-500'}">
+      <td class="px-2 py-1.5 whitespace-nowrap">${dayText(p.set)}</td>
+      ${one ? '' : `<td class="px-2 py-1.5">${esc(groupLabel(p.k))}</td>`}
+      <td class="px-2 py-1.5 ${isOn ? 'text-gray-100' : 'text-red-400/80'}">${esc(ruleText(p.rule))}${p.to ? '' : ' <span class="text-[10px] text-amber-400">now</span>'}
+        <span class="block text-[10px] text-gray-500">set on ${p.rule.status === 'on' ? `${units(p.rule.units)} from ${p.rule.n}` : `${units(p.rule.units)} on ${p.rule.n} with value`}</span></td>
+      <td class="px-2 py-1.5 whitespace-nowrap">${span}</td>
+      <td class="px-2 py-1.5 text-right">${listBtn(`p${i}`, title, p.bets)}${isOn ? '' : '<span class="block text-[10px]">left out</span>'}</td>
+      <td class="px-2 py-1.5 text-right">${st.n ? wonCount(st.wins) : '–'}</td>
+      <td class="px-2 py-1.5 text-right ${isOn && st.n ? signCls(st.units) : ''}">${st.n ? units(st.units) : '–'}</td>
+      <td class="px-2 py-1.5 text-right ${isOn && st.n ? signCls(st.roi) : ''}">${st.n ? signedPct(st.roi) : '–'}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="${one ? 7 : 8}" class="px-2 py-6 text-center text-sm text-gray-500">No rules set yet.</td></tr>`;
+
+  $('since-note').textContent = "Most profitable is rebuilt as it stood after each game day's results (kickoff date, UTC): each market's edge range with the most units won "
+    + `on its settled bets up to then (at least ${OPT_MIN_BETS} in it), off where none has made money, not set under ${OPT_MIN_BETS} settled bets. `
+    + "A rule's bets are those of the game days after the results that set it, so none of them chose it. An off market's are the bets with value it left out, greyed. "
+    + 'Since last change flatters the rules a little: a rule that starts losing tends to be changed, which starts its count again, while one that is winning stays. '
+    + 'Every rule in turn has no such lean: it is what following Most profitable from the start would have got. '
+    + `Judging by the calibrated or predicted-close edge, the edges are today's fit, so earlier rules are as that fit would have set them. Select a row to chart it.`;
+}
+
 // --- wiring -------------------------------------------------------------------
 
 // The Filters button's summary, and the modal's markets: every one of the
@@ -1752,6 +1932,7 @@ function render() {
   renderTeams(s.every);
   renderOutliers();
   renderMineTime();
+  renderSince();
   renderBreakdown(base);
 }
 
@@ -1868,6 +2049,23 @@ $('mt-stats').addEventListener('click', e => {
   const list = mtLists[e.target.closest('[data-mt-list]')?.dataset.mtList];
   if (list) openBets(list);
 });
+$('since-y').addEventListener('click', e => {
+  const y = e.target.closest('button[data-y]')?.dataset.y;
+  if (!y || y === sinceY) return;
+  sinceY = y;
+  renderSince();
+});
+// A count lists its bets; elsewhere on a row, the row is charted
+for (const id of ['since-stats', 'since-rows', 'since-periods']) {
+  $(id).addEventListener('click', e => {
+    const list = sinceLists[e.target.closest('[data-since-list]')?.dataset.sinceList];
+    if (list) { openBets(list); return; }
+    const key = e.target.closest('tr[data-since]')?.dataset.since;
+    if (!key || key === sinceSel) return;
+    sinceSel = key;
+    renderSince();
+  });
+}
 $('out-sel-bets').addEventListener('click', () => { if (outLists.sel) openBets(outLists.sel); });
 installTapTips(document.body);
 
@@ -1947,6 +2145,9 @@ async function init() {
     startCalibration();
   }
   render();
+  // The Best Bets page links here (#since-section): the page was hidden when
+  // the browser looked for it
+  if (location.hash && location.hash.length > 1) document.getElementById(location.hash.slice(1))?.scrollIntoView();
   // The account's filters and price basis, where they differ from this browser's
   syncPrefs(prefs).then(remote => {
     if (!remote) return;

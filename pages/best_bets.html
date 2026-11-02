@@ -367,6 +367,9 @@
           <p id="method-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
         </div>
 
+        <!-- The side column: two cards stacked on a wide screen; on a phone the
+             track record sits above the bets and Most profitable below them -->
+        <div class="contents lg:block lg:space-y-4">
         <!-- Track record: actual ROI of settled bets by the edge they were flagged at -->
         <!-- Above the bets on a phone, beside them on a wide screen -->
         <aside class="card order-first lg:order-none" aria-labelledby="roi-title">
@@ -380,6 +383,19 @@
           <!-- The small print is left off a phone, where this card sits above the bets -->
           <p id="roi-note" class="hidden sm:block mt-3 text-[11px] text-gray-600 leading-snug"></p>
         </aside>
+
+        <!-- Each market's "Most profitable" rule: when it last changed, and what its bets have done since -->
+        <aside class="card" aria-labelledby="since-title">
+          <div class="flex items-baseline justify-between gap-3">
+            <h2 id="since-title" class="text-sm font-bold text-gray-100">Most profitable since last change</h2>
+            <a href="/pages/best_bets_analysis.html#since-section" class="shrink-0 text-xs text-blue-400 hover:underline font-medium">Details →</a>
+          </div>
+          <p id="since-scope" class="text-[11px] text-gray-500 mb-3"></p>
+          <div id="since-headline" class="mb-3"></div>
+          <div id="since-rows"></div>
+          <p id="since-note" class="hidden sm:block mt-3 text-[11px] text-gray-600 leading-snug"></p>
+        </aside>
+        </div>
         </div>
       </div>
     </main>

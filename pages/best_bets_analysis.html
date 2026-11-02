@@ -260,6 +260,64 @@
           <p id="best-rules-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
         </section>
 
+        <!-- Each market's "Most profitable" rule rebuilt game day by game day: since its last change, and every rule in turn -->
+        <section id="since-section" class="card mb-4 scroll-mt-20" aria-labelledby="since-title">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="min-w-0">
+              <h2 id="since-title" class="text-sm font-bold text-gray-100">Most profitable since last change</h2>
+              <p id="since-sub" class="text-[11px] text-gray-500"></p>
+            </div>
+            <div id="since-y" class="inline-flex shrink-0 rounded border border-gray-600 overflow-hidden text-xs" role="group" aria-label="Chart the running">
+              <button type="button" data-y="units">Units</button>
+              <button type="button" data-y="roi">ROI</button>
+            </div>
+          </div>
+          <div id="since-body">
+            <div id="since-stats" class="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+            <div class="overflow-x-auto -mx-1 mt-4">
+              <table class="w-full text-sm sm:min-w-[52rem]">
+                <thead>
+                  <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                    <th class="px-2 py-2 text-left font-semibold">Sport · market</th>
+                    <th class="px-2 py-2 text-left font-semibold" title="The edge range Most profitable gives the market now, off where no range has made money">Rule now</th>
+                    <th class="px-2 py-2 text-left font-semibold" title="The game day whose results set the rule now, and the rule before it">Changed</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Settled bets the rule has let through since it changed (an off market: the bets with value it has left out)">Bets</th>
+                    <th class="px-2 py-2 text-right font-semibold">Won</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Profit at 1 unit a bet since the change">Units</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Return on 1 unit a bet since the change, with the 90% range">ROI</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="What the rule's range had made on the bets it was fitted to, when it was set: what it promised">When set</th>
+                    <th class="px-2 py-2 text-right font-semibold" title="Every rule the market has had in turn, each on the game days after the results that set it: what following Most profitable from the start would have got">Every rule</th>
+                  </tr>
+                </thead>
+                <tbody id="since-rows"></tbody>
+              </table>
+            </div>
+            <div id="since-detail" class="mt-4 rounded-lg border border-gray-700/70 p-3">
+              <h3 id="since-sel-title" class="text-xs font-semibold text-gray-100"></h3>
+              <p id="since-sel-sub" class="mt-1 text-[11px] text-gray-400 leading-snug"></p>
+              <div class="relative h-64 mt-2"><canvas id="since-chart" role="img" aria-label="Running profit by game day of the bets Most profitable let through: every rule in turn, and the rules now since they were set"></canvas></div>
+              <div class="overflow-x-auto -mx-1 mt-3">
+                <table class="w-full text-xs sm:min-w-[40rem]">
+                  <thead>
+                    <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+                      <th class="px-2 py-1.5 text-left font-semibold" title="The game day whose results set the rule">Set after</th>
+                      <th class="px-2 py-1.5 text-left font-semibold" id="since-th-market">Market</th>
+                      <th class="px-2 py-1.5 text-left font-semibold">Rule</th>
+                      <th class="px-2 py-1.5 text-left font-semibold" title="The game days it was bet on: from the day after it was set to the day whose results changed it">Bet on</th>
+                      <th class="px-2 py-1.5 text-right font-semibold">Bets</th>
+                      <th class="px-2 py-1.5 text-right font-semibold">Won</th>
+                      <th class="px-2 py-1.5 text-right font-semibold">Units</th>
+                      <th class="px-2 py-1.5 text-right font-semibold">ROI</th>
+                    </tr>
+                  </thead>
+                  <tbody id="since-periods"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <p id="since-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
+
         <section class="card mb-4" aria-labelledby="grid-title">
           <div class="flex items-start justify-between gap-3 flex-wrap mb-3">
             <div class="min-w-0">

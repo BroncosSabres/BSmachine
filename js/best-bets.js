@@ -41,15 +41,15 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
 import { installTapTips } from './tap-tips.js';
 import { openBooks } from './best-bets-books.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets } from './safe-stake.js';
-import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
-         edgeClass } from './best-bets-filters.js';
+         edgeClass, marketTitle, edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
          HIST_UNLISTED } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
-import { optimiseMarkets, judgeEdgeOf } from './best-bets-optimise.js';
+import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
 import { loadCalibration, cachedCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint,
          commissionOf } from './calibrate-client.js';
@@ -1827,6 +1827,7 @@ function trackBet(b, edgeOf) {
 }
 
 function renderTrackRecord() {
+  renderSinceChange();
   const t = TABS.find(x => x.key === tab);
   const at = bookBasis() ? 'best bookie odds' : 'average odds';
   const oddsLabel = oddsText(oddsRangeOf(prefs));
@@ -1894,6 +1895,142 @@ function renderTrackRecord() {
     + `Each band is as narrow as it can be with ${MIN_BAND_BETS} settled bets in it, so there are more bands as results come in. `
     + (fallbacks ? `${fallbacks} of these bets had no best bookie price recorded and count at the average. ` : '')
     + 'Settled from our own results data; voided bets excluded. Small samples swing a lot.';
+}
+
+// --- Most profitable since it last changed ------------------------------------
+// Each market's "Most profitable" rule rebuilt game day by game day from the
+// settled bets (best-bets-optimise.js rulesOverTime): when the rule it gives
+// now was set, and what the bets it has let through since have done - bets it
+// wasn't fitted on. Read as Most profitable reads them (the Filters' price,
+// odds range and judge), whatever rules the markets have in Filters now; the
+// tab and sport choose the markets. Kept while what it reads stays the same.
+let overTime = { rows: null, calib: null, key: null, report: null };
+function rulesNow() {
+  const edgeOf = settledRows && judgeEdgeOf(settledRows, prefs, calib);
+  if (!settledRows || edgeOf === undefined) return null;   // judging by the calibration: until it is in
+  const keys = modalKeys();
+  const key = [prefs.basis, prefs.judge, prefs.odds.join('-'), keys.join(',')].join('|');
+  if (overTime.rows !== settledRows || overTime.calib !== calib || overTime.key !== key) {
+    overTime = { rows: settledRows, calib, key, report: rulesOverTime(settledRows, prefs, keys, edgeOf) };
+  }
+  return overTime.report;
+}
+
+// A game day ('YYYY-MM-DD', the kickoff's UTC date): "25 Oct"
+const gameDay = d => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const unitsText = x => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}u`;
+const betCount = n => `${n} bet${n === 1 ? '' : 's'}`;
+// A market's running units since its rule changed, bet by bet in kickoff
+// order, as a step line like the odds histories: green while in profit, red
+// in a loss (a step across the dashed zero guide changes colour there), grey
+// at 0. A tick where each game day starts, dated underneath where there's room.
+function unitsWorm(r) {
+  const bets = [...r.since.bets].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1
+    : (a.row.kickoff_ts ?? 0) - (b.row.kickoff_ts ?? 0)));
+  if (!bets.length) return '';
+  const W = 240, H = 20, P = 2, LABEL = 10;
+  let run = 0;
+  const vals = [0, ...bets.map(b => (run += betProfit(b)))];
+  const lo = Math.min(...vals), hi = Math.max(...vals);   // 0 among them
+  const x = i => +(P + i / bets.length * (W - 2 * P)).toFixed(1);
+  const y = v => +(hi === lo ? H / 2 : H - P - (v - lo) / (hi - lo) * (H - 2 * P)).toFixed(1);
+  const sign = v => (v > 1e-9 ? 'up' : v < -1e-9 ? 'down' : 'flat');
+  // One path per colour, each piece its own move: a value held until the
+  // next bet settles, then the jump to the new one (split at zero)
+  const d = { up: '', down: '', flat: '' };
+  for (let i = 1; i <= bets.length; i++) {
+    const a = vals[i - 1], b = vals[i];
+    d[sign(a)] += `M${x(i - 1)},${y(a)}H${x(i)}`;
+    if (sign(a) !== sign(b) && sign(a) !== 'flat' && sign(b) !== 'flat') {
+      d[sign(a)] += `V${y(0)}`;
+      d[sign(b)] += `M${x(i)},${y(0)}V${y(b)}`;
+    } else {
+      d[sign(b) === 'flat' ? sign(a) : sign(b)] += `M${x(i)},${y(a)}V${y(b)}`;
+    }
+  }
+  const strokes = { up: SPARK_TONES.for, down: SPARK_TONES.against, flat: 'currentColor' };
+  const paths = Object.entries(d).filter(([, p]) => p)
+    .map(([k, p]) => `<path d="${p}" fill="none" stroke="${strokes[k]}" stroke-width="1.25" stroke-linejoin="round"/>`).join('');
+  // Game days: a tick where each starts, a date where it clears the last one
+  let ticks = '', labels = '', lastLabel = -Infinity;
+  bets.forEach((b, i) => {
+    if (i && b.date === bets[i - 1].date) return;
+    const at = x(i);
+    ticks += `<line x1="${at}" x2="${at}" y1="${H - 3}" y2="${H}" stroke="currentColor" stroke-width="0.75" opacity="0.7"/>`;
+    if (at - lastLabel < 34 || at > W - 24) return;
+    labels += `<text x="${at}" y="${H + LABEL - 1}" font-size="8" fill="currentColor"${i ? ' text-anchor="middle"' : ''}>${esc(gameDay(b.date))}</text>`;
+    lastLabel = at;
+  });
+  const end = vals.at(-1);
+  return `<svg width="${W}" height="${H + LABEL}" viewBox="0 0 ${W} ${H + LABEL}" class="block text-gray-500" aria-hidden="true">
+    <line x1="${P}" x2="${W - P}" y1="${y(0)}" y2="${y(0)}" stroke="currentColor" stroke-width="0.75" stroke-dasharray="2 2" opacity="0.6"/>
+    ${ticks}${paths}<circle cx="${x(bets.length)}" cy="${y(end)}" r="2" fill="${sign(end) === 'down' ? SPARK_TONES.against : sign(end) === 'up' ? SPARK_TONES.for : '#fbbf24'}"/>${labels}</svg>`;
+}
+
+function renderSinceChange() {
+  const t = TABS.find(x => x.key === tab);
+  const at = bookBasis() ? 'best bookie odds' : 'average odds';
+  const oddsLabel = oddsText(oddsRangeOf(prefs));
+  $('since-scope').textContent = `${t.label}${sport === 'all' ? '' : ' · ' + SPORT_LABELS[sport]}${oddsLabel ? ` · ${oddsLabel}` : ''} · `
+    + `each market's rule as Most profitable set it after each game day's results · 1 unit a bet at the ${at} averaged while they showed value`;
+  const report = rulesNow();
+  if (!report) {
+    $('since-headline').innerHTML = '';
+    $('since-rows').innerHTML = stakesFailed ? ''
+      : `<div class="space-y-1.5">${Array.from({ length: 4 }, () => '<span class="bsm-skeleton h-7 w-full block"></span>').join('')}</div>`;
+    $('since-note').textContent = stakesFailed ? 'Could not load results. Try again in a moment.' : '';
+    return;
+  }
+  const keys = modalKeys().filter(k => t.kinds.includes(k.split('|')[1].replace(':3', '')) && (sport === 'all' || k.startsWith(`${sport}|`)));
+  const on = keys.filter(k => report[k]?.status === 'on'), off = keys.filter(k => report[k]?.status === 'off');
+  const thin = keys.length - on.length - off.length;
+  const total = on.reduce((a, k) => {
+    const s = report[k].since;
+    return { n: a.n + s.n, wins: a.wins + s.wins, units: a.units + s.units };
+  }, { n: 0, wins: 0, units: 0 });
+  const label = judgeLabel(fprefs());
+  const edgeOn = r => { const t = edgeText(typedRange(r.edge, 0.01)); return t === 'any edge' ? `any ${label}` : `${label} ${t}`; };
+  const ruleText = r => (r.status === 'on' ? edgeOn(r) : r.status === 'off' ? 'off' : 'not set');
+
+  $('since-headline').innerHTML = on.length ? `
+    <div class="flex items-baseline gap-2">
+      <span class="text-2xl font-bold tabular-nums text-gray-100">${total.n ? unitsText(total.units) : '–'}</span>
+      ${total.n ? `<span class="text-xs font-semibold ${signCls(total.units)}">${signedPct(total.units / total.n)} ROI</span>` : ''}
+    </div>
+    <div class="text-[11px] text-gray-500">${total.n ? `${betCount(total.n)}, ${wonCount(total.wins)} won` : 'No settled bets yet'} · ${on.length} market${on.length === 1 ? '' : 's'} on since ${on.length === 1 ? 'its' : 'their'} last change</div>`
+    : `<div class="text-xs text-gray-500">${off.length ? 'Most profitable has every market here switched off.' : 'Too few settled bets here for Most profitable to set a rule yet.'}</div>`;
+
+  const row = k => {
+    const r = report[k], s = r.since, isOn = r.status === 'on';
+    const was = r.prev && r.prev.status !== 'thin' ? ` (was ${ruleText(r.prev)})` : ' (first set then)';
+    const fitted = `When set, it had made ${unitsText(r.units)} on ${betCount(r.n)}${r.roi != null ? ` (${signedPct(r.roi)})` : ''}${isOn ? ' in that range' : ' with value'}.`;
+    const title = isOn
+      ? `${marketTitle(k)}: ${ruleText(r)} since the results of ${gameDay(r.changed)}${was}. ${fitted} Since: ${s.n ? `${unitsText(s.units)} on ${betCount(s.n)}, ${wonCount(s.wins)} won (${signedPct(s.roi)})` : 'no settled bets yet'}.`
+      : `${marketTitle(k)}: switched off since the results of ${gameDay(r.changed)}${was}. ${fitted} The bets with value it has left out since: ${s.n ? `${unitsText(s.units)} on ${betCount(s.n)} (${signedPct(s.roi)})` : 'none yet'}.`;
+    return `<div class="py-1.5 border-t border-gray-700/60${isOn ? '' : ' opacity-60'}" title="${esc(title)}">
+      <div class="flex items-baseline justify-between gap-2 text-xs">
+        <span class="min-w-0 truncate font-semibold text-gray-200">${esc(marketTitle(k))}</span>
+        <span class="shrink-0 tabular-nums font-semibold ${isOn && s.n ? signCls(s.units) : 'text-gray-500'}">${isOn ? (s.n ? unitsText(s.units) : '–') : 'Off'}</span>
+      </div>
+      <div class="flex items-baseline justify-between gap-2 text-[11px] text-gray-500 tabular-nums">
+        <span class="min-w-0 truncate">${isOn ? `${esc(ruleText(r))} · ` : ''}since ${gameDay(r.changed)}</span>
+        <span class="shrink-0">${isOn ? (s.n ? `${betCount(s.n)} · ${signedPct(s.roi, 0)}` : 'no bets yet')
+          : s.n ? `left out ${s.n}: ${unitsText(s.units)}` : 'none left out'}</span>
+      </div>
+      ${s.n ? `<div class="mt-0.5 max-w-full overflow-hidden leading-none">${unitsWorm(r)}</div>` : ''}
+    </div>`;
+  };
+  // Most profit first (more bets first on a tie); then the markets off, the
+  // most their left-out bets lost first
+  const won = k => report[k].since.units;
+  on.sort((a, b) => won(b) - won(a) || report[b].since.n - report[a].since.n);
+  off.sort((a, b) => won(a) - won(b));
+  $('since-rows').innerHTML = [...on, ...off].map(row).join('');
+  $('since-note').textContent = 'Most profitable is rebuilt as it stood after each game day (kickoff date, UTC): a market\'s rule changes when a day\'s results move the edge range that has made the most units, or switch it off. '
+    + 'Only bets from game days after the change count, so none of them chose the rule. A rule that starts losing tends to be changed, though, which starts its count again, '
+    + 'so these figures flatter it: the analysis page has the record of every rule in turn. '
+    + (thin ? `${thin} market${thin === 1 ? '' : 's'} with under ${OPT_MIN_BETS} settled bets ${thin === 1 ? 'has' : 'have'} no rule yet. ` : '')
+    + 'Hover a market for what it was before.';
 }
 
 // The tracked picks: the track record's pending count

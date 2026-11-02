@@ -14,7 +14,7 @@
 // units won. It is fitted to the past, so it flatters what comes next.
 import { toBet } from './safe-stake.js';
 import { profit, dropEmptyMarkets, onePerMarket, edgeCuts } from './roi-stats.js';
-import { oddsRangeOf, inRange, ruleFor, edgeField } from './best-bets-filters.js';
+import { oddsRangeOf, inRange, ruleFor, edgeField, typedRange } from './best-bets-filters.js';
 import { overrounds } from './calibrate.js';
 import { calibrateBet, closeBet } from './calibrate-client.js';
 
@@ -102,14 +102,73 @@ const typedPct = x => (isFinite(x) && x > 0 ? String(+(x * 100).toFixed(1)) : ''
 export function optimiseMarkets(rows, prefs, keys, edgeOf = null) {
   const bets = optimiseBets(rows, prefs, edgeOf);
   const out = {};
+  for (const key of keys) out[key] = marketRule(bets.filter(b => b.group === key));
+  return out;
+}
+
+// One market's optimiseBets -> its optimiseMarkets entry
+function marketRule(mine) {
+  const units = mine.reduce((a, b) => a + profit(b), 0);
+  const all = { n: mine.length, units, roi: mine.length ? units / mine.length : null };
+  if (mine.length < OPT_MIN_BETS) return { status: 'thin', ...all };
+  const best = bestEdgeRange(mine);
+  return best ? { status: 'on', n: best.n, units: best.units, roi: best.roi, edge: [typedPct(best.lo), typedPct(best.hi)] }
+    : { status: 'off', ...all };
+}
+
+// A rule as the Filters would hold it: the same text, the same rule
+const ruleId = r => (r.status === 'on' ? `on ${r.edge.join('-')}` : r.status);
+// Whether a bet (of the rule's market) is one an 'on' rule lets through, as
+// the Filters read the range it writes (both ends included)
+const takes = (rule, b) => rule.status === 'on' && b.edge > 0 && inRange(b.edge, typedRange(rule.edge, 0.01));
+const tally = bets => {
+  const units = bets.reduce((a, b) => a + profit(b), 0);
+  return { bets, n: bets.length, wins: bets.reduce((a, b) => a + b.win, 0), units, roi: bets.length ? units / bets.length : null };
+};
+
+// "Most profitable" day by day: each market's rule as it stood once each game
+// day's results were in (optimiseMarkets on the bets of that day and before,
+// game days by kickoff date), so what it has done since it last changed is
+// out of sample. Bets of a game day count under the rule set before it.
+// -> { key: {
+//      ...the rule now (optimiseMarkets' entry: status, edge, and n / units /
+//         roi of the bets it was fitted to),
+//      changed   the game day whose results set the rule now (null: thin)
+//      prev      the rule before that (an entry as above), or null
+//      since     tally of the bets since: those the rule lets through ('on'),
+//                every bet with value it left out ('off'), none ('thin')
+//      periods   [{ set, to, rule, ...tally }]: each stretch one rule stood,
+//                oldest first, set by the results of game day `set`, its
+//                bets from the game days after it up to `to`, whose results
+//                changed it (null: still standing), counted as `since`
+//      value     every bet of the market (optimiseBets: edge > 0, in the odds
+//                range), oldest first: betting all of them, for comparison }, ... }
+// tally: { bets, n, wins, units, roi }.
+export function rulesOverTime(rows, prefs, keys, edgeOf = null) {
+  const bets = optimiseBets(rows, prefs, edgeOf);
+  const days = [...new Set(bets.map(b => b.date))].sort();
+  const out = {};
   for (const key of keys) {
-    const mine = bets.filter(b => b.group === key);
-    const units = mine.reduce((a, b) => a + profit(b), 0);
-    const all = { n: mine.length, units, roi: mine.length ? units / mine.length : null };
-    if (mine.length < OPT_MIN_BETS) { out[key] = { status: 'thin', ...all }; continue; }
-    const best = bestEdgeRange(mine);
-    out[key] = best ? { status: 'on', n: best.n, units: best.units, roi: best.roi, edge: [typedPct(best.lo), typedPct(best.hi)] }
-      : { status: 'off', ...all };
+    const mine = bets.filter(b => b.group === key).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    // The rule after each day's results; a period opens where it changes
+    const periods = [];
+    let upto = 0, rule = { status: 'thin', n: 0, units: 0, roi: null };
+    for (const day of days) {
+      while (upto < mine.length && mine[upto].date <= day) upto++;
+      const next = marketRule(mine.slice(0, upto));
+      if (periods.length && ruleId(next) === ruleId(rule)) continue;
+      if (periods.length) periods.at(-1).to = day;
+      periods.push({ set: day, to: null, rule: next });
+      rule = next;
+    }
+    for (const p of periods) {
+      const inside = mine.filter(b => b.date > p.set && (p.to == null || b.date <= p.to));
+      Object.assign(p, tally(p.rule.status === 'on' ? inside.filter(b => takes(p.rule, b)) : p.rule.status === 'off' ? inside : []));
+    }
+    const last = periods.at(-1) || { set: null, rule, ...tally([]) };
+    const prev = periods.length > 1 ? periods.at(-2).rule : null;
+    const { set, to, rule: now, ...since } = last;
+    out[key] = { ...now, changed: now.status === 'thin' ? null : set, prev, since, periods, value: mine };
   }
   return out;
 }
