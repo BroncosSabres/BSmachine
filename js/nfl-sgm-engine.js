@@ -163,8 +163,15 @@ export function teamYardsBase(tp, kind, n, points, margin, terms) {
   const m = Math.min(Math.max(margin, -clip), clip);
   let mu = c.intercept + c.td * n + c.other_pts * (points - 7 * n)
     + c.trail * Math.min(m, 0) + c.lead * Math.max(m, 0);
-  for (const t of terms) mu += c[t] || 0;
+  // A term is a name, or [name, share] for a blend of weather variants
+  for (const t of terms) mu += Array.isArray(t) ? (c[t[0]] || 0) * t[1] : (c[t] || 0);
   return Math.max(mu, tp.floor);
+}
+
+// A yards context's weather terms: the variant blend's shares when the
+// backend sent them, else the names (nfl_player_model.ctx_terms)
+export function ctxTerms(ctx) {
+  return ctx.term_weights || ctx.terms;
 }
 
 export function pickYardsShare(yp, kind, pl) {
@@ -292,11 +299,12 @@ export function sideYardsFactor(yp, ctx, keyDists, tdDist, tables, kinds, points
   const needP = kinds.some(k => YARDS_TEAM_KIND[k] === 'pass');
   const needR = kinds.some(k => YARDS_TEAM_KIND[k] === 'rush');
   const K = kinds.length, C = yp.td_cap + 1, { vals, done, pass } = scratch;
+  const terms = ctxTerms(ctx);
   let total = 0;
   tdDist.forEach((pn, n) => {
     if (!pn || n >= keyDists.length || !keyDists[n].size) return;
-    const muP = needP ? teamYardsBase(tp, 'pass', n, points, margin, ctx.terms) * Math.exp(ctx.adj_pass) : 0;
-    const muR = needR ? teamYardsBase(tp, 'rush', n, points, margin, ctx.terms) * Math.exp(ctx.adj_rush) : 0;
+    const muP = needP ? teamYardsBase(tp, 'pass', n, points, margin, terms) * Math.exp(ctx.adj_pass) : 0;
+    const muR = needR ? teamYardsBase(tp, 'rush', n, points, margin, terms) * Math.exp(ctx.adj_rush) : 0;
     const nodes = teamYardsNodes(yp, muP, muR, needP, needR);
     const N = nodes.length;
     done.fill(0);
@@ -392,13 +400,13 @@ export function expectedYards(gs, side, kind, pl) {
   const [a, b] = yardsPickSpec(yp, kind, pl.pos, pickYardsShare(yp, kind, pl));
   const atom = kind === 'pass_yds' ? pl.pass_td_share
     : (1 - team.dst_frac) * (kind === 'rush_yds' ? (1 - team.pass_frac) * pl.rush_share : team.pass_frac * pl.rec_share);
-  const tk = YARDS_TEAM_KIND[kind];
+  const tk = YARDS_TEAM_KIND[kind], terms = ctxTerms(ctx);
   let num = 0, den = 0;
   for (const bn of bins) {
     const margin = side === 'home' ? bn.m : -bn.m, points = (bn.t + margin) / 2;
     (bn[side === 'home' ? 'h_td' : 'a_td'] || [1]).forEach((pn, n) => {
       if (!pn) return;
-      const mu = teamYardsBase(yp.team, tk, n, points, margin, ctx.terms) * Math.exp(tk === 'pass' ? ctx.adj_pass : ctx.adj_rush);
+      const mu = teamYardsBase(yp.team, tk, n, points, margin, terms) * Math.exp(tk === 'pass' ? ctx.adj_pass : ctx.adj_rush);
       num += bn.c * pn * (a * mu + b * Math.min(n * atom, yp.td_cap));
     });
     den += bn.c;
