@@ -14,7 +14,8 @@
 // - System multi: every combination of N legs at each size from the smallest
 //   asked, staked per size by Kelly on the page's bank and Risk level, at the
 //   cautious chances the Stake column stakes on (multi-system.js), or a set
-//   amount spread in the same proportions.
+//   amount spread in the same proportions. Swing re-splits that total as a
+//   ladder over every size, as far as a profit chance asked for allows, live.
 // The searches run in Workers (multi-gen-worker.js). Chances are the
 // model's, or the calibrated ones when Filters judges by them (and the
 // calibration is in). Legs come from the games starting up to a day chosen
@@ -30,7 +31,7 @@ import { calibrateBet, commissionOf } from './calibrate-client.js';
 import { edgeAt } from './calibrate.js';
 import { refundRate, evOf, RANKS, comparer } from './multi-gen.js';
 import { nearestN, oddsWindow, COMBO_SIZES, MAX_COMBOS, COMBO_RANKS, comboComparer } from './multi-combos.js';
-import { MAX_SYSTEM_LEGS, SYSTEM_RANKS, systemComparer, legGrowth } from './multi-system.js';
+import { MAX_SYSTEM_LEGS, SYSTEM_RANKS, systemComparer, legGrowth, systemStats, swingTarget, swingPick, swingStakes } from './multi-system.js';
 import { RISK_LEVELS, kellyFraction } from './safe-stake.js';
 import { gameState, legOf, familyOf, SGM_SPORTS } from './sgm-legs.js';
 import { tile, legRow, combosSummaryHtml, combosCardHtml, combosText, systemCardHtml, systemText } from './best-bets-multi-views.js';
@@ -55,7 +56,7 @@ const DEFAULTS = { type: 'insurance', kind: 'regular', book: '', n: '3', k: '2',
                    sportsOff: [], marketsOff: [], valueOnly: false, myFilters: true, gamesOff: [], gamesOnly: null, game: '',
                    stake: '50', cap: '50', refund: 'bonus', bonusPct: '75', sort: 'lose',
                    bonusTotal: '50', bets: '10', per: 'any', target: '5', tol: '25', sameGame: false, comboSort: 'ev',
-                   sysN: '4', sysMin: '2', spend: '', sysSort: 'growth' };
+                   sysN: '4', sysMin: '2', spend: '', sysSort: 'growth', sysSwing: '0' };
 
 function loadSettings() {
   let s = {};
@@ -71,7 +72,8 @@ function loadSettings() {
            sort: rankOf(s.sort) || DEFAULTS.sort,
            bonusTotal: str('bonusTotal'), bets: str('bets'), per: ['any', ...COMBO_SIZES.map(String)].includes(s.per) ? s.per : DEFAULTS.per,
            target: str('target'), tol: str('tol'), sameGame: !!s.sameGame, comboSort: COMBO_RANKS.includes(s.comboSort) ? s.comboSort : DEFAULTS.comboSort,
-           sysN: str('sysN'), sysMin: str('sysMin'), spend: str('spend'), sysSort: SYSTEM_RANKS.includes(s.sysSort) ? s.sysSort : DEFAULTS.sysSort };
+           sysN: str('sysN'), sysMin: str('sysMin'), spend: str('spend'), sysSort: SYSTEM_RANKS.includes(s.sysSort) ? s.sysSort : DEFAULTS.sysSort,
+           sysSwing: str('sysSwing') };
 }
 
 let settings = loadSettings();
@@ -467,7 +469,7 @@ function finishCombos(perK, marginals) {
 }
 
 // System multis: the sizes from the smallest asked to every leg, staked by
-// Kelly at the legs' cautious chances
+// Kelly at the legs' cautious chances (then swung: applySwing)
 async function generateSystem() {
   const { legs, byId, lockIds, missing } = runLegs();
   const s = { ...settings }, n = num(s.sysN), ks = [];
@@ -477,7 +479,7 @@ async function generateSystem() {
           nLegs: legs.length, nGroups: new Set(legs.map(l => l.game)).size };
   renderResults();
   try {
-    const out = await runJob({ id, type: 'system', n, ks, top: TOP, locked: lockIds,
+    const out = await runJob({ id, type: 'system', n, ks, locked: lockIds,
                                legs: legs.map(({ id: lid, group, sig, price, p, pStake }) => ({ id: lid, group, sig, price, p, pStake })) });
     if (run?.id !== id) return;
     const r = run;
@@ -486,11 +488,39 @@ async function generateSystem() {
     results = { ...out, type: 'system', ks, settings: r.settings, book: r.book, basis: r.basis, missing: r.missing, at: Date.now(),
                 nLegs: r.nLegs, nGroups: r.nGroups, staked: legs.filter(l => legGrowth(l.pStake ?? 0, l.price) > 0).length,
                 secs: (Date.now() - r.started) / 1000,
-                results: out.results.map(x => ({ ...x, legs: x.legs.map(legOfId) })).sort(systemComparer(settings.sysSort)) };
+                results: out.results.map(x => ({ ...x, legs: x.legs.map(legOfId) })) };
+    applySwing();
     renderResults();
   } catch (err) {
     if (run?.id === id) fail(err.message);
   }
+}
+
+// The system multis at the Swing now: the profit chance it asks for, and
+// each one's stakes and stats at the most swing keeping its chance at least
+// that (none: Kelly's), ranked again: unswung by Kelly's growth, swung by EV
+// at the cautious chances (all at about the same profit chance). Live: no search.
+function applySwing() {
+  if (results?.type !== 'system' || !results.results) return;
+  const ks = results.ks, target = swingTarget(results.results, num(settings.sysSwing, 0));
+  results.target = target;
+  for (const r of results.results) {
+    const pick = swingPick(r, target);
+    r.s = swingStakes(r, ks, pick.r);
+    r.stats = systemStats(r.legs.map(l => l.price), r.legs.map(l => l.p), ks, r.s);
+    // Multis whose profit chance can't reach the target even at Kelly's split
+    // (short) keep it and go below those that can, in their own order of EV
+    r.short = target != null && pick.pProfit < target - 1e-9;
+    r.score = target == null ? r.growth : (pick.ev ?? -1e3) - (r.short ? 1e6 : 0);
+  }
+  results.results.sort(systemComparer(settings.sysSort));
+}
+
+// The Swing in words: Kelly's, or the profit chance it keeps
+function swingText() {
+  if (!(num(settings.sysSwing, 0) > 0)) return 'Steady (Kelly)';
+  const t = results?.type === 'system' ? results.target : null;
+  return t != null ? `Profit chance ≥ ${pct(t)}` : 'Generate to see';
 }
 
 // How a system multi's stakes are sized now (the bank, Risk level and Spend
@@ -499,14 +529,17 @@ async function generateSystem() {
 function stakeOf(res) {
   const risk = RISK_LEVELS[ctx?.stake?.risk] || RISK_LEVELS.medium, k = kellyFraction(risk);
   const bank = ctx?.stake?.balance, spend = num(settings.spend);
+  const swung = results?.target != null;
+  const spread = swung ? 'of the Swing' : 'Kelly gives them';
+  const aimed = swung ? " Kelly's total, split over every size for the Swing: as far towards the bigger combos as keeps the profit chance asked for, so more EV and a wider spread but less growth than Kelly's split." : '';
   if (spend > 0) {
     const total = res.s.reduce((t, x, j) => t + x * res.stats.levels[j].count, 0);
     return { unit: total > 0 ? spend / total : 0, dollars: true,
-             label: `${money(spend)} spread over the sizes in the proportions Kelly gives them (Spend). Clear Spend for stakes from your bank.` };
+             label: `${money(spend)} spread over the sizes in the proportions ${spread} (Spend). Clear Spend for stakes from your bank.` };
   }
   return bank
-    ? { unit: k * bank, dollars: true, label: `${k.toFixed(2)} × Kelly on your ${money(bank)} bank at ${risk.label} risk: ${risk.text}. Kelly at the legs' cautious chances, as the Stake column's.` }
-    : { unit: k, dollars: false, label: `${k.toFixed(2)} × Kelly at ${risk.label} risk, as shares of your bank (type your bank at the top for dollars). Kelly at the legs' cautious chances, as the Stake column's.` };
+    ? { unit: k * bank, dollars: true, label: `${k.toFixed(2)} × Kelly on your ${money(bank)} bank at ${risk.label} risk: ${risk.text}. Kelly at the legs' cautious chances, as the Stake column's.${aimed}` }
+    : { unit: k, dollars: false, label: `${k.toFixed(2)} × Kelly at ${risk.label} risk, as shares of your bank (type your bank at the top for dollars). Kelly at the legs' cautious chances, as the Stake column's.${aimed}` };
 }
 
 // --- rendering --------------------------------------------------------------------------
@@ -588,6 +621,8 @@ function fillForm() {
   $('mg-sys-n').value = s.sysN;
   $('mg-sys-min').value = s.sysMin;
   $('mg-spend').value = s.spend;
+  $('mg-sys-swing').value = num(s.sysSwing, 0);
+  $('mg-swing-text').textContent = swingText();
 }
 
 // The form into the settings, then saved
@@ -598,6 +633,7 @@ function readForm() {
                refund: $('mg-refund').value === 'cash' ? 'cash' : 'bonus', bonusPct: v('mg-bonus'),
                bonusTotal: v('mg-bonus-total'), bets: v('mg-bets'), per: $('mg-per').value || 'any', target: v('mg-target'), tol: v('mg-tol'),
                sameGame: $('mg-same').checked, sysN: v('mg-sys-n'), sysMin: v('mg-sys-min'), spend: v('mg-spend'),
+               sysSwing: $('mg-sys-swing').value,
                book: $('mg-book').value || settings.book, until: +$('mg-until').value || 0,
                game: sgmKind() ? $('mg-game').value || settings.game : settings.game };
   saveSettings();
@@ -756,7 +792,8 @@ function renderResults() {
   const shown = shownResults();
   const sortSel = `<label class="flex items-center gap-1.5 text-xs text-gray-400" title="The order the results are shown in">Sort by
     <select data-sort class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-xs text-white">${
-      ranks.map(x => `<option value="${x}"${x === sortNow ? ' selected' : ''}>${RANK_LABELS[x]}</option>`).join('')}</select></label>`;
+      ranks.map(x => `<option value="${x}"${x === sortNow ? ' selected' : ''}>${
+        type === 'system' && x === 'growth' && out.target != null ? 'EV at this profit chance' : RANK_LABELS[x]}</option>`).join('')}</select></label>`;
   const what = type === 'combos' ? 'set' : 'multi';
   const cut = type === 'combos' ? out.perK.some(pk => pk.best && !pk.complete) : type === 'insurance' && !out.complete;
   const head = `<div class="flex items-start justify-between gap-3 flex-wrap"><p class="text-xs text-gray-500 min-w-0 flex-1">${
@@ -814,7 +851,7 @@ function renderSystem(box, top, shown) {
     return;
   }
   const lockedIds = new Set(locked.keys());
-  box.innerHTML = top + shown.map((r, i) => systemCardHtml(r, i, out, { stake: stakeOf(r), sortBy: settings.sysSort, lockedIds })).join('');
+  box.innerHTML = top + shown.map((r, i) => systemCardHtml(r, i, out, { stake: stakeOf(r), sortBy: settings.sysSort, lockedIds, swing: out.target != null ? swingText() : '' })).join('');
 }
 
 function legsText(res, out) {
@@ -824,7 +861,7 @@ function legsText(res, out) {
 }
 
 const copyText = (res, out) => (out.type === 'combos' ? combosText(res, out, num(settings.bonusTotal, num(out.settings.bonusTotal, 0)))
-  : out.type === 'system' ? systemText(res, out, stakeOf(res)) : legsText(res, out));
+  : out.type === 'system' ? systemText(res, out, stakeOf(res), out.target != null ? swingText() : '') : legsText(res, out));
 
 const NOTES = {
   insurance: 'Insurance multis from every selection the bookie prices, at its price when last checked (each leg shows how long ago: '
@@ -850,7 +887,12 @@ const NOTES = {
     + "each size, as a bookie's system or combo betslip takes them. The stakes are Kelly's: the shares of the bank that grow it fastest over "
     + 'every way the legs can finish, at the cautious chances the Stake column stakes on (the calibrated or predicted-close edge\'s 90% low end, '
     + "or the model's edge cut to what settled bets like it have proven), times the Risk level's fraction - or a Spend amount split in the same "
-    + 'proportions. Legs are only those with such an edge, one a game, ranked by the bank growth they make. Expected profit and the chances '
+    + 'proportions. Legs are only those with such an edge, one a game, ranked by the bank growth they make. Swing keeps that total but '
+    + 'spreads it over every size as a ladder: each combo of a size gets a set multiple of the stake on a combo of the size below (the middle '
+    + "of it is the bookies' full cover, the same stake on every combo), so the smaller combos inside a big one pay something back when it "
+    + 'loses. The slider sets it by the chance of a profit you want to keep: each multi goes as far towards the big combos as keeps its profit '
+    + 'chance at least that, for more EV, a wider spread and a bigger top prize, but less growth; the chance of nothing back stays that of the '
+    + 'smallest size. Swung, multis are ranked by EV (at the cautious chances). The stake (Risk, bank or Spend) scales the mean and SD together. Expected profit and the chances '
     + "shown are at the legs' chances shown (the model's or calibrated). Prices are the bookie's when last checked: check them before you bet.",
 };
 
@@ -872,7 +914,9 @@ function bind() {
   $('mg-form').addEventListener('input', () => {
     readForm();
     renderPoolNote();
-    // The bonus to split and the amount to spend scale the results shown
+    // The bonus to split, the amount to spend and the swing change the results shown
+    if (results && !results.error && results.type === 'system' && !run) applySwing();
+    $('mg-swing-text').textContent = swingText();
     if (results && !results.error && results.type !== 'insurance' && !run) renderResults();
   });
   $('mg-form').addEventListener('change', e => {
@@ -944,6 +988,36 @@ function bind() {
     saveSettings();
     renderResults();
   });
+  // A system multi's curve: the chance of at least the profit under the pointer
+  let pdfOn = null;
+  const pdfOff = () => {
+    if (!pdfOn) return;
+    pdfOn.querySelector('[data-pdf-tip]').classList.add('hidden');
+    pdfOn.querySelector('[data-pdf-x]').classList.add('hidden');
+    pdfOn = null;
+  };
+  $('mg-results').addEventListener('pointermove', e => {
+    const box = e.target.closest('[data-pdf]');
+    if (box !== pdfOn) pdfOff();
+    if (!box) return;
+    pdfOn = box;
+    const [lo, hi, total, dollars] = box.dataset.pdf.split(',').map(Number);
+    const sf = box.dataset.sf.split(',').map(Number);
+    const rect = box.querySelector('svg').getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const g = Math.round(f * (sf.length - 1)), v = lo + (hi - lo) * g / (sf.length - 1);
+    const amt = dollars ? `${v < 0 ? '-' : '+'}${money(Math.abs(v) * total)}` : signedPct(v);
+    const tip = box.querySelector('[data-pdf-tip]'), line = box.querySelector('[data-pdf-x]');
+    tip.textContent = `${pct(sf[g])} chance of ${amt} or better`;
+    tip.style.left = `${f * 100}%`;
+    tip.style.transform = `translateX(${f > 0.6 ? '-100%' : '0'}) translateX(${f > 0.6 ? '-6px' : '6px'})`;
+    tip.classList.remove('hidden');
+    const xv = (f * 300).toFixed(2);
+    line.setAttribute('x1', xv);
+    line.setAttribute('x2', xv);
+    line.classList.remove('hidden');
+  });
+  $('mg-results').addEventListener('pointerleave', pdfOff);
   $('mg-results').addEventListener('input', e => {
     const q = e.target.closest('[data-quote]');
     const res = q && results?.results?.[q.dataset.quote];

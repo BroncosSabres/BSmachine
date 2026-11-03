@@ -15,6 +15,19 @@
 // prod(f_i, i in S) x prod(1 - f_j, j not in S)), and the growth is the legs'
 // own growths added up. That is how legs are shortlisted (searchSystem).
 //
+// The swing keeps Kelly's total and splits it over every size as a ladder:
+// each combo of a size staked r times a combo of the size below (the shape
+// of betting the legs one after another with a share of each win riding on,
+// r = share / (1 - share)), so every size has a stake and the smaller combos
+// inside a big one pay something back when it loses. r = 1 is the bookies'
+// full cover (the same stake on every combo); past it, more on the big
+// combos: more EV, a wider spread and a bigger top prize, but less growth.
+// The chance of nothing back stays that of the smallest size. In tests it
+// gave up at most ~1.5% EV against the best split of two sizes with the same
+// SD, which leaves nothing back on everything below them. The page sets it by
+// the chance of a profit asked for: each multi takes the most swing (the
+// largest r) that keeps its profit chance at least that (ladderCurve).
+//
 // A leg here is { id, group, sig, price, p, pStake }: p, its chance (the
 // judge's, for EV and the chances shown); pStake, the cautious chance the
 // stakes are worked out on.
@@ -129,7 +142,9 @@ export function kellyLevels(prices, ps, ks) {
 
 // What stakes s per combo (one per size in ks) do, at chances ps: per $1
 // staked in all, the expected profit (ev), the chance of a profit, of nothing
-// back at all, and the 10th / 50th / 90th percentiles of the profit; and per
+// back at all, the SD and 10th / 50th / 90th percentiles of the profit, the
+// profit when every leg wins (top) and every way's profit with its chance
+// (profit, prob); and per
 // size its expected return per $1 (ev) and the chance any of its combos wins.
 export function systemStats(prices, ps, ks, s) {
   const n = prices.length;
@@ -143,7 +158,7 @@ export function systemStats(prices, ps, ks, s) {
     for (let w = 0; w < prob.length; w++) if (wins[w] >= k) pReturn += prob[w];
     return { k, count: counts[j], s: s[j], ev: ex[k] / counts[j] - 1, pReturn };
   });
-  if (!(total > 0)) return { total: 0, levels, ev: null, pProfit: 0, pNothing: 1, p10: null, median: null, p90: null };
+  if (!(total > 0)) return { total: 0, levels, ev: null, sd: null, pProfit: 0, pNothing: 1, p10: null, median: null, p90: null, top: null, profit: null, prob };
   const W = prob.length, profit = new Float64Array(W);
   let ev = 0, pProfit = 0, pNothing = 0;
   for (let w = 0; w < W; w++) {
@@ -154,22 +169,27 @@ export function systemStats(prices, ps, ks, s) {
     if (profit[w] > 1e-12) pProfit += prob[w];
     if (back <= 1e-15) pNothing += prob[w];
   }
+  let v = 0;
+  for (let w = 0; w < W; w++) v += prob[w] * (profit[w] - ev) ** 2;
   const order = Array.from({ length: W }, (_, w) => w).sort((a, b) => profit[a] - profit[b]);
   const at = q => {
     let run = 0;
     for (const w of order) { run += prob[w]; if (run >= q - 1e-12) return profit[w]; }
     return profit[order[W - 1]];
   };
-  return { total, levels, ev, pProfit, pNothing, p10: at(0.1), median: at(0.5), p90: at(0.9) };
+  return { total, levels, ev, sd: Math.sqrt(v), pProfit, pNothing, p10: at(0.1), median: at(0.5), p90: at(0.9), top: profit[W - 1], profit, prob };
 }
 
-// The best `top` system multis of n legs, one per group, the locked legs in
+// The best system multis of n legs, one per group, the locked legs in
 // every one, over the sizes ks. Sets are shortlisted by their legs' growths
 // added up (exact branch and bound: the best `shortlist` by that, sets that
 // differ only in a leg's line once), then each is staked by kellyLevels at the
-// cautious chances and ranked by the growth that makes.
-// -> { results: [{ legs, s, growth, stats }], groups, reason }
-export function searchSystem(legs, { n, ks, top = 10, locked = [], shortlist = 30 } = {}) {
+// cautious chances and ranked by the growth that makes; each with Kelly's
+// total (total: a share of the bank) and stakes (kellyS) and its ladder's
+// profit chances and EVs (ladder), for the page to swing it.
+// Every set shortlisted comes back (the page ranks them again at a swing).
+// -> { results: [{ legs, s, kellyS, growth, stats, total, ladder }], groups, reason }
+export function searchSystem(legs, { n, ks, locked = [], shortlist = 30 } = {}) {
   const none = reason => ({ results: [], groups: 0, reason });
   const ok = l => l.p > 0 && l.p < 1 && l.price > 1;
   const lockSet = new Set(locked);
@@ -222,19 +242,80 @@ export function searchSystem(legs, { n, ks, top = 10, locked = [], shortlist = 3
   dfs(0, r0, lockedLegs.reduce((t, l) => t + growthOf(l), 0));
   const results = best.map(({ legs: ls }) => {
     const prices = ls.map(l => l.price);
-    const k = kellyLevels(prices, ls.map(l => Math.min(0.999999, Math.max(1e-6, l.pStake ?? 1 / l.price))), ks);
-    return { legs: ls, s: k.s, growth: k.growth, stats: systemStats(prices, ls.map(l => l.p), ks, k.s) };
+    const ps = ls.map(l => Math.min(0.999999, Math.max(1e-6, l.pStake ?? 1 / l.price)));
+    const k = kellyLevels(prices, ps, ks);
+    const counts = ks.map(kk => Math.round(binom(prices.length, kk)));
+    const total = k.s.reduce((t, x, j) => t + x * counts[j], 0);
+    const { profit, prob, ...stats } = systemStats(prices, ls.map(l => l.p), ks, k.s);
+    const res = { legs: ls, s: k.s, kellyS: k.s, growth: k.growth, stats, total };
+    return { ...res, ladder: ladderCurve(res, ks, ls.map(l => l.p), ps) };
   });
-  results.sort((a, b) => b.growth - a.growth || (b.stats.ev ?? -Infinity) - (a.stats.ev ?? -Infinity));
-  return { results: results.slice(0, top), groups: G, shortlisted: best.length };
+  results.sort(systemComparer('growth'));
+  return { results, groups: G, shortlisted: best.length };
 }
 
-// The orders the page can show system multis in: 'growth' (Kelly's, the
-// search's order) or 'ev', highest first
+// The ladder's ratios tried: 0.1 to 10, evenly in log (1, full cover, in the middle)
+export const LADDER_RS = Array.from({ length: 41 }, (_, i) => 10 ** (-1 + i / 20));
+
+// A result's stakes per combo at ladder ratio r (null: Kelly's): Kelly's
+// total over the sizes in ks, each combo of a size r times one of the size
+// below (size k's share of the total in proportion to C(n, k) r^k)
+export function swingStakes(res, ks, r) {
+  if (r == null || !(res.total > 0)) return res.kellyS;
+  const n = res.legs.length, counts = ks.map(k => Math.round(binom(n, k)));
+  const w = ks.map((k, j) => counts[j] * r ** k), sum = w.reduce((t, x) => t + x, 0);
+  return w.map((x, j) => x / sum * res.total / counts[j]);
+}
+
+// A result's chance of a profit (at chances p: the ones shown) and EV per $1
+// staked (at the cautious ones, ps) for Kelly's split and then each ratio of
+// LADDER_RS, swinging further: -> [{ r (null: Kelly's), pProfit, ev }]
+export function ladderCurve(res, ks, p, ps) {
+  const prices = res.legs.map(l => l.price), n = prices.length;
+  const counts = ks.map(k => Math.round(binom(n, k)));
+  const shown = outcomes(prices, p, ks), cautious = outcomes(prices, ps, ks);
+  const back = ks.map((_, j) => cautious.pay[j].reduce((t, y, w) => t + cautious.prob[w] * y, 0));   // per unit a combo
+  return [null, ...LADDER_RS].map(r => {
+    const s = swingStakes(res, ks, r), total = s.reduce((t, x, j) => t + x * counts[j], 0);
+    if (!(total > 0)) return { r, pProfit: 0, ev: null };
+    let pProfit = 0;
+    for (let w = 0; w < shown.prob.length; w++) {
+      let b = 0;
+      for (let j = 0; j < ks.length; j++) b += s[j] * shown.pay[j][w];
+      if ((b - total) / total > 1e-12) pProfit += shown.prob[w];
+    }
+    return { r, pProfit, ev: s.reduce((t, x, j) => t + x * back[j], 0) / total - 1 };
+  });
+}
+
+// The swing slider (0 to 100) as the chance of a profit to keep: 0, none
+// (Kelly's own splits); on up, from the most any result's Kelly split has
+// down to the least any result's ladder reaches
+export function swingTarget(results, u) {
+  if (!(u > 0) || !results.length) return null;
+  const hi = Math.max(...results.map(r => r.ladder?.[0]?.pProfit ?? 0));
+  const lo = Math.min(...results.map(r => Math.min(...(r.ladder || []).map(c => c.pProfit))));
+  return hi - (hi - lo) * Math.min(1, u / 100);
+}
+
+// A result's point on its ladder for a profit chance target (null: Kelly's):
+// the most swing keeping the chance at least the target, else Kelly's split.
+// -> { r, pProfit, ev }
+export function swingPick(res, target) {
+  const c = res.ladder || [{ r: null }];
+  if (target == null) return c[0];
+  for (let i = c.length - 1; i > 0; i--) if (c[i].pProfit >= target - 1e-9) return c[i];
+  return c[0];
+}
+
+// The orders the page can show system multis in: 'growth' (the score the
+// page sets for the swing: Kelly's growth unswung; the search's order) or
+// 'ev', highest first
 export const SYSTEM_RANKS = ['growth', 'ev'];
+const scoreOf = r => r.score ?? r.growth;
 export const systemComparer = by => (by === 'ev'
-  ? (a, b) => (b.stats.ev ?? -Infinity) - (a.stats.ev ?? -Infinity) || b.growth - a.growth
-  : (a, b) => b.growth - a.growth || (b.stats.ev ?? -Infinity) - (a.stats.ev ?? -Infinity));
+  ? (a, b) => (b.stats.ev ?? -Infinity) - (a.stats.ev ?? -Infinity) || scoreOf(b) - scoreOf(a)
+  : (a, b) => scoreOf(b) - scoreOf(a) || (b.stats.ev ?? -Infinity) - (a.stats.ev ?? -Infinity));
 
 // What bookies call each size
 export const sizeName = (k, n) => (k === 1 ? 'Singles' : k === 2 ? 'Doubles' : k === 3 ? 'Trebles' : k === n ? `${k}-fold` : `${k}-folds`);

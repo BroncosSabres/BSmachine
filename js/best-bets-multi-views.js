@@ -115,7 +115,77 @@ export function combosText(res, out, bonus) {
 // stake: { unit: dollars (or bank shares, when dollars is false) per unit of
 // Kelly's stakes, dollars, label: how they were sized }
 
-export function systemCardHtml(res, i, out, { stake, sortBy, lockedIds }) {
+// The spread of a system multi's profit as a smooth curve: the chance of
+// each profit, smoothed (a Gaussian kernel a 40th of the axis wide, reflected
+// at the whole stake lost, which nothing passes), red where it is a loss and
+// green a profit, with the expected profit marked. Nothing back (the whole
+// stake lost: one exact amount, a spike on a curve) is left out of it and
+// shown as a dot with its chance. The axis runs from the stake lost to the
+// mean + 3 SD (or the 90th percentile; the top prize at most); profits past
+// it are left off the curve. Hovering reads the chance of at least each
+// profit (the page draws it from data-sf). st: systemStats'; total: the
+// stake, in the units fmt shows (dollars, or shares of the stake).
+const GRID = 120, FINE = 480;
+let pdfSeq = 0;
+function returnChart(st, total, fmt, dollars) {
+  if (!st.profit || !(total > 0)) return '';
+  const lo = -1, hi = Math.max(0.05, Math.min(st.top, Math.max(st.ev + 3 * st.sd, st.p90)));
+  const span = hi - lo, fw = span / FINE, h = span / 40;
+  const mass = new Float64Array(FINE);
+  let nothing = 0, beyond = 0;
+  for (let k = 0; k < st.prob.length; k++) {
+    const pr = st.prob[k], v = st.profit[k];
+    if (!pr) continue;
+    if (v <= lo + 1e-9) nothing += pr;
+    else if (v > hi) beyond += pr;
+    else mass[Math.min(FINE - 1, Math.floor((v - lo) / fw))] += pr;
+  }
+  const at = g => lo + span * g / (GRID - 1);
+  const dens = new Float64Array(GRID), sf = new Float64Array(GRID);
+  for (let g = 0; g < GRID; g++) {
+    const xg = at(g);
+    let d = 0, up = beyond + (g === 0 ? nothing : 0);
+    for (let b = 0; b < FINE; b++) {
+      if (!mass[b]) continue;
+      const c = lo + (b + 0.5) * fw;
+      if (c >= xg) up += mass[b];
+      const u1 = (xg - c) / h, u2 = (xg - (2 * lo - c)) / h;
+      if (u1 * u1 < 16) d += mass[b] * Math.exp(-u1 * u1 / 2);
+      if (u2 * u2 < 16) d += mass[b] * Math.exp(-u2 * u2 / 2);
+    }
+    dens[g] = d;
+    sf[g] = Math.min(1, up);
+  }
+  const Wd = 300, H = 64, peak = Math.max(...dens) || 1;
+  const px = g => (Wd * g / (GRID - 1)).toFixed(2), py = g => (H - (dens[g] / peak) * (H - 4)).toFixed(2);
+  const curve = Array.from({ length: GRID }, (_, g) => `${g ? 'L' : 'M'}${px(g)},${py(g)}`).join('');
+  const x = v => ((Math.min(hi, Math.max(lo, v)) - lo) / span) * Wd;
+  const id = `bsm-pdf-${++pdfSeq}`, z = (-lo / span).toFixed(4);
+  const zero = (x(0) / Wd) * 100;
+  return `<div class="mt-2 relative" data-pdf="${lo},${hi},${total},${dollars ? 1 : 0}" data-sf="${[...sf].map(v => +v.toFixed(4)).join(',')}">
+    <svg viewBox="0 0 ${Wd} ${H}" preserveAspectRatio="none" class="block w-full h-16 text-gray-500" role="img"
+         aria-label="How likely each profit is: expected profit ${esc(fmt(st.ev * total))}, SD ${esc(fmt(st.sd * total))}, ${pct(nothing)} nothing back">
+      <defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="0" x2="${Wd}" y1="0" y2="0">
+        <stop offset="${z}" stop-color="#f87171"/><stop offset="${z}" stop-color="#4ade80"/></linearGradient></defs>
+      <path d="${curve}L${Wd},${H}L0,${H}Z" fill="url(#${id})" opacity="0.22"/>
+      <path d="${curve}" fill="none" stroke="url(#${id})" stroke-width="1.75" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <line x1="0" x2="${Wd}" y1="${H}" y2="${H}" stroke="currentColor" stroke-width="1" opacity="0.5" vector-effect="non-scaling-stroke"/>
+      <line x1="${x(st.ev)}" x2="${x(st.ev)}" y1="0" y2="${H}" stroke="#fbbf24" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      <line data-pdf-x x1="0" x2="0" y1="0" y2="${H}" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke" class="hidden"/></svg>
+    ${nothing > 0.0005 ? '<span class="absolute left-0 top-16 -mt-1 -ml-1 w-2 h-2 rounded-full bg-red-400 ring-2 ring-gray-800"></span>' : ''}
+    <div data-pdf-tip class="hidden pointer-events-none absolute top-0 z-10 whitespace-nowrap rounded border border-gray-600 bg-gray-900 px-1.5 py-0.5 text-[11px] text-gray-200 tabular-nums"></div>
+    <div class="relative h-4 mt-0.5 text-[10px] text-gray-500 tabular-nums">
+      <span class="absolute left-0">${esc(fmt(-total))}</span>
+      ${zero > 14 && zero < 80 ? `<span class="absolute -translate-x-1/2" style="left:${zero.toFixed(1)}%">0</span>` : ''}
+      <span class="absolute right-0">${esc(fmt(hi * total))}${hi < st.top ? '+' : ''}</span></div>
+    <div class="text-[11px] text-gray-500"><span class="inline-block w-2.5 h-0.5 align-middle bg-amber-400"></span> expected profit
+      <span class="${signCls(st.ev)}">${esc(fmt(st.ev * total))}</span>${nothing > 0.0005 ? `
+      · <span class="inline-block w-2 h-2 rounded-full bg-red-400 align-middle"></span> nothing back ${pct(nothing)}` : ''}
+      · <span class="text-gray-400">hover for the chance of at least each profit</span></div>
+  </div>`;
+}
+
+export function systemCardHtml(res, i, out, { stake, sortBy, lockedIds, swing = '' }) {
   const n = res.legs.length, ks = out.ks;
   const total = ks.reduce((t, _, j) => t + res.s[j] * res.stats.levels[j].count, 0) * stake.unit;
   const amount = x => (stake.dollars ? cents(x) : pct(x, x < 0.001 ? 3 : 2));
@@ -134,18 +204,21 @@ export function systemCardHtml(res, i, out, { stake, sortBy, lockedIds }) {
   return `<div class="rounded-xl border border-gray-700 bg-gray-800/40 p-3">
     <div class="flex items-baseline justify-between gap-3 flex-wrap">
       <div class="text-sm text-gray-300"><span class="font-bold text-gray-100">#${i + 1}</span> ·
-        ${n} legs, ${ks.length === 1 ? sizeName(ks[0], n).toLowerCase() : `sizes ${ks[0]}–${ks.at(-1)}`} at ${esc(bookLabel(out.book))} ·
+        ${n} legs, ${ks.length === 1 ? sizeName(ks[0], n).toLowerCase() : `sizes ${ks[0]}–${ks.at(-1)}`} at ${esc(bookLabel(out.book))} ·${
+          swing ? ` swing: ${esc(swing)}${res.short ? ` <span class="text-amber-300" title="Even the Kelly split has less chance of a profit than the Swing asks for, so it is staked as Kelly and listed after the multis that reach it">(out of reach: staked as Kelly)</span>` : ''} ·` : ''}
         <span class="font-bold text-gray-100">${none ? 'no stake' : `${amount(total)} in all`}</span></div>
       ${none ? '' : `<button type="button" data-copy="${i}" class="text-xs text-blue-400 hover:underline">Copy betslip</button>`}
     </div>
     ${none ? `<p class="mt-2 text-xs text-amber-300">No stake: at the cautious chances the stakes are worked out on, no size of combo grows the bank. Try other sizes or legs.</p>` : `
-    <div class="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
+    <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
       ${tile('Stake', amount(total), stake.label)}
       ${tile('Expected profit', `<span class="${signCls(st.ev)}">${stake.dollars ? profit(st.ev * total) : signedPct(st.ev)}</span>${stake.dollars ? ` <span class="text-xs font-semibold ${signCls(st.ev)}">${signedPct(st.ev)}</span>` : ''}`, `${sortBy === 'ev' ? 'What they are sorted by. ' : ''}The profit on average at the legs' chances shown, and as a share of the stake`, sortBy === 'ev')}
       ${tile('Profit chance', pct(st.pProfit), 'The chance the combos that win pay back more than the whole stake')}
       ${tile('Nothing back', pct(st.pNothing), `The chance no combo staked wins: fewer legs win than the smallest size staked`)}
-      ${tile('Median', `<span class="${signCls(st.median)}">${stake.dollars ? profit(st.median * total) : signedPct(st.median)}</span>`, 'Half the time the profit is at least this (a loss when negative)')}
-    </div>`}
+      ${tile('Spread (SD)', stake.dollars ? money(st.sd * total) : pct(st.sd), `How widely the profit spreads around the expected profit: the standard deviation${stake.dollars ? '' : ', as a share of the stake'}. The median profit is ${stake.dollars ? profit(st.median * total) : signedPct(st.median)}.`)}
+      ${tile('If all win', `<span class="${signCls(st.top)}">${stake.dollars ? profit(st.top * total) : signedPct(st.top)}</span>`, `The profit when every leg wins: the top prize (a ${pct(res.legs.reduce((t, l) => t * l.p, 1), 2)} chance at the legs' chances shown)`)}
+    </div>
+    ${returnChart(st, stake.dollars ? total : 1, stake.dollars ? profit : signedPct, stake.dollars)}`}
     <div class="mt-2 overflow-x-auto"><table class="w-full text-xs">
       <thead><tr class="text-[10px] uppercase tracking-wider text-gray-500">
         <th class="py-1 pr-2 text-left font-semibold">Size</th>
@@ -159,9 +232,9 @@ export function systemCardHtml(res, i, out, { stake, sortBy, lockedIds }) {
   </div>`;
 }
 
-export function systemText(res, out, stake) {
+export function systemText(res, out, stake, swing = '') {
   const n = res.legs.length;
   const lines = res.stats.levels.map((lv, j) => ({ lv, each: res.s[j] * stake.unit })).filter(x => x.each > 0)
     .map(({ lv, each }) => `${sizeName(lv.k, n)} (${lv.count}): ${stake.dollars ? cents(each) : pct(each, 3)} each = ${stake.dollars ? cents(each * lv.count) : pct(each * lv.count, 2)}`);
-  return [`System multi at ${bookLabel(out.book)}: ${n} legs`, ...res.legs.map(legLine), '', ...lines].join('\n');
+  return [`System multi at ${bookLabel(out.book)}: ${n} legs${swing ? ` (swing: ${swing})` : ''}`, ...res.legs.map(legLine), '', ...lines].join('\n');
 }
