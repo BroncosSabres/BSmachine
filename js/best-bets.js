@@ -40,7 +40,8 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml, sportTag, kickoffText } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
 import { openBooks } from './best-bets-books.js';
-import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets } from './safe-stake.js';
+import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets,
+         marketKey, propKey } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
@@ -1232,9 +1233,26 @@ const trackedCandidates = data => data ? data.rows.map(liveBetAt).filter(passes)
 }) : [];
 const liveCandidates = () => trackedCandidates(liveData);
 
-// The tracked rows on show, one line per side (any tab): those listed before
+// One bet per game market or player stat, as the analysis counts them
+// (roi-stats.js onePerMarket): a main line that moved leaves a pick at each
+// line it showed value at (Under 8.5 yds, then Under 9.5), and only one of
+// them is the bet. The line priced over the most checks (the first priced on
+// a tie: rows in selection id order, as /analysis sends them), then its side
+// with the best median edge while it showed value. Picked before the filters,
+// as the analysis does. Outlier-price-only picks (no avg price) are kept one
+// per selection, as the analysis's outlier track counts them.
+function onePerProp(rows) {
+  const value = rows.filter(r => r.avg_back != null).sort((a, b) => (a.ps_id ?? 0) - (b.ps_id ?? 0));
+  // Tracked rows carry no source: a bookmaker's market id is 'oddsapi:...'
+  const source = r => (r.market_id || '').startsWith('oddsapi:') ? 'book' : 'betfair';
+  const kept = new Set(onePerMarket(value.map(r => ({ prop: propKey(r), market: marketKey(r), source: source(r),
+                                                       checks: r.n_checks, edge: r.avg_edge, row: r }))).map(b => b.row));
+  return rows.filter(r => r.avg_back == null || kept.has(r));
+}
+
+// The tracked rows on show, one bet per market (any tab): those listed before
 // kickoff, and with "show all" the rest too
-const trackedAll = cands => oneLinePerSide(cands.filter(r => r.listed || liveShowAll), oddsTyped(prefs));
+const trackedAll = cands => oneLinePerSide(onePerProp(cands).filter(r => r.listed || liveShowAll), oddsTyped(prefs));
 const liveAll = () => trackedAll(liveCandidates());
 
 // "Listed 2h 40m · until 35 min before the start"
