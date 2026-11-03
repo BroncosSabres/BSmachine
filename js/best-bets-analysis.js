@@ -7,7 +7,7 @@
 // fit of results on the model's and the bookie's probabilities (how much
 // weight the model deserves, per sport and market), and closing line value
 // where a closing price exists. A table of betting rules (edge at least X,
-// at cuts fitted to the bets, within the odds range on the slider) shows where
+// at every edge step with bets, within the odds range on the slider) shows where
 // a return is holding up and where it is too early to say. A grid of edge by
 // odds shows which bins have proven a profit and what stake each earns at the
 // Risk level chosen, and where bets turn to losing again (safe-stake.js). The
@@ -30,7 +30,7 @@ import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit, lineMoveStats,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
-         dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+         dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, ladderCuts, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText,
          outlierFits, OUT_CLASSES, OUT_CLASS_LABELS, OUT_DEFAULT_CUT, outCutsFor, outRuleOf, windowKeys, fittedCut,
          edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
@@ -525,9 +525,11 @@ function returnBar(row, max) {
   </div>`;
 }
 
-// The row in the detail panel: the one at the chosen edge, or failing that
-// (the cuts moved with the bets) the one starting at zero.
-const rowAt = rows => rows.find(r => r.rule.edgeLo === selEdge) || rows.find(r => r.rule.edgeLo === 0) || rows[0] || null;
+// The row in the detail panel: the one at the chosen edge, else the first
+// above it (a step with no bets of its own is left out, and its rule is that
+// row's bets; Best rules picks from fitted cuts), or failing that the one
+// starting at zero.
+const rowAt = rows => rows.find(r => r.rule.edgeLo >= selEdge) || rows.find(r => r.rule.edgeLo === 0) || rows[0] || null;
 
 // -> the selected row, or null
 function renderRuleTable(rows, fit) {
@@ -807,12 +809,12 @@ function renderRules(base) {
     b.className = `px-2.5 py-1 ${b.dataset.mode === 'band' ? 'border-l border-gray-600 ' : ''}${on ? 'bg-gray-600 text-white font-semibold' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`;
     b.setAttribute('aria-pressed', on);
   }
-  $('rules-note').textContent = 'The edges the rows are cut at are fitted to the bets in view: a cut is added, and they reach higher, once there are enough bets to fill a row. '
+  $('rules-note').textContent = 'There is a row at every edge step with bets, however few: a row marked too few to call is mostly noise. '
     + (gridMode === 'rule' ? 'A row takes every bet with at least its edge, so rows overlap: a good rule shows as a run of rows that agree, not one that stands out.'
                            : "A row takes the bets from its edge up to the next row's, so no bet is in two rows.")
     + ' Narrow the odds with the slider above.';
   // The range is worked out for thin rows too: the whisker shows how little they say
-  renderRuleDetail(renderRuleTable(ruleRows(bets, { mode: gridMode, thinRange: true }), fit), fit);
+  renderRuleDetail(renderRuleTable(ruleRows(bets, { mode: gridMode, cuts: ladderCuts(bets), thinRange: true }), fit), fit);
   renderBestRules(base);
 }
 

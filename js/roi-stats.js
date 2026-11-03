@@ -437,6 +437,15 @@ export function edgeCuts(bets, { ladder = EDGE_LADDER, maxRows = 12, minBets = 5
   return cuts;
 }
 
+// Every step of the ladder that has bets from it to the next step, however
+// few: the analysis page's rule table shows each one, thin or not. A step with
+// none is left out (its rule would be the next one's bets again). -> ascending,
+// from 0.
+export function ladderCuts(bets, { ladder = EDGE_LADDER } = {}) {
+  const edges = bets.filter(b => b.edge >= 0).map(b => b.edge);
+  return ladder.filter((lo, i) => lo === 0 || edges.some(e => e >= lo && e < (ladder[i + 1] ?? Infinity)));
+}
+
 // The rules a set of cuts makes.
 //   'rule'  edge at least a cut: how a bettor sets a rule. They overlap.
 //   'band'  edge between one cut and the next, and everything under the
