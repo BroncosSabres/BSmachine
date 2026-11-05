@@ -101,7 +101,10 @@
                 <input id="stake-balance" type="number" min="0" step="any" inputmode="decimal" placeholder="optional"
                        class="w-24 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white tabular-nums">
               </label>
-              <label id="sort-wrap" class="flex items-center gap-1.5" title="The list's order. Best edge: the model's edge at the best bookie's price. Avg edge: at the average (median) price, the one the filters read. Outliers are sorted with the rest.">Sort
+              <label id="bookie-wrap" class="hidden flex items-center gap-1.5" title="Only the bets with value at one bookie's own price (the edge Filters judges by, above zero), each shown and staked at it. The number: how many bets in this tab have value there. All bookies: every bet, with My bookies as set.">Bookie
+                <select id="bookie-filter" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white"></select>
+              </label>
+              <label id="sort-wrap" class="flex items-center gap-1.5" title="The list's order. Best edge: the model's edge at the best bookie's price. Avg edge: at the average (median) price, the one the filters read. Start time: games starting together are grouped, each one's bets highest odds first. Outliers are sorted with the rest.">Sort
                 <select id="sort-by" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                   <option value="best">Best edge</option>
                   <option value="edge">Avg edge</option>

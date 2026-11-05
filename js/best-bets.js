@@ -39,7 +39,7 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
          selectionText, bestBookHtml, bookPricesHtml, bookLabel, STAR, edgeAtPrice, usesBook, usedPrice, usedWarning, usedWarnHtml, edgeBands, loadStakePrefs, saveStakePrefs, money,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml, sportTag, kickoffText } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
-import { openBooks } from './best-bets-books.js';
+import { openBooks, KNOWN_BOOKS } from './best-bets-books.js';
 import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets,
          marketKey, propKey } from './safe-stake.js';
 import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
@@ -197,6 +197,8 @@ const bookNames = r => new Set(r.best_book ? r.best_book.split(', ') : []);
 const nowOrGone = r => Math.min(Date.now() / 1000, r.gone_at ? Date.parse(r.gone_at) / 1000 : Infinity);
 
 const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
+// A game's bets sort together under it
+const gameKey = r => `${r.sport}:${r.game_id}`;
 // Descending, nothing to go on last
 const desc = (x, y) => (y ?? -Infinity) - (x ?? -Infinity);
 const SORT_LABELS = { best: 'best edge', edge: 'average edge', time: 'start time' };
@@ -833,8 +835,61 @@ const notStarted = r => Date.parse(r.kickoff) > Date.now();
 
 // The upcoming bets that pass the sport / day / My Teams / market filters, at
 // the price chosen, one line per side (any tab)
-const upcomingRows = () => oneLinePerSide(bets.map(r => upcomingAt(r)).filter(r => notStarted(r) && passes(r) && passesDay(r)
+const upcomingRows = (use = prefs.use) => oneLinePerSide(bets.map(r => upcomingAt(r, use)).filter(r => notStarted(r) && passes(r) && passesDay(r)
                                           && passesFilters(r)), oddsTyped(prefs));
+
+// --- one bookie ---------------------------------------------------------------
+// The Bookie filter (prefs.bookFilter; null: every bookie): only the upcoming
+// bets with value at that bookie's own price, judged as Filters judges, each
+// shown and staked at it as My bookies -> Use would with only it ticked. All
+// bookies leaves the list, and My bookies, as they are.
+const BETFAIR = 'Betfair Exchange';
+const isExchange = r => !(r.market_id || '').startsWith('oddsapi:');
+
+// An upcoming bet (upcomingAt) at one bookie's price: { price, edge (the
+// judged edge there) }, null where it doesn't price it
+function atBook(r, book) {
+  const price = book === BETFAIR ? (isExchange(r) ? r.median : null)
+    : isExchange(r) ? null : r.books?.find(([b]) => b === book)?.[1] ?? null;
+  if (price == null) return null;
+  const at = { ...r, back: price };
+  const edge = judgeBy() === 'cal' ? calibrateBet(calib, at, { median: r.median, taken: price })?.bookEdge
+    : judgeBy() === 'close' ? closeBet(calib, at, { median: r.median, taken: price })?.edge
+    : edgeAtPrice(price, { median: r.median, edge: r.edge, best: r.best_book_back, bestEdge: r.best_book_edge, prob: r.model_prob });
+  return { price, edge: edge ?? null };
+}
+
+// The upcoming bets the list shows: with a bookie chosen, those with value
+// there. Its price has the edge Filters judges by, whatever the model's own
+// there (mine.edge) says, so no ⚠ for it.
+function listedRows() {
+  const book = prefs.bookFilter;
+  if (!book) return upcomingRows();
+  return upcomingRows(book === BETFAIR ? null : [book]).map(r => ({ ...r, atBookie: atBook(r, book) }))
+    .filter(r => r.atBookie?.edge > 0)
+    .map(r => (r.mine ? { ...r, mine: { ...r.mine, ok: true } } : r));
+}
+
+// The Bookie select: every bookie known or pricing a bet now, the exchange,
+// and how many of the tab's bets have value at each. Upcoming only.
+function renderBookFilter() {
+  $('bookie-wrap').classList.toggle('hidden', view !== 'upcoming');
+  if (view !== 'upcoming') return;
+  const kinds = TABS.find(t => t.key === tab).kinds;
+  const counts = {};
+  const add = (r, b) => { if (atBook(r, b)?.edge > 0) counts[b] = (counts[b] || 0) + 1; };
+  for (const r of upcomingRows()) {
+    if (!kinds.includes(r.market_kind)) continue;
+    if (isExchange(r)) add(r, BETFAIR);
+    else for (const [b] of r.books || []) add(r, b);
+  }
+  const chosen = prefs.bookFilter;
+  const names = [...new Set([...KNOWN_BOOKS, ...bets.flatMap(r => (r.books || []).map(([b]) => b)), BETFAIR,
+                             ...(chosen ? [chosen] : [])])]
+    .sort((a, b) => bookLabel(a).localeCompare(bookLabel(b), undefined, { sensitivity: 'base' }));
+  $('bookie-filter').innerHTML = `<option value="">All bookies</option>` + names.map(b =>
+    `<option value="${esc(b)}"${b === chosen ? ' selected' : ''}>${esc(bookLabel(b))} (${counts[b] || 0})</option>`).join('');
+}
 
 // --- new since last looked ------------------------------------------------------
 // Every bet that passed the filters, with when it first did (this browser):
@@ -870,23 +925,29 @@ function renderBets() {
   const kinds = TABS.find(t => t.key === tab).kinds;
   const sortBy = SORTS.includes($('sort-by').value) ? $('sort-by').value : 'best';
   const inTab = bets.filter(r => kinds.includes(r.market_kind));
-  const rows = upcomingRows().filter(r => kinds.includes(r.market_kind));
+  const rows = listedRows().filter(r => kinds.includes(r.market_kind));
+  const book = prefs.bookFilter;
+  const atText = book ? ` at ${bookLabel(book)}` : '';
   const body = $('bets-body');
   let summary = '';
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="6" class="px-2 py-8 text-center text-sm text-gray-500">${
-      inTab.length ? 'No bets match these filters.' : 'No value found in these markets at the last check.'}</td></tr>`;
+      !inTab.length ? 'No value found in these markets at the last check.'
+        : book ? `No bets with value${atText} under these filters.` : 'No bets match these filters.'}</td></tr>`;
   } else {
-    // Outliers in among the rest, by the same order
+    // Outliers in among the rest, by the same order. Start time: games
+    // starting together grouped, each one's bets highest odds first (at the
+    // bookie chosen, else yours where that isn't the best, else the price on top)
+    const takenPrice = r => r.atBookie?.price ?? r.mine?.price ?? r.back;
     const order = {
       best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.edge - a.edge,
       edge: (a, b) => b.edge - a.edge,
-      time: (a, b) => byTime(a, b) || b.edge - a.edge,
+      time: (a, b) => byTime(a, b) || gameKey(a).localeCompare(gameKey(b)) || desc(takenPrice(a), takenPrice(b)) || b.edge - a.edge,
     }[sortBy];
     rows.sort(order);
     loadLogs(rows);
     body.innerHTML = rows.map(betRow).join('');
-    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}`;
+    summary = `${rows.length} selection${rows.length === 1 ? '' : 's'}${atText}`;
   }
   shown = rows;
   $('status').textContent = summary && `${summary} · sorted by ${SORT_LABELS[sortBy]}`;
@@ -1283,12 +1344,11 @@ function liveInTab() {
 function liveRows() {
   const final = prefs.liveFinal;
   const rows = liveInTab().filter(r => final === 'any' || (final === 'only') === isFinished(r));
-  const game = r => `${r.sport}:${r.game_id}`;
   const chanceOf = r => r.chance ?? r.live.p_win;
   const by = {
     best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.avgEdge - a.avgEdge,
     edge: (a, b) => b.avgEdge - a.avgEdge,
-    time: (a, b) => byTime(a, b) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge,
+    time: (a, b) => byTime(a, b) || gameKey(a).localeCompare(gameKey(b)) || b.avgEdge - a.avgEdge,
     result: (a, b) => resultRank(a) - resultRank(b) || desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
     ev: (a, b) => desc(a.ev, b.ev) || b.avgEdge - a.avgEdge,
     chance: (a, b) => desc(chanceOf(a), chanceOf(b)) || desc(a.ev, b.ev),
@@ -1577,9 +1637,8 @@ function recentInTab() {
 function recentRows() {
   const { days } = periodOf(recentPrefs.period);
   const rows = recentInTab().filter(r => inPeriod(r, days));
-  const game = r => `${r.sport}:${r.game_id}`;
   const by = {
-    time: (a, b) => byTime(b, a) || game(a).localeCompare(game(b)) || b.avgEdge - a.avgEdge,
+    time: (a, b) => byTime(b, a) || gameKey(a).localeCompare(gameKey(b)) || b.avgEdge - a.avgEdge,
     best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.avgEdge - a.avgEdge,
     edge: (a, b) => b.avgEdge - a.avgEdge,
     result: (a, b) => resultRank(a) - resultRank(b) || desc(a.ev, b.ev),
@@ -2187,6 +2246,7 @@ function render() {
   renderHeads();
   if (!isMulti) renderSportPills();   // its sports are the generator's own: the page's choice is kept
   renderDayFilter();
+  renderBookFilter();
   renderView();
   renderTrackRecord();
 }
@@ -2301,6 +2361,12 @@ $('stake-balance').addEventListener('input', e => {
   saveStakePrefs(stakePrefs);
   renderView();
 });
+// Its own setting: the select is only filled once the bets are in
+$('bookie-filter').addEventListener('change', e => {
+  prefs = { ...prefs, bookFilter: e.target.value || null };
+  storePrefs(prefs);
+  render();
+});
 ['sort-by', 'live-sort', 'live-final', 'my-teams-only', 'odds-basis'].forEach(id =>
   $(id).addEventListener('change', () => { savePrefs(); render(); }));
 window.addEventListener(MY_TEAMS_CHANGED, () => { if (!$('content').classList.contains('hidden')) render(); });
@@ -2332,7 +2398,10 @@ function applyBets(data, initial = false) {
   betsLoadedAt = Date.now();
   renderUpdated();
   const fresh = noteSeen(upcomingRows());
-  if (!initial) notifyNew(fresh);
+  if (initial) return;
+  // With a bookie chosen, only the new bets with value there
+  const listed = prefs.bookFilter && new Set(listedRows().map(rowKey));
+  notifyNew(listed ? fresh.filter(r => listed.has(rowKey(r))) : fresh);
 }
 
 async function loadBets() {

@@ -2,7 +2,8 @@
 // judged at. No DOM, so it can be exercised under Node; best-bets-prefs.js
 // keeps the settings (browser + the account's profile) and draws the modal.
 //
-// Settings: { v, basis, odds, markets, sort, myTeams, liveStage, liveSort, liveFinal }
+// Settings: { v, basis, odds, markets, sort, myTeams, liveStage, liveSort, liveFinal,
+//             outliers, judge, autoOpt, books, use, bookFilter }
 //   basis     'book': bets are taken at the best single bookmaker's price
 //             (Betfair rows: the exchange's), 'avg': at the median across the
 //             bookmakers. Either way a bet's edge - what says it has value, and
@@ -26,7 +27,12 @@
 //             moment while it showed value would have got
 //   sort      'best' | 'edge' | 'time': the upcoming list's order - the edge
 //             at the best bookie's price (the default), at the median price,
-//             start time
+//             start time (games starting together grouped, each one's bets
+//             highest odds first)
+//   bookFilter null | a bookie as the prices name it | 'Betfair Exchange':
+//             the upcoming list shows only the bets with value (the judged
+//             edge above zero) at that bookie's own price, each shown and
+//             staked at it. null (the default): every bet, My bookies as set
 //   liveSort  'best' | 'edge' | 'time' | 'result' | 'ev' | 'chance': the Live
 //             list's order - the edge at kickoff at the best bookie's price
 //             (the default), at the median price, start time, where the bet
@@ -104,7 +110,8 @@ const pair = (p, fallback) => Array.isArray(p) && p.length === 2 ? [typed(p[0]),
 
 export function defaultPrefs() {
   return { v: PREFS_VERSION, basis: 'book', odds: [...DEFAULT_ODDS], markets: {}, sort: 'best', myTeams: false, liveStage: 'avg',
-           liveSort: 'best', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true, books: [], use: null };
+           liveSort: 'best', liveFinal: 'any', outliers: 'any', judge: 'model', autoOpt: true, books: [], use: null,
+           bookFilter: null };
 }
 
 // My bookies, as the bookies' prices name them ("PointsBet (AU)"). books:
@@ -152,6 +159,7 @@ export function normalizePrefs(p) {
     autoOpt: v < 4 ? !customised(markets) : p.autoOpt !== false,
     books: bookList(p.books),
     use: Array.isArray(p.use) ? bookList(p.use) : null,
+    bookFilter: typeof p.bookFilter === 'string' && p.bookFilter.trim() && p.bookFilter.length <= 60 ? p.bookFilter : null,
   };
 }
 
