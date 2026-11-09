@@ -38,15 +38,97 @@ export function pointPasses(prefs, key, p, edgeOf = null) {
   return passesBet(prefs, key, edgeOf ? edgeOf(p) : p[3], p[1], pointOutlier(prefs, key, p));
 }
 
+// --- held listing -------------------------------------------------------------
+// A bet the list showed stays listed while it can still be had at a price it
+// was listed at: once listed, a price that rises (its median edge past the
+// band's top, the odds past the odds range, an outlier gap closed by the
+// other bookies catching up) keeps it. It drops when the price taken (the
+// best bookie's; the median on Betfair) falls below the lowest price it was
+// listed at, or when a model update means that price no longer passes.
+
+// A price's return per unit staked, after commission, plus the stake
+const decOf = (x, com) => (x - 1) * (1 - com) + 1;
+// The model's chance a point was priced at (exact bar the chance of a push,
+// as calibrate-client.js calEdgeAtPoint reads it), or null
+export const impliedProb = (p, com = 0) =>
+  Array.isArray(p) && p[1] > 1 && p[3] != null ? (1 + p[3]) / decOf(p[1], com) : null;
+// Point q as the model with chance `prob` would have priced it (its median
+// edge redone at that chance)
+export function rejudgeAt(q, prob, com = 0) {
+  if (prob == null || !(q[1] > 1)) return q;
+  const out = q.slice();
+  out[3] = prob * decOf(q[1], com) - 1;
+  return out;
+}
+// The price a point's bet is taken at: the best bookie's, else the median
+export const takenAt = p => p[2] ?? p[1];
+// A point's model edge at a price (its best price by default), at its own
+// model or the chance given
+export function edgeAtPoint(p, com = 0, price = takenAt(p), prob = impliedProb(p, com)) {
+  return prob == null || price == null ? p[3] : prob * decOf(price, com) - 1;
+}
+// How far the model's chance can move before a point's listing is judged
+// again (relative): edges are stored to 4 places, and a push moves the chance
+// read off a point a little with the price
+const SAME_MODEL = 1e-3;
+
+// Over points (oldest first) and pass(point) (the list's test at that check):
+// per point { listed, held, floor, floorPoint }. listed: the list showed it
+// there - it passed, or it was held: not passing, but taken at or above the
+// floor. floor: the lowest price taken at the checks it passed at that still
+// pass at this check's model (null: none); floorPoint: that check's point.
+export function heldWalk(points, pass, com = 0) {
+  const list = Array.isArray(points) ? points : [];
+  const listing = [];   // [point, its model's chance] where it passed
+  let prob = null, floor = null;
+  const lower = q => { if (!floor || takenAt(q) < takenAt(floor)) floor = q; };
+  return list.map(p => {
+    if (!Array.isArray(p) || p.length < 5 || p[1] == null) return { listed: false, held: false, floor: null, floorPoint: null };
+    const ok = pass(p);
+    const pr = impliedProb(p, com);
+    if (pr != null && (prob == null || Math.abs(pr - prob) > SAME_MODEL * prob)) {
+      // The model has moved: each price it was listed at, judged again
+      prob = pr;
+      floor = null;
+      for (const [q, qp] of listing) {
+        if (Math.abs(qp - prob) <= SAME_MODEL * prob || pass(rejudgeAt(q, prob, com))) lower(q);
+      }
+    }
+    if (ok) { listing.push([p, pr ?? prob]); lower(p); }
+    const held = !ok && !(p[4] & HIST_UNLISTED) && floor != null && takenAt(p) >= takenAt(floor) - 1e-9;
+    return { listed: ok || held, held, floor: floor && takenAt(floor), floorPoint: floor };
+  });
+}
+
+// A bet now, from its history and its latest check as a point (nowPoint):
+// { held (listed only by being held), passes (at that check), floor,
+// floorPoint, floorThen / floorThenPoint (the lowest price taken at any
+// check it passed at, at the model of the time: a model update shows as
+// floor > floorThen or floor null), ever (it passed at some check before) }
+export function heldNow(points, nowPoint, pass, com = 0) {
+  const list = [...(Array.isArray(points) ? points : []), nowPoint];
+  const walk = heldWalk(list, pass, com);
+  const last = walk[walk.length - 1];
+  let floorThenPoint = null;
+  list.forEach((p, i) => {
+    if (i === list.length - 1 || !Array.isArray(p) || p.length < 5 || p[1] == null || !pass(p)) return;
+    if (!floorThenPoint || takenAt(p) < takenAt(floorThenPoint)) floorThenPoint = p;
+  });
+  return { held: last.held, passes: last.listed && !last.held, floor: last.floor, floorPoint: last.floorPoint,
+           floorThen: floorThenPoint && takenAt(floorThenPoint), floorThenPoint, ever: !!floorThenPoint };
+}
+
 // Over points (oldest first) and pass(point): { ever, secs, firstAt,
 // lastPoint, lastEnd } - whether any check listed it, for how long in all
 // (seconds), when it first was, the last listed point and when that listing
-// ended (the next check, or `end`, unix seconds).
-export function listedInfo(points, pass, end) {
+// ended (the next check, or `end`, unix seconds). com (a number): listings
+// held (heldWalk) count too, at that commission.
+export function listedInfo(points, pass, end, com = null) {
   let secs = 0, firstAt = null, lastPoint = null, lastEnd = null;
   const list = Array.isArray(points) ? points : [];
+  const walk = com == null ? null : heldWalk(list, pass, com);
   list.forEach((p, i) => {
-    if (!pass(p)) return;
+    if (walk ? !walk[i].listed : !pass(p)) return;
     const next = i + 1 < list.length ? list[i + 1][0] : end;
     const until = Math.max(p[0], Math.min(next ?? p[0], end ?? Infinity));
     secs += until - p[0];

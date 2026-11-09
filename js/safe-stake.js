@@ -65,14 +65,15 @@ export function decodeRows(data) {
 
 // A decoded row as a bet (see roi-stats.js), at the odds when first priced
 // ('open'), the closing odds ('close'), or while its median edge was positive
-// ('first', 'avg' time-weighted, 'peak'), taken at the best single bookmaker's
+// ('first', 'avg' time-weighted, 'peak'; 'bfirst' / 'bavg' while its edge at
+// the best bookmaker's price was, migration 045), taken at the best single bookmaker's
 // price (basis 'book'; Betfair rows at the exchange's) or the median across
 // them ('avg'). The bet is chosen at the median either way: its edge and back
 // (what the odds range, odds bands and stake pools read, and the bookie's
 // implied chance) are the median's, so the same bets fall in the same places
 // under both and only the returns differ. taken: the price it is taken at,
-// which profit() pays out at. A row with no best-bookmaker price recorded is
-// taken at the median, marked fallback. A selection priced once has no CLV;
+// which profit() pays out at; bookEdge: the edge at it. A row with no
+// best-bookmaker price recorded is taken at the median, marked fallback. A selection priced once has no CLV;
 // CLV is from the stage's price to the close (from the open, at the close).
 // A main line whose line moved is judged against the closing price at its
 // own line (closeAt): moved, linePts (how far the line moved its way),
@@ -83,7 +84,7 @@ export function toBet(r, stage = 'open', basis = 'book') {
   const from = priceAt(r, stage === 'close' ? 'open' : stage, basis).back;
   return {
     game: `${r.sport}:${r.game_id}`, sport: r.sport, kind: r.kind, group: r.group,
-    edge: at.edge, prob: r[`${stage}_prob`], back: r[`${stage}_back`], taken: at.back, commission: r.commission,
+    edge: at.edge, bookEdge: at.bookEdge, prob: r[`${stage}_prob`], back: r[`${stage}_back`], taken: at.back, commission: r.commission,
     fallback: at.fallback,
     win: r.win_frac, push: r.push_frac,
     team: r.team, opponent: r.opponent, date: r.kickoff, source: sourceKey(r),

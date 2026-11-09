@@ -187,19 +187,21 @@ function bodyHtml() {
       <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${basis}</div>
       <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.basis === 'book'
         ? 'Bets taken at the best price any one bookie offers (the Betfair Exchange\'s own for its markets): odds, stakes and the track record\'s returns use it.'
-        : 'Bets taken at the median price across the bookies.'} A bet needs an edge at the median price either way, and the edge ranges below are always at the median.</p>
+        : 'Bets taken at the median price across the bookies.'} ${prefs.judge === 'book' ? "Judging by the best price, a bet needs an edge at the best bookie's price, and the edge ranges below are of it there." : 'A bet needs an edge at the median price either way, and the edge ranges below are always at the median.'}</p>
     </div>
     <div class="mb-4">
       <div class="text-[11px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">Judge by</div>
-      <div class="inline-flex items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['model', 'Model edge'], ['cal', 'Calibrated edge'], ['close', 'Predicted close']].map(([v, label]) => `
+      <div class="inline-flex flex-wrap items-center bg-gray-900 border border-gray-700 rounded-lg p-0.5 gap-0.5">${[['model', 'Model edge'], ['book', 'Best price'], ['cal', 'Calibrated edge'], ['close', 'Predicted close']].map(([v, label]) => `
         <button type="button" data-judge="${v}" aria-pressed="${prefs.judge === v}"
                 class="px-3 py-1.5 rounded-md text-sm transition-all ${prefs.judge === v
                   ? 'bg-amber-400 text-gray-900 font-bold' : 'text-gray-400 font-semibold hover:text-gray-200'}">${label}</button>`).join('')}</div>
       <p class="mt-1.5 text-[11px] text-gray-500 leading-snug">${prefs.judge === 'close'
         ? "Predicted close: where each bet's price is heading by kickoff, from how far prices have moved toward (or away from) the model in its market with that long to go, with the bookies' margin taken out. The edge is the price you take against that fair closing price, so a bet worth having now is one the market is expected to shorten past it. It learns from every priced selection's closing price, which settles far faster than results; the analysis page's Model vs market shows how its predictions have done out of sample. Stakes are Kelly on its low end."
+        : prefs.judge === 'book'
+        ? "Best price: the model's own edge at the best bookie's price, not the median, so a bet with an edge at one bookie only can be listed, and each market's edge range below is of that edge. Most profitable bands it on settled bets averaged while that edge showed value (the analysis page compares it with the median bands under Median vs best-price bands)."
         : prefs.judge === 'cal'
         ? "Calibrated: the model's chance blended with the bookies' (their margin taken out) by how far each market's settled bets have trusted the model - the analysis page's Model vs market. It is judged at the price you take (the best bookie's, with Price on Best bookie), not the median: the edge ranges below are of it there, and stakes are Kelly on its low end."
-        : "The model's own edge. Calibrated blends it with the bookies' chance by how far each market's settled bets have trusted the model; Predicted close judges the price against where the market is expected to close (the analysis page's Model vs market says how each has done out of sample)."
+        : "The model's own edge, at the median price. Best price judges the model's edge at the best bookie's price instead; Calibrated blends it with the bookies' chance by how far each market's settled bets have trusted the model; Predicted close judges the price against where the market is expected to close (the analysis page's Model vs market says how each has done out of sample)."
       } Each has its own edge ranges.</p>
     </div>
     <div class="mb-4">

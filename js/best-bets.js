@@ -48,9 +48,9 @@ import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, odd
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
          edgeClass, marketTitle, edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
-         HIST_UNLISTED } from './best-bets-history.js';
+         HIST_UNLISTED, HIST_OUTLIER, heldNow, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
-import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS } from './best-bets-optimise.js';
+import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS, optStage } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
 import { loadCalibration, cachedCalibration, calibrateBet, calEdgeAtPoint, closeBet, closeEdgeAtPoint,
          commissionOf } from './calibrate-client.js';
@@ -165,13 +165,66 @@ const fprefs = () => ((prefs.judge === 'cal' && !calib) || (prefs.judge === 'clo
 const judgeBy = () => fprefs().judge;
 const judging = () => judgeBy() === 'cal';
 const judgedEdge = r => (judgeBy() === 'cal' ? (r.cal ? r.cal.bookEdge : null)
-  : judgeBy() === 'close' ? (r.close ? r.close.edge : null) : (r.avgEdge ?? r.edge));
+  : judgeBy() === 'close' ? (r.close ? r.close.edge : null)
+  : judgeBy() === 'book' ? (r.bestEdge ?? r.best_book_edge ?? r.edge) : (r.avgEdge ?? r.edge));
 const passesFilters = r => passesBet(fprefs(), marketOf(r), judgedEdge(r), r.avgBack ?? r.median ?? r.back, isOutlierBet(r));
 // A price-history point judged as the filters judge (best-bets-history.js)
 const pointEdge = r => (judgeBy() === 'cal' ? (pt => calEdgeAtPoint(calib, r, pt, bookBasis()))
-  : judgeBy() === 'close' ? (pt => closeEdgeAtPoint(calib, r, pt, bookBasis())) : null);
+  : judgeBy() === 'close' ? (pt => closeEdgeAtPoint(calib, r, pt, bookBasis()))
+  : judgeBy() === 'book' ? (pt => edgeAtPoint(pt, commissionOf(r))) : null);
 const listedPass = r => pt => pointPasses(fprefs(), marketOf(r), pt, pointEdge(r));
-const listingOf = (r, end) => listedInfo(r.history, listedPass(r), end);
+// Held listings count (best-bets-history.js heldWalk): a bet stays listed
+// while its price taken is at or above the lowest it was listed at
+const listingOf = (r, end) => listedInfo(r.history, listedPass(r), end, commissionOf(r));
+
+// --- held listing ---------------------------------------------------------------
+// A bet the list showed stays on it while it can still be had at a price it
+// was listed at (best-bets-history.js heldNow): a price that has risen past
+// the edge band or the odds range, or an outlier gap the other bookies have
+// closed, keeps it. It drops off (to No longer value) when the best price
+// falls below the lowest price it was listed at, or a model update means
+// that price doesn't pass any more.
+
+// A row's latest check as a history point. r: a /api/best_bets row or
+// dropped bet, as it comes (back: the median) or at the price chosen
+// (upcomingAt: median set)
+const nowPoint = r => [Math.floor(nowOrGone(r)), r.median ?? r.back, r.best_book_back ?? null, r.edge,
+                       r.outlier?.is_outlier ? HIST_OUTLIER : 0, r.best_book ?? null, r.cons_back ?? null];
+// The price its listing is held at: the best bookie's, else the median
+const takenNow = r => r.best_book_back ?? r.median ?? r.back;
+
+// heldNow for a row of the bets or the dropped list, judged under the current
+// filters, its latest check passing or not as `passesNow` says; null where it
+// has no history to tell by. Kept per row until the settings or the
+// calibration change.
+let heldCache = new WeakMap(), heldStamp = [];
+function holdOf(raw, passesNow) {
+  if (heldStamp[0] !== prefs || heldStamp[1] !== calib) { heldCache = new WeakMap(); heldStamp = [prefs, calib]; }
+  const c = heldCache.get(raw);
+  if (c && c.passesNow === passesNow) return c.h;
+  let h = null;
+  if (hasHistory(raw.history)) {
+    const np = nowPoint(raw), pass = listedPass(raw);
+    h = heldNow(raw.history, np, p => (p === np ? passesNow : pass(p)), commissionOf(raw));
+  }
+  heldCache.set(raw, { passesNow, h });
+  return h;
+}
+
+// The model's edge at a price for an upcoming bet (its median: r.median, else
+// back), as the stakes judging by the best price read it
+const stakeEdgeAt = (r, price) => edgeAtPrice(price, { median: r.median ?? r.back, edge: r.edge, best: r.best_book_back,
+                                                       bestEdge: r.best_book_edge, prob: r.model_prob });
+
+// The model's edge at the point a held bet is held at, as the model prices
+// it now: at its median (what the model judge bands), or judging by the best
+// price, at the price it was taken at there
+function heldEdgeNow(r) {
+  const f = r.held?.floorPoint;
+  if (!f) return null;
+  const com = commissionOf(r), prob = impliedProb(nowPoint(r), com);
+  return judgeBy() === 'book' ? edgeAtPoint(f, com, takenAt(f), prob) : rejudgeAt(f, prob, com)[3];
+}
 
 // The bookies that had the best price while the list showed a bet under the
 // filters, up to `end` (unix s), each at the highest price it was best at
@@ -557,26 +610,31 @@ function renderDayFilter() {
 // --- stakes -----------------------------------------------------------------
 // Settled selections as the analysis page counts them by default: at the
 // average price while they showed value (the 'avg' stage - only selections
-// that did), every source, one bet per market.
-const STAKE_STAGE = 'avg';
+// that did), every source, one bet per market; judging by the best price,
+// while the edge there showed value ('bavg'), each bet's edge the one at the
+// best price (best-bets-optimise.js optStage)
+const stakeStage = () => optStage(fprefs());
 
 const VERDICT_TEXT = { thin: 'too few to call', open: 'unproven', ahead: 'proven profit', behind: 'proven loss' };
 
 let settledRows = null;    // decoded /api/best_bets/analysis rows
 let settledBasis = null;   // the price basis `settled` was read at
+let settledStage = null;   // and the stage (stakeStage)
 let modelKey = null;       // what `model` was built from
 
 // The stake model, rebuilt only when what it reads changes (the basis, the
 // risk level, the detail): it bootstraps every market's grid
 function buildModel() {
-  if (settledRows && settledBasis !== prefs.basis) {
+  const stage = stakeStage();
+  if (settledRows && (settledBasis !== prefs.basis || settledStage !== stage)) {
     // A selection that never showed value has no avg price: left out (as the
     // analysis page's avg stage leaves it), not counted at an edge of zero
-    settled = onePerMarket(dropEmptyMarkets(settledRows.filter(r => r[`${STAKE_STAGE}_back`] != null)
-      .map(r => toBet(r, STAKE_STAGE, prefs.basis))).kept);
+    settled = onePerMarket(dropEmptyMarkets(settledRows.filter(r => r[`${stage}_back`] != null)
+      .map(r => toBet(r, stage, prefs.basis)).map(b => (stage === 'bavg' ? { ...b, edge: b.bookEdge } : b))).kept);
     settledBasis = prefs.basis;
+    settledStage = stage;
   }
-  const key = settled && [prefs.basis, stakePrefs.risk, stakePrefs.detail].join('|');
+  const key = settled && [prefs.basis, stage, stakePrefs.risk, stakePrefs.detail].join('|');
   if (key && key === modelKey) return;
   modelKey = key;
   model = settled && stakeModel(settled, stakePrefs.risk, stakePrefs.detail);
@@ -702,10 +760,15 @@ function stakeCell(r) {
   const notYours = usedWarning(r, r.mine);   // none of the viewer's bookies has it at an edge
   if (notYours) return td('<span class="text-[11px] font-semibold text-amber-300">⚠ –</span>', `No stake: ${notYours[1]}`);
   if (r.mine && bookBasis()) r = takenAtMine(r);   // staked where the viewer would take it
-  if (judgeBy() !== 'model') return calStakeCell(r, td);
+  if (judgeBy() === 'cal' || judgeBy() === 'close') return calStakeCell(r, td);
   if (!model) return td(stakesFailed ? '<span class="text-gray-600">–</span>' : '<span class="bsm-skeleton h-3 w-10 inline-block"></span>',
     stakesFailed ? 'Could not load the settled bets the stake is worked out from' : '');
-  const s = stakeFor(liveBet(r), model, stakePrefs.balance);
+  // A held listing: staked as at the price it is held at (its edge band and
+  // median then, at the model now), taken at the price now. Judging by the
+  // best price, the band is that edge's, at the price taken.
+  const at = r.held ? { ...r, edge: heldEdgeNow(r) ?? judgedEdge(r), median: r.held.floorPoint[1] }
+    : judgeBy() === 'book' ? { ...r, edge: stakeEdgeAt(r, r.back) ?? r.bestEdge } : r;
+  const s = stakeFor(liveBet(at), model, stakePrefs.balance);
   const title = stakeTitle(s);
   if (s.reason === 'outlier') return td('<span class="text-[11px] font-semibold text-red-400">Outlier</span>', title);
   if (s.reason === 'behind') return td('<span class="text-[11px] text-red-400/80">Losing</span>', title);
@@ -778,6 +841,33 @@ function takenAtMine(r) {
            close: closeBet(calib, at, { median: r.median, taken: at.back }) };
 }
 
+// Why a bet doesn't pass the filters at its latest check (a held one's line)
+function whyNotNow(r) {
+  const key = marketOf(r), fp = fprefs(), edge = judgedEdge(r);
+  if (!(edge > 0)) return judgeBy() === 'model' ? 'its edge at the median price is no longer positive (the best price has held)'
+    : `its ${judgeLabel(fp)} is no longer positive`;
+  if (!inRange(r.median ?? r.back, oddsRangeOf(prefs))) return 'its median price has moved past your odds range';
+  const [lo, hi] = edgeRangeOf(fp, key);
+  if (edge > hi + 1e-9) return `its ${judgeLabel(fp)} (${signedPct(edge)}) is now above the range set for this market`;
+  if (edge < lo - 1e-9) return `its ${judgeLabel(fp)} (${signedPct(edge)}) is now below the range set for this market`;
+  return r.outlier ? 'its gap to the other bookies no longer counts as an outlier' : 'it no longer passes your filters';
+}
+
+// A held listing's line under the edges: the lowest price it was listed at,
+// which the best price is still at or above
+function heldLine(r) {
+  const h = r.held;
+  if (!h) return '';
+  const f = h.floorPoint, e = heldEdgeNow(r);
+  const title = [`Held: listed at ${odds(h.floor)} ${agoText(f[0])} (median ${odds(f[1])}, edge ${signedPct(f[3])} then`
+    + `${e != null && Math.abs(e - f[3]) > 0.0005 ? `, ${signedPct(e)} at the model now` : ''}).`,
+    `It passes on its own no longer: ${whyNotNow(r)}. A listed bet stays listed while the best price is at or above the lowest `
+    + 'price it was listed at, and drops off when the price falls below it or a model update means that price no longer passes.',
+    'Staked as at that price, its edge band then.'].join('\n');
+  return `<div class="text-[11px] leading-snug" title="${esc(title)}"><span class="text-sky-300/90 font-semibold">held</span> `
+    + `<span class="text-gray-400">≥ ${odds(h.floor)}</span></div>`;
+}
+
 // Prices, model and edges each stacked in one cell: the selection cell is
 // three or four lines tall anyway, and a phone has room for few columns.
 function betRow(r, i) {
@@ -800,7 +890,7 @@ function betRow(r, i) {
       <td class="px-2 py-2 text-right tabular-nums whitespace-nowrap">
         <div class="font-bold ${signCls(r.edge)}" title="At the average (median) price">${signedPct(r.edge)}</div>
         <div class="text-[11px] leading-snug" title="At the best bookie's price"><span class="text-gray-500">best</span> <span class="font-semibold ${signCls(r.bestEdge)}">${signedPct(r.bestEdge)}</span></div>
-        ${yoursEdge(r)}${calLine(r)}${closeLine(r)}
+        ${yoursEdge(r)}${calLine(r)}${closeLine(r)}${heldLine(r)}
         <div class="sm:hidden text-[11px] text-gray-500 leading-snug">fair ${odds(r.fair_odds)}</div>
       </td>
       ${stakeCell(r)}
@@ -833,10 +923,27 @@ function oneLinePerSide(rows, oddsTyped) {
 // drops out at once
 const notStarted = r => Date.parse(r.kickoff) > Date.now();
 
-// The upcoming bets that pass the sport / day / My Teams / market filters, at
-// the price chosen, one line per side (any tab)
-const upcomingRows = (use = prefs.use) => oneLinePerSide(bets.map(r => upcomingAt(r, use)).filter(r => notStarted(r) && passes(r) && passesDay(r)
-                                          && passesFilters(r)), oddsTyped(prefs));
+// The bets the list can show: the rows, and the tracked bets no longer among
+// them (dropped), which a held listing can keep
+function candidates() {
+  const keys = new Set(bets.map(rowKey));
+  return [...bets, ...dropped.filter(r => !keys.has(rowKey(r)))];
+}
+// A bet at the price chosen (upcomingAt) if the list shows it: it passes the
+// market filters, or its listing is held (held: heldNow's, kept on the row);
+// else null
+function listedAt(raw, use = prefs.use) {
+  const r = upcomingAt(raw, use);
+  if (passesFilters(r)) return r;
+  if (raw.gone_at) return null;
+  const h = holdOf(raw, false);
+  return h?.held ? { ...r, held: h } : null;
+}
+
+// The upcoming bets the list shows under the sport / day / My Teams / market
+// filters (passing or held), at the price chosen, one line per side (any tab)
+const upcomingRows = (use = prefs.use) => oneLinePerSide(candidates().filter(r => notStarted(r) && passes(r) && passesDay(r))
+                                          .map(r => listedAt(r, use)).filter(Boolean), oddsTyped(prefs));
 
 // --- one bookie ---------------------------------------------------------------
 // The Bookie filter (prefs.bookFilter; null: every bookie): only the upcoming
@@ -859,6 +966,10 @@ function atBook(r, book) {
   return { price, edge: edge ?? null };
 }
 
+// Whether a bet is listed at one bookie's price (atBook): value there, or
+// (a held listing) that price at or above the one it is held at
+const okAt = (r, at) => !!at && (at.edge > 0 || (!!r.held && at.price >= r.held.floor - 1e-9));
+
 // The upcoming bets the list shows: with a bookie chosen, those with value
 // there. Its price has the edge Filters judges by, whatever the model's own
 // there (mine.edge) says, so no ⚠ for it.
@@ -866,7 +977,7 @@ function listedRows() {
   const book = prefs.bookFilter;
   if (!book) return upcomingRows();
   return upcomingRows(book === BETFAIR ? null : [book]).map(r => ({ ...r, atBookie: atBook(r, book) }))
-    .filter(r => r.atBookie?.edge > 0)
+    .filter(r => okAt(r, r.atBookie))
     .map(r => (r.mine ? { ...r, mine: { ...r.mine, ok: true } } : r));
 }
 
@@ -877,7 +988,7 @@ function renderBookFilter() {
   if (view !== 'upcoming') return;
   const kinds = TABS.find(t => t.key === tab).kinds;
   const counts = {};
-  const add = (r, b) => { if (atBook(r, b)?.edge > 0) counts[b] = (counts[b] || 0) + 1; };
+  const add = (r, b) => { if (okAt(r, atBook(r, b))) counts[b] = (counts[b] || 0) + 1; };
   for (const r of upcomingRows()) {
     if (!kinds.includes(r.market_kind)) continue;
     if (isExchange(r)) add(r, BETFAIR);
@@ -980,8 +1091,10 @@ function renderBets() {
     + 'they will have moved): use them as a guide to where the value is. Their edge allows for Betfair commission.';
   $('method-note').textContent = tab === 'scorers' || tab === 'props' ? bookNote : `${bookNote} ${exchangeNote}`;
   $('method-note').textContent += stakeNote + ' The list refreshes every 2 minutes while the page is open; New marks a bet listed '
-    + 'in the last half hour. Below the list, No longer value: bets you could have seen listed under your filters earlier that '
-    + "aren't now.";
+    + 'in the last half hour. A listed bet stays listed ("held") while the best price is at or above the lowest price it was listed at, '
+    + 'even once its edge or its price has moved past your ranges or an outlier gap has closed. Below the list, No longer value: '
+    + "bets you could have seen listed under your filters earlier that aren't now: the price fell below the lowest it was listed at, "
+    + 'a model update means that price no longer passes, or it left the board.';
   renderDropped();
 }
 
@@ -994,10 +1107,10 @@ function droppedRows() {
   const kinds = TABS.find(t => t.key === tab).kinds;
   const listedNow = new Set(upcomingRows().map(rowKey));
   const out = [];
-  for (const r of [...bets.filter(b => !b.alternate && !listedNow.has(rowKey(b))), ...dropped]) {
+  for (const r of candidates().filter(b => !b.alternate && !listedNow.has(rowKey(b)))) {
     if (!notStarted(r) || !kinds.includes(r.market_kind) || !passes(r) || !passesDay(r)) continue;
     const listing = listingOf(r, nowOrGone(r));
-    if (listing.ever) out.push({ ...upcomingAt(r), listing });
+    if (listing.ever) out.push({ ...upcomingAt(r), listing, hold: r.gone_at ? null : holdOf(r, false) });
   }
   return out.sort(byTime);
 }
@@ -1012,9 +1125,27 @@ function droppedReason(r) {
       + `(${{ alt: "the bookies' alternate line", model: "the new line's price, moved back by the model's chances at the two lines", approx: "the new line's price, moved back by the model's chances at the two lines" }[r.lc_src]})` : '')];
   }
   if (r.gone_at) return ['Off the board', `Not in the latest check since ${kickoffText(r.gone_at)}: the bookies took it down or moved the line`];
+  // A listing is held while the best price stays at or above the lowest
+  // price it was listed at that still passes at the model now
+  const h = r.hold, now = takenNow(r);
+  if (h?.ever && h.floorThen != null) {
+    const at = judgeBy() === 'model' && h.floorThenPoint ? (() => {
+      const q = rejudgeAt(h.floorThenPoint, impliedProb(nowPoint(r), commissionOf(r)), commissionOf(r));
+      return `: at the model now its edge at ${odds(q[1])} (the median then) would be ${signedPct(q[3])}`;
+    })() : '';
+    if (h.floor == null) return ['Model update', `The model has been updated since it was listed, and the prices it was listed at `
+      + `(down to ${odds(h.floorThen)}) don't pass your filters any more${at}`];
+    if (now < h.floor - 1e-9) {
+      return now >= h.floorThen - 1e-9
+        ? ['Model update', `The model has been updated since it was listed: the lowest price it was listed at that still passes is `
+          + `${odds(h.floor)}, and the best price now, ${odds(now)}, is below it`]
+        : ['Price fell', `The best price now, ${odds(now)}, is below ${odds(h.floor)}, the lowest price it was listed at`];
+    }
+  }
   const edge = judgedEdge(r);
   if (!(edge > 0)) return ['No edge now', judgeBy() === 'cal' ? 'Its calibrated edge at the price taken is no longer positive'
     : judgeBy() === 'close' ? 'Its edge against the predicted close, at the price taken, is no longer positive'
+    : judgeBy() === 'book' ? "Its edge at the best bookie's price is no longer positive"
     : 'Its edge at the median price is no longer positive'];
   if (!inRange(r.median ?? r.back, oddsRangeOf(prefs))) return ['Odds out of range', 'Its median price is outside your odds range'];
   if (!inRange(edge, edgeRangeOf(fprefs(), key))) return ['Edge out of range', 'Its edge is outside the range you set for this market'];
@@ -1898,7 +2029,7 @@ function trackEdgeOf() {
 function trackBet(b, edgeOf) {
   const r = b.row;
   return { ...r, takeAt: b.taken, fallback: b.fallback, backAt: b.back,
-           edgeAt: edgeOf ? edgeOf(r) : b.edge, bookAt: priceAt(r, STAKE_STAGE, 'book').back,
+           edgeAt: edgeOf ? edgeOf(r) : b.edge, bookAt: priceAt(r, stakeStage(), 'book').back,
            takeBest: priceAt(r, 'peak', prefs.basis).back, takeClose: priceAt(r, 'close', prefs.basis).back,
            clvClose: hasRealClose(r) ? closeAt(r, prefs.basis).back : null };
 }
@@ -2138,7 +2269,7 @@ function renderViewSwitch() {
 // range (by the judge), the odds range, the outlier rules - whatever the sport
 // pills, day, My Teams or one line per side say, by rowKey: the Multi
 // Generator's legs under "My Best Bets filters"
-const filteredKeys = () => new Set(bets.filter(notStarted).map(r => upcomingAt(r)).filter(passesFilters).map(rowKey));
+const filteredKeys = () => new Set(candidates().filter(notStarted).map(r => listedAt(r)).filter(Boolean).map(rowKey));
 // A leg's chance as the Stake column stakes on it at `price` (the Multi
 // Generator's system multis): judging by the calibrated or predicted-close
 // edge, its 90% low end; by the model, its edge cut to what settled bets like
@@ -2157,7 +2288,7 @@ function stakeChance(r, price) {
   if (!model) return null;
   // The multis are staked at the level's Kelly fraction: a stake from a less
   // sure tier (a smaller fraction) comes in as the edge that makes it the same
-  const s = stakeFor(liveBet(at), model);
+  const s = stakeFor(liveBet(judge === 'book' ? { ...at, edge: stakeEdgeAt({ ...r, median: r.back }, price) ?? r.edge } : at), model);
   return s.kelly ? Math.min(0.999, (1 + s.kelly.edge * s.kelly.k / model.k) / price) : null;
 }
 // The Multi Generator's view of the page: the judge (its chances), the
@@ -2168,7 +2299,7 @@ function multiCtx() {
   let keys = null;
   const judge = judgeBy();
   return { api, calib, judge, prefs, filtered: () => (keys ||= filteredKeys()),
-           stake: stakePrefs, stakeReady: judge === 'model' ? !!model || stakesFailed : calib !== null, stakeChance, refresh: render };
+           stake: stakePrefs, stakeReady: judge === 'model' || judge === 'book' ? !!model || stakesFailed : calib !== null, stakeChance, refresh: render };
 }
 const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
   : view === 'multi' ? (multi ? multi.renderMulti(multiCtx()) : loadMulti()) : renderBets();

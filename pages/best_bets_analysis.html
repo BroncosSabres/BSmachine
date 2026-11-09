@@ -102,11 +102,13 @@
                 Edit <span id="f-mine-summary" class="text-xs text-gray-400"></span>
               </button>
             </div>
-            <label class="flex items-center gap-1.5" title="Average while showing value (the default): the time-weighted average price while the selection's median edge was positive, what betting it whenever it was listed got; only selections that showed value. First priced: the odds and model price the first time we saw the selection. Closing: the last check before the start, only for selections priced more than once.">Odds taken
+            <label class="flex items-center gap-1.5" title="Average while showing value (the default): the time-weighted average price while the selection's median edge was positive, what betting it whenever it was listed got; only selections that showed value. At the best price: the same while the edge at the best bookie's price was positive, which takes in the bets with an edge only there too, banded by that edge. First priced: the odds and model price the first time we saw the selection. Closing: the last check before the start, only for selections priced more than once.">Odds taken
               <select id="f-stage" class="bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-sm text-white">
                 <option value="avg" selected>Average while showing value</option>
                 <option value="first">First showing value</option>
                 <option value="peak">Peak while showing value (ceiling)</option>
+                <option value="bavg">Average while value at the best price</option>
+                <option value="bfirst">First value at the best price</option>
                 <option value="open">When first priced</option>
                 <option value="close">Closing</option>
               </select>
@@ -316,6 +318,34 @@
             </div>
           </div>
           <p id="since-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
+        </section>
+
+        <section id="bands-section" class="card mb-4 scroll-mt-20" aria-labelledby="bands-title">
+          <h2 id="bands-title" class="text-sm font-bold text-gray-100">Median vs best-price bands</h2>
+          <p id="bands-sub" class="text-[11px] text-gray-500"></p>
+          <div id="bands-body">
+            <div class="overflow-x-auto -mx-1 mt-3">
+              <table class="w-full text-sm sm:min-w-[46rem]">
+                <thead>
+                  <tr class="text-xs text-gray-500 uppercase tracking-wider">
+                    <th rowspan="2" class="px-2 py-2 text-left font-semibold align-bottom">Sport · market</th>
+                    <th colspan="3" class="px-2 pt-2 text-center font-semibold border-l border-gray-700/60" title="Each market's edge band at the median price, the Filters' default">Median edge</th>
+                    <th colspan="3" class="px-2 pt-2 text-center font-semibold border-l border-gray-700/60" title="Each market's edge band at the best bookie's price (Filters → Judge by: Best price)">Edge at best price</th>
+                  </tr>
+                  <tr class="text-[10px] text-gray-500 uppercase tracking-wider">
+                    <th class="px-2 pb-2 text-left font-semibold border-l border-gray-700/60" title="The band Most profitable gives the market now">Rule now</th>
+                    <th class="px-2 pb-2 text-right font-semibold" title="Every rule the market has had in turn, each on the game days after the results that set it">Bets</th>
+                    <th class="px-2 pb-2 text-right font-semibold" title="Profit at 1 unit a bet, and the return with its 90% range">Units · ROI</th>
+                    <th class="px-2 pb-2 text-left font-semibold border-l border-gray-700/60">Rule now</th>
+                    <th class="px-2 pb-2 text-right font-semibold">Bets</th>
+                    <th class="px-2 pb-2 text-right font-semibold">Units · ROI</th>
+                  </tr>
+                </thead>
+                <tbody id="bands-rows"></tbody>
+              </table>
+            </div>
+          </div>
+          <p id="bands-note" class="mt-2 text-[11px] text-gray-600 leading-snug"></p>
         </section>
 
         <section class="card mb-4" aria-labelledby="grid-title">

@@ -14,11 +14,16 @@
 // units won. It is fitted to the past, so it flatters what comes next.
 import { toBet } from './safe-stake.js';
 import { profit, dropEmptyMarkets, onePerMarket, edgeCuts } from './roi-stats.js';
-import { oddsRangeOf, inRange, ruleFor, edgeField, typedRange } from './best-bets-filters.js';
+import { oddsRangeOf, inRange, ruleFor, edgeField, typedRange, priceAt } from './best-bets-filters.js';
 import { overrounds } from './calibrate.js';
 import { calibrateBet, closeBet } from './calibrate-client.js';
 
 export const OPT_STAGE = 'avg';
+// The stage settled bets are read at, by what judges: the average while the
+// median edge was positive, or judging by the best price, the average while
+// the edge at the best bookie's price was ('bavg': migration 045's window,
+// which also holds the bets with an edge only there)
+export const optStage = prefs => (prefs.judge === 'book' ? 'bavg' : OPT_STAGE);
 // A market with fewer settled bets than this is left as it is, and a range
 // needs this many in it
 export const OPT_MIN_BETS = 10;
@@ -27,14 +32,20 @@ export const OPT_MIN_BETS = 10;
 // range. edgeOf(row): the edge that judges (the calibrated one, with Filters
 // judging by it), else the model's at the stage.
 export function optimiseBets(rows, prefs, edgeOf = null) {
-  const at = rows.filter(r => r[`${OPT_STAGE}_back`] != null).map(r => toBet(r, OPT_STAGE, prefs.basis));
+  const stage = optStage(prefs);
+  const at = rows.filter(r => r[`${stage}_back`] != null).map(r => toBet(r, stage, prefs.basis));
   if (edgeOf) for (const b of at) b.edge = edgeOf(b.row);
   const odds = oddsRangeOf(prefs);
   return onePerMarket(dropEmptyMarkets(at.filter(b => b.edge != null)).kept).filter(b => b.edge > 0 && inRange(b.back, odds));
 }
 
+// A settled row's edge at the best bookie's price, averaged while that edge
+// showed value (the 'bavg' stage), whatever the price basis
+export const bookEdgeOf = row => (row.bavg_back == null ? null : priceAt(row, 'bavg', 'book').bookEdge);
+
 // optimiseMarkets' edgeOf for the edge the settings judge by, over the settled
-// rows: null for the model's own (and where the fit it needs couldn't be had:
+// rows: the best-price edge (bookEdgeOf) judging by it; null for the model's
+// own (and where the fit it needs couldn't be had:
 // calib false, or no predicted-close model, as the pages fall back to the
 // model's), undefined while the calibration is still coming (calib null).
 //   cal    the calibrated edge at the average price while it showed value
@@ -44,6 +55,7 @@ export function optimiseBets(rows, prefs, edgeOf = null) {
 //          and first_hrs counts back from the real kickoff, so the hours left
 //          are the real ones.
 export function judgeEdgeOf(rows, prefs, calib) {
+  if (prefs.judge === 'book') return bookEdgeOf;
   if (prefs.judge !== 'cal' && prefs.judge !== 'close') return null;
   if (calib === null || calib === undefined) return undefined;
   if (!calib || (prefs.judge === 'close' && !calib.close)) return null;

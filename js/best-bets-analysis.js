@@ -33,9 +33,9 @@ import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFr
          dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, ladderCuts, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText,
          outlierFits, OUT_CLASSES, OUT_CLASS_LABELS, OUT_DEFAULT_CUT, outCutsFor, outRuleOf, windowKeys, fittedCut,
-         edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
+         edgeText, typedRange, judgeLabel, priceAt } from './best-bets-filters.js';
 import { localPrefs, syncPrefs, savePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
-import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS } from './best-bets-optimise.js';
+import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS, bookEdgeOf } from './best-bets-optimise.js';
 import { installTapTips } from './tap-tips.js';
 import { loadCalibration, cachedCalibration, calibrateBet, closeBet } from './calibrate-client.js';
 import { overrounds, MIN_JUDGE_BETS, MIN_JUDGE_GAMES } from './calibrate.js';
@@ -82,7 +82,15 @@ const STAGES = {
   first: ['odds when first showing value', 'when it first showed value'],
   avg: ['average odds while showing value', 'averaged over the time it showed value'],
   peak: ['peak odds while showing value (not achievable)', 'at the best price while it showed value, a ceiling no one can time'],
+  // While the edge at the best bookie's price was positive (migration 045):
+  // every selection the stages above take in, plus those with an edge only
+  // there; banded by that edge (BEST_STAGES)
+  bfirst: ['odds when first showing value at the best price', "when it first showed value at the best bookie's price"],
+  bavg: ['average odds while showing value at the best price', "averaged over the time it showed value at the best bookie's price"],
 };
+// The stages whose bets are banded and judged by the edge at the best
+// bookie's price: edge is that edge, medEdge the median's
+const BEST_STAGES = ['bfirst', 'bavg'];
 const stageOf = () => STAGES[$('f-stage').value] || STAGES.avg;
 // "odds when first priced · best bookie"
 function stageText(capital = false) {
@@ -124,7 +132,10 @@ function closeEdgeOfBet(b) {
                        taken: (basis() === 'book' ? r[`${st}_book_back`] : null) ?? r[`${st}_back`], at: kick / 1000 - hrs * 3600 });
   return c ? c.edge : null;
 }
-const judgedEdge = b => (minePrefs().judge === 'cal' ? calEdgeOfBet(b) : minePrefs().judge === 'close' ? closeEdgeOfBet(b) : b.edge);
+// The edge at the best bookie's price (judging by the best price)
+const bestEdgeOfBet = b => (b.medEdge !== undefined ? b.edge : priceAt(b.row, $('f-stage').value, 'book').bookEdge);
+const judgedEdge = b => (minePrefs().judge === 'cal' ? calEdgeOfBet(b) : minePrefs().judge === 'close' ? closeEdgeOfBet(b)
+  : minePrefs().judge === 'book' ? bestEdgeOfBet(b) : b.medEdge ?? b.edge);
 const passesMine = (b, odds = true) => odds ? passesMarket(minePrefs(), b.group, judgedEdge(b), b.back)
   : passesEdge(minePrefs(), b.group, judgedEdge(b));
 
@@ -189,7 +200,9 @@ function scopes(withMine = mine()) {
     if (when && !when(r)) continue;
     if (stage === 'close' && !(r.n_checks > 1)) continue;
     if (r[`${stage}_back`] == null) continue;   // never showed value (or not recorded)
-    out.push(toBet(r, stage, basis()));
+    const b = toBet(r, stage, basis());
+    if (BEST_STAGES.includes(stage)) { b.medEdge = b.edge; b.edge = priceAt(r, stage, 'book').bookEdge; }
+    out.push(b);
   }
   const { kept, dropped } = dropEmptyMarkets(out);
   // The bet that stands for a market is picked before the odds cut, so moving
@@ -718,7 +731,7 @@ function renderBets() {
       <td class="px-2 py-1.5"><span class="font-semibold text-gray-100">${esc(selectionText(r))}</span><span class="block text-[10px] text-gray-500">${esc(kindLabel(b.kind))} · ${b.book ? esc(b.book) : 'bookmakers'}</span></td>
       <td class="px-2 py-1.5 text-right">${odds(b.taken ?? b.back)}${out ? `<span class="block text-[10px] text-gray-500 whitespace-nowrap">${b.gap != null ? `gap ${signedPct(b.gap, 0)} · ` : ''}median ${odds(b.back)}</span>` : ''}</td>
       <td class="px-2 py-1.5 text-right">${out
-        ? `<span class="${signCls(b.bookEdge)}">${signedPct(b.bookEdge, 0)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">median ${signedPct(b.edge, 0)} · model ${pct(b.prob, 0)}</span>`
+        ? `<span class="${signCls(b.bookEdge)}">${signedPct(b.bookEdge, 0)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">median ${signedPct(b.medEdge ?? b.edge, 0)} · model ${pct(b.prob, 0)}</span>`
         : `${signedPct(b.edge, 0)}<span class="block text-[10px] text-gray-500">model ${pct(b.prob, 0)}</span>`}</td>
       <td class="px-2 py-1.5 text-right whitespace-nowrap"><span class="font-semibold ${signCls(p)}">${outcome(b)}</span><span class="block text-[10px] ${signCls(p)}">${p > 0 ? '+' : ''}${p.toFixed(2)}</span></td>
     </tr>`;
@@ -1745,6 +1758,58 @@ function sinceReport() {
   return sinceCache.report;
 }
 
+// --- median vs best-price bands -------------------------------------------------
+// Most profitable two ways, each followed from the start (rulesOverTime's
+// every rule in turn: out of sample): each market's band of the model's edge
+// at the median price (the Filters' default, on the bets' average while that
+// edge showed value), and of its edge at the best bookie's price (Judge by:
+// Best price, on the average while that one did: 'bavg', migration 045).
+// Read at the Price above and the Filters' odds range, whatever Sport,
+// Market, Period and the slider say.
+let bandsCache = { raw: null, key: null };
+
+function bandsReports() {
+  const keys = modalKeys();
+  const key = [prefs.basis, prefs.odds.join('-'), keys.join(',')].join('|');
+  if (bandsCache.raw !== raw || bandsCache.key !== key) {
+    bandsCache = { raw, key, keys, med: rulesOverTime(raw, { ...prefs, judge: 'model' }, keys, null),
+                   best: rulesOverTime(raw, { ...prefs, judge: 'book' }, keys, bookEdgeOf) };
+  }
+  return bandsCache;
+}
+
+function renderBands() {
+  const ready = raw.some(r => r.bavg_back != null);
+  $('bands-body').classList.toggle('hidden', !ready);
+  if (!ready) {
+    $('bands-sub').textContent = "Waiting for the settled bets' best-price window (migration 045 and its backfill).";
+    $('bands-note').textContent = '';
+    return;
+  }
+  const { keys, med, best } = bandsReports();
+  const odds = rangeText(oddsRangeOf(prefs));
+  $('bands-sub').textContent = `Most profitable judged by each edge, every rule in turn (each market's band refitted after every game day, `
+    + `its bets the game days after: what following it from the start got) · settled bets at the ${basis() === 'book' ? 'best bookie' : 'median'} `
+    + `price, one per market${odds ? `, ${odds}` : ''} · whatever Sport, Market, Period and the odds slider say`;
+  const turns = (rep, k) => (rep[k] ? rep[k].periods.filter(p => p.rule.status === 'on').flatMap(p => p.bets) : []);
+  const ruleText = r => (!r ? '–' : r.status === 'on' ? edgeText(typedRange(r.edge, 0.01)) : r.status === 'off' ? 'Off' : 'Not set');
+  const cells = (rule, bets) => {
+    const st = ruleStats(bets, { thinRange: true });
+    return `<td class="px-2 py-2 text-left border-l border-gray-700/60 ${rule?.status === 'on' ? 'text-gray-200' : 'text-gray-500'}">${esc(ruleText(rule))}</td>
+      <td class="px-2 py-2 text-right text-gray-300">${st.n ? st.n.toLocaleString() : '–'}</td>
+      <td class="px-2 py-2 text-right">${st.n ? `<span class="${signCls(st.units)}">${units(st.units)}</span><span class="block text-[10px] text-gray-500 whitespace-nowrap">`
+        + `<span class="${signCls(st.roi)}">${signedPct(st.roi)}</span>${st.roiCI ? ` · ${range(st.roiCI)}` : ''}</span>` : '–'}</td>`;
+  };
+  const shown = keys.filter(k => turns(med, k).length || turns(best, k).length || med[k]?.status === 'on' || best[k]?.status === 'on');
+  const all = rep => shown.flatMap(k => turns(rep, k));
+  $('bands-rows').innerHTML = `<tr class="border-t border-gray-700/60 tabular-nums align-top font-semibold">
+      <td class="px-2 py-2 text-left text-gray-100">All markets</td>${cells(null, all(med))}${cells(null, all(best))}</tr>`
+    + shown.map(k => `<tr class="border-t border-gray-700/60 tabular-nums align-top">
+      <td class="px-2 py-2 text-left text-gray-300 whitespace-nowrap">${esc(groupLabel(k))}</td>${cells(med[k], turns(med, k))}${cells(best[k], turns(best, k))}</tr>`).join('');
+  $('bands-note').textContent = "Judging by the best price takes in bets with an edge at one bookie only, so its bands sit higher and it bets more. "
+    + 'Both are refitted on the results so far each day, so neither has seen the bets it is scored on: compare them on the 90% ranges, not the point figures.';
+}
+
 const nextDay = d => new Date(dayMs(d) + DAY_MS).toISOString().slice(0, 10);
 const sumUnits = bets => bets.reduce((a, b) => a + profit(b), 0);
 
@@ -1935,6 +2000,7 @@ function render() {
   renderOutliers();
   renderMineTime();
   renderSince();
+  renderBands();
   renderBreakdown(base);
 }
 
