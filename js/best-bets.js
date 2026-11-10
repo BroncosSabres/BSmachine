@@ -48,7 +48,7 @@ import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, odd
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
          edgeClass, marketTitle, edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
-         HIST_UNLISTED, HIST_OUTLIER, heldNow, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
+         HIST_UNLISTED, HIST_OUTLIER, heldNow, listedSince, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS, optStage } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
@@ -211,6 +211,20 @@ function holdOf(raw, passesNow) {
   return h;
 }
 
+// When a bet on the list was listed (unix s): the start of the listing it is
+// in now under the current filters, held checks counting, from its history
+// (best-bets-history.js listedSince; its latest check is listed, it being on
+// the list). Without a history, when this browser first saw it listed; else null.
+function listingSince(r) {
+  if (hasHistory(r.history)) {
+    const np = nowPoint(r), pass = listedPass(r);
+    const t = listedSince([...r.history, np], p => p === np || pass(p), commissionOf(r));
+    if (t != null) return t;
+  }
+  const s = seen[rowKey(r)];
+  return s?.[0] ? s[0] / 1000 : null;
+}
+
 // The model's edge at a price for an upcoming bet (its median: r.median, else
 // back), as the stakes judging by the best price read it
 const stakeEdgeAt = (r, price) => edgeAtPrice(price, { median: r.median ?? r.back, edge: r.edge, best: r.best_book_back,
@@ -254,7 +268,7 @@ const byTime = (a, b) => new Date(a.kickoff) - new Date(b.kickoff);
 const gameKey = r => `${r.sport}:${r.game_id}`;
 // Descending, nothing to go on last
 const desc = (x, y) => (y ?? -Infinity) - (x ?? -Infinity);
-const SORT_LABELS = { best: 'best edge', edge: 'average edge', time: 'start time' };
+const SORT_LABELS = { best: 'best edge', edge: 'average edge', time: 'start time', listed: 'newest listed' };
 
 // The kickoff's date in the viewer's time zone, 'YYYY-MM-DD'
 function dayOf(iso) {
@@ -1050,10 +1064,12 @@ function renderBets() {
     // starting together grouped, each one's bets highest odds first (at the
     // bookie chosen, else yours where that isn't the best, else the price on top)
     const takenPrice = r => r.atBookie?.price ?? r.mine?.price ?? r.back;
+    const since = sortBy === 'listed' ? new Map(rows.map(r => [r, listingSince(r)])) : null;
     const order = {
       best: (a, b) => desc(a.bestEdge, b.bestEdge) || b.edge - a.edge,
       edge: (a, b) => b.edge - a.edge,
       time: (a, b) => byTime(a, b) || gameKey(a).localeCompare(gameKey(b)) || desc(takenPrice(a), takenPrice(b)) || b.edge - a.edge,
+      listed: (a, b) => desc(since.get(a), since.get(b)) || desc(a.bestEdge, b.bestEdge) || b.edge - a.edge,
     }[sortBy];
     rows.sort(order);
     loadLogs(rows);

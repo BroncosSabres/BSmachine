@@ -87,7 +87,7 @@ const DEFAULT_EDGE = ['10', ''];
 const DEFAULT_CAL_EDGE = ['0', ''];   // any calibrated edge: it has the doubt in it already
 const DEFAULT_ODDS = ['', ''];
 export const OUTLIER_MODES = ['any', 'only', 'off'];
-export const SORTS = ['best', 'edge', 'time'];
+export const SORTS = ['best', 'edge', 'time', 'listed'];
 export const LIVE_SORTS = ['best', 'edge', 'time', 'result', 'ev', 'chance'];
 export const LIVE_FINALS = ['any', 'hide', 'only'];
 // Off unless switched on: the moneyline is the NHL head-to-head shown by default

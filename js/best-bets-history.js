@@ -139,6 +139,19 @@ export function listedInfo(points, pass, end, com = null) {
   return { ever: !!lastPoint, secs, firstAt, lastPoint, lastEnd };
 }
 
+// Over points (oldest first, the latest check last) and pass(point): when
+// the listing the last point is in began (unix seconds; held listings count,
+// heldWalk at commission com), or null where the last point isn't listed.
+// A bet listed, dropped and listed again dates from the latest listing.
+export function listedSince(points, pass, com = 0) {
+  const list = Array.isArray(points) ? points : [];
+  const walk = heldWalk(list, pass, com);
+  let i = walk.length - 1;
+  if (i < 0 || !walk[i].listed) return null;
+  while (i > 0 && walk[i - 1].listed) i--;
+  return list[i][0];
+}
+
 // The bookies that had the best price at the checks pass(point) picks, each
 // with the highest price it was best at and how long it was the best in all
 // (seconds; a check holds until the next one, the last until `end`):
