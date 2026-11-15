@@ -95,11 +95,12 @@ const OFF_BY_DEFAULT = new Set(['nhl|match_odds:3']);
 
 const isThreeWay = r => r.market_kind === 'match_odds' && !!(r.three_way ?? /3 way|60 min/i.test(r.market_name || ''));
 export const marketOf = r => `${r.sport}|${r.market_kind}${isThreeWay(r) ? ':3' : ''}`;
-// A game's market and side whatever the line: a main line and its alternates
-// win and lose together. NHL totals come under two settlement rules (market_id
-// ending ':reg' / ':ot'), each a market of its own with its own standard line.
+// A game's market and side whatever the line (a player prop's: that player's):
+// a main line and its alternates win and lose together. NHL totals come under
+// two settlement rules (market_id ending ':reg' / ':ot'), each a market of its
+// own with its own standard line.
 const ruleOf = r => /:(reg|ot)$/.exec(r.market_id || '')?.[1] || '';
-export const lineSideKey = r => `${r.sport}:${r.game_id}|${r.market_kind}|${ruleOf(r)}|${r.side}`;
+export const lineSideKey = r => `${r.sport}:${r.game_id}|${r.market_kind}|${ruleOf(r)}|${r.side}|${r.player_id ?? ''}`;
 
 export function marketLabel(key) {
   const m = MARKETS.find(x => x.key === key);

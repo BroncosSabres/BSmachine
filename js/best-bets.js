@@ -945,14 +945,16 @@ function betRow(r, i) {
 // at most one line is shown per game, market and side. With no odds range
 // typed that is the bookies' standard line; with one, the standard line when
 // its price fits, else the alternate nearest it that does (lineSideKey: an
-// NHL total's settlement rule a market of its own).
+// NHL total's settlement rule a market of its own). An alternate with no
+// standard line to be near (main_line: the NFL yards props' ladders, which
+// are for the Multi Generator) isn't shown.
 function oneLinePerSide(rows, oddsTyped) {
   if (!oddsTyped) return rows.filter(r => !r.alternate);
   const key = lineSideKey;
   const standard = new Set(rows.filter(r => !r.alternate).map(key));
   const nearest = new Map();
   for (const r of rows) {
-    if (!r.alternate || standard.has(key(r))) continue;
+    if (!r.alternate || standard.has(key(r)) || r.main_line == null) continue;
     const dist = r.main_line == null ? Infinity : Math.abs(r.line - r.main_line);
     const best = nearest.get(key(r));
     if (!best || dist < best.dist || (dist === best.dist && r.edge > best.r.edge)) nearest.set(key(r), { r, dist });

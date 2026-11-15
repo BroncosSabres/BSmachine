@@ -159,7 +159,9 @@ const familyOf = r => `${String(r.market_id).split(':')[1]}|${r.market_kind}|${r
 
 // rows -> whether a row is in the fits: every selection but an alternate
 // further than FIT_ALT_RANGE from each of its market's main lines in rows
-// (a line move gives a market more than one); none there to tell: in
+// (a line move gives a market more than one); none there to tell: in. An
+// alternate of a kind with no range (the NFL yards props' ladders, from
+// 2026-11-16) is out: the fits weren't validated with them.
 export function inFits(rows) {
   const mains = new Map();
   for (const r of rows) {
@@ -171,7 +173,7 @@ export function inFits(rows) {
   return r => {
     if (!isAlternate(r)) return true;
     const range = FIT_ALT_RANGE[r.sport]?.[r.market_kind], lines = mains.get(familyOf(r));
-    return range == null || !lines || lines.some(m => Math.abs(+r.line - m) <= range + 1e-9);
+    return range != null && (!lines || lines.some(m => Math.abs(+r.line - m) <= range + 1e-9));
   };
 }
 
