@@ -21,7 +21,7 @@
 // biggest edges are often its own error. Where that loss is clear of luck,
 // bets past that point are outliers and get no stake.
 import { SPORT_LABELS, KIND_LABELS, isProp } from './best-bets-shared.js';
-import { profit, gameBootstrap, edgeCuts, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+import { profit, gameBootstrap, edgeCuts, RULE_MIN_BETS, RULE_MIN_GAMES, dropEmptyMarkets, onePerMarket } from './roi-stats.js';
 import { priceAt, closeAt, hasRealClose, lineMoved, OUT_CUTS, OUT_CLASSES, outCutKey, edgeClass, windowKeys,
          windowTake } from './best-bets-filters.js';
 
@@ -437,6 +437,52 @@ export function stakeModel(bets, riskKey, detailKey) {
     risk, detail, k: kellyFraction(risk), bets: pos, byGroup: groups, bands: new Map(),
     all: stakeGrid(pos, risk, detail),
     grids: new Map([...groups].map(([g, bs]) => [g, stakeGrid(bs, risk, detail)])),
+  };
+}
+
+// The settled bets a stake model is built over (the Best Bets page's, and
+// the VM's precomputed models, build_model.mjs): decoded /analysis rows at
+// the stage ('avg', or 'bavg' judging by the best price, whose edge is then
+// the best price's) and price basis. A selection that never showed value has
+// no price at the stage: left out (as the analysis page's avg stage leaves
+// it), not counted at an edge of zero.
+export function settledBets(rows, stage, basis) {
+  return onePerMarket(dropEmptyMarkets(rows.filter(r => r[`${stage}_back`] != null)
+    .map(r => toBet(r, stage, basis)).map(b => (stage === 'bavg' ? { ...b, edge: b.bookEdge } : b))).kept);
+}
+
+// --- a stake model built elsewhere (the VM: build_model.mjs) ----------------
+// What stakeFor / stakeTitle / tierLows read of a model, every band's stats
+// and tiers worked out ahead (bandStats and tierLows would otherwise run a
+// bootstrap on the page as each band is first needed), without the bets.
+// hydrateModel(JSON.parse(JSON.stringify(compactModel(m)))) answers stakeFor
+// exactly as m does. Infinity (the last cut) travels as null.
+
+const cutsOut = cuts => cuts.map(x => (x === Infinity ? null : x));
+const cutsIn = cuts => cuts.map(x => (x === null ? Infinity : x));
+const sizeOf = s => ({ n: s.n, games: s.games, roi: s.roi });
+const gridOut = g => ({ edge: cutsOut(g.edge), odds: cutsOut(g.odds), ceil: g.ceil,
+                        rows: g.rows.map(sizeOf), cols: g.cols.map(sizeOf) });
+const gridIn = g => ({ ...g, edge: cutsIn(g.edge), odds: cutsIn(g.odds) });
+
+export function compactModel(model, riskKey, detailKey) {
+  const bands = {};
+  for (const [group, grid] of model.grids) {
+    grid.rows.forEach((_, i) => {
+      const { bets, ...st } = bandStats(model, group, i);
+      st.tiers = tierLows(model.bands.get(`${group}|${i}`), model.risk);
+      bands[`${group}|${i}`] = st;
+    });
+  }
+  return { risk: riskKey, detail: detailKey, k: model.k, all: gridOut(model.all),
+           grids: Object.fromEntries([...model.grids].map(([g, grid]) => [g, gridOut(grid)])), bands };
+}
+
+export function hydrateModel(c) {
+  return {
+    risk: RISK_LEVELS[c.risk], detail: BIN_DETAIL[c.detail], k: c.k, bets: [], byGroup: new Map(),
+    all: gridIn(c.all), grids: new Map(Object.entries(c.grids).map(([g, grid]) => [g, gridIn(grid)])),
+    bands: new Map(Object.entries(c.bands)),
   };
 }
 

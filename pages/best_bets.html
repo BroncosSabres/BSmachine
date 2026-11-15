@@ -17,7 +17,7 @@
     <!-- The page's data asked for now, before its modules load: with a saved sign-in good for
          another minute, each request's promise (its data, or null) waits on window.__bbPre for
          best-bets.js init(), which asks again itself for anything that comes back null -->
-    <script>!function(){try{var s=JSON.parse(localStorage.getItem('sb-xjqpyyhqzatzlmlojcxv-auth-token')||'null');if(!s||!s.access_token||!(s.expires_at*1e3-Date.now()>6e4))return;var B='https://bsmachine-backend.onrender.com/api/',v=new URLSearchParams(location.search).get('view'),pre={};['best_bets','best_bets/results?for=best_bets','best_bets/analysis','best_bets/live'].concat(v==='recent'?['best_bets/recent']:[]).forEach(function(p){pre[p]=fetch(B+p,{headers:{Authorization:'Bearer '+s.access_token}}).then(function(r){return r.ok?r.json():null}).catch(function(){return null})});window.__bbPre=pre}catch(e){}}();</script>
+    <script>!function(){try{var s=JSON.parse(localStorage.getItem('sb-xjqpyyhqzatzlmlojcxv-auth-token')||'null');if(!s||!s.access_token||!(s.expires_at*1e3-Date.now()>6e4))return;var B='https://bsmachine-backend.onrender.com/api/',v=new URLSearchParams(location.search).get('view'),pre={};['best_bets','best_bets/results?for=best_bets','best_bets/analysis','best_bets/model','best_bets/live'].concat(v==='recent'?['best_bets/recent']:[]).forEach(function(p){pre[p]=fetch(B+p,{headers:{Authorization:'Bearer '+s.access_token}}).then(function(r){return r.ok?r.json():null}).catch(function(){return null})});window.__bbPre=pre}catch(e){}}();</script>
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -48,6 +48,7 @@
     <link rel="modulepreload" href="/js/best-bets-prefs.js">
     <link rel="modulepreload" href="/js/best-bets-optimise.js">
     <link rel="modulepreload" href="/js/calibrate.js">
+    <link rel="modulepreload" href="/js/bb-model-version.js">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.117.3/+esm">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/functions-js@2.117.3/+esm">

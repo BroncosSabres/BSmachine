@@ -40,9 +40,10 @@ import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount,
          PROP_KINDS, isProp, outlierHtml, pickOutlierHtml, sportTag, kickoffText } from './best-bets-shared.js';
 import { installTapTips } from './tap-tips.js';
 import { openBooks, KNOWN_BOOKS } from './best-bets-books.js';
-import { decodeRows, toBet, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets,
-         marketKey, propKey } from './safe-stake.js';
-import { dropEmptyMarkets, onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
+import { decodeRows, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets,
+         marketKey, propKey, settledBets, hydrateModel } from './safe-stake.js';
+import { MODEL_VERSION } from './bb-model-version.js';
+import { onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
@@ -635,34 +636,42 @@ let settledRows = null;    // decoded /api/best_bets/analysis rows
 let settledBasis = null;   // the price basis `settled` was read at
 let settledStage = null;   // and the stage (stakeStage)
 let modelKey = null;       // what `model` was built from
+// The model built ahead on the VM (/api/best_bets/model, tools/build-model.mjs)
+// for this data and this code's MODEL_VERSION: the stake model at each
+// setting and the calibration, with their bootstraps and fits done. Null:
+// the page works them out itself, as it always did.
+let vmModel = null;
 
 // The stake model, rebuilt only when what it reads changes (the basis, the
-// risk level, the detail): it bootstraps every market's grid
+// risk level, the detail): it bootstraps every market's grid, unless the
+// VM's (vmModel) has it
 function buildModel() {
   const stage = stakeStage();
   if (settledRows && (settledBasis !== prefs.basis || settledStage !== stage)) {
-    // A selection that never showed value has no avg price: left out (as the
-    // analysis page's avg stage leaves it), not counted at an edge of zero
-    settled = onePerMarket(dropEmptyMarkets(settledRows.filter(r => r[`${stage}_back`] != null)
-      .map(r => toBet(r, stage, prefs.basis)).map(b => (stage === 'bavg' ? { ...b, edge: b.bookEdge } : b))).kept);
+    settled = settledBets(settledRows, stage, prefs.basis);
     settledBasis = prefs.basis;
     settledStage = stage;
   }
   const key = settled && [prefs.basis, stage, stakePrefs.risk, stakePrefs.detail].join('|');
   if (key && key === modelKey) return;
   modelKey = key;
-  model = settled && stakeModel(settled, stakePrefs.risk, stakePrefs.detail);
+  const built = settled && vmModel?.stakes?.[key];
+  model = built ? hydrateModel(built) : settled && stakeModel(settled, stakePrefs.risk, stakePrefs.detail);
 }
 
 let settledVersion = null;  // /api/best_bets/analysis version (what the calibration is cached by)
 
-async function loadStakes(pre) {
+// preModel: the /api/best_bets/model request (its data, or null), taken only
+// for the same data version and MODEL_VERSION
+async function loadStakes(pre, preModel = null) {
   let landed = false;
   try {
-    const data = await fetched(pre, 'best_bets/analysis');
+    const [data, built] = await Promise.all([fetched(pre, 'best_bets/analysis'), Promise.resolve(preModel).catch(() => null)]);
     if (!data) return;
     settledRows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
     settledVersion = data.version ?? null;
+    vmModel = built && built.model_version === MODEL_VERSION && built.version != null
+      && built.version === settledVersion ? built : null;
     fits = outlierFits(data.outliers);
     settledBasis = modelKey = null;
     keepOptimised();
@@ -681,13 +690,14 @@ async function loadStakes(pre) {
 
 let calibBasis = null;   // the price basis calib is for, or is being fitted for
 
-// The calibration (calibrate-client.js): from this browser's cache, applied
-// at once (-> true: the caller redraws), else fitted in a Worker, and the page
-// redraws when it lands
+// The calibration (calibrate-client.js): the VM's for this data (vmModel: the
+// parts this page reads, the same at every price basis) or this browser's
+// cache, applied at once (-> true: the caller redraws), else fitted in a
+// Worker, and the page redraws when it lands
 function startCalibration() {
   if (!settledRows) return false;
   const basisNow = calibBasis = prefs.basis;
-  const hit = cachedCalibration(settledVersion, basisNow);
+  const hit = vmModel?.calib || cachedCalibration(settledVersion, basisNow);
   if (hit) {
     applyCalibration(hit);
     return true;
@@ -2672,7 +2682,8 @@ async function init() {
   render();
   scheduleBets();  // and keeps itself current
   loadResults(ahead.results);   // the track record fills in when it arrives
-  loadStakes(ahead.analysis);   // and the Stake column
+  // and the Stake column, with the VM's model where it has one for this data
+  loadStakes(ahead.analysis, session ? early['best_bets/model'] || prefetch('best_bets/model', session) : null);
   loadLive(ahead.live);         // and the bets in play (the Live tab's count too)
   if (view === 'recent') loadRecent(ahead.recent);   // the settled ones only once looked at
   // The account's filters, where they differ from this browser's
