@@ -17,6 +17,11 @@ import { passesBet, outlierPasses, edgeClass } from './best-bets-filters.js';
 
 export const HIST_OUTLIER = 1;
 export const HIST_UNLISTED = 2;
+// HIST_MOVED - a price from a line the bet has since moved from (a main line
+// or player line), converted to the bet's own line by the model's chances at
+// each (the backend's moved_history): the bet's one history through the moves
+export const HIST_MOVED = 4;
+export const hasMovedPrices = r => Array.isArray(r.history) && r.history.some(p => p[4] & HIST_MOVED);
 
 // Whether a check was an outlier price under the viewer's outlier settings:
 // its gap and edge class (the edge at the best price is the median's scaled

@@ -49,7 +49,7 @@ import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, odd
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
          edgeClass, marketTitle, edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
-         HIST_UNLISTED, HIST_OUTLIER, heldNow, listedSince, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
+         HIST_UNLISTED, HIST_OUTLIER, hasMovedPrices, heldNow, listedSince, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
 import { optimiseMarkets, judgeEdgeOf, rulesOverTime, OPT_MIN_BETS, optStage } from './best-bets-optimise.js';
 import { logit, sigmoid, edgeAt as edgeAtOdds } from './calibrate.js';
@@ -428,13 +428,15 @@ function lineInfo(r) {
   return { series, from: series[0][1], now, pts: linePointsFor(r.side, r.line, now) };
 }
 
-// The sparkline: the line where it has moved (a guide at the row's own line,
-// the latest coloured by whether the market went its way), else the price.
-// Up is a better offer for this side either way, as a longer price is: an
-// over's line falling, an under's or a handicap's (the side's own) rising.
+// The sparkline: the price, through any line moves where the bet's earlier
+// lines' prices are in its history converted to its line (hasMovedPrices);
+// else the line where it has moved (a guide at the row's own line, the
+// latest coloured by whether the market went its way). Up is a better offer
+// for this side either way, as a longer price is: an over's line falling, an
+// under's or a handicap's (the side's own) rising.
 function historySpark(r, series, { tone = true } = {}) {
   const li = lineInfo(r);
-  if (!li) return sparkline(series);
+  if (!li || hasMovedPrices(r)) return sparkline(series);
   const t = !tone || li.pts === 0 ? null : li.pts > 0 ? 'for' : 'against';
   const sgn = r.side === 'over' ? -1 : 1;
   const offer = li.series.map(([at, x]) => [at, sgn * x]);
@@ -447,7 +449,10 @@ function lineTitle(r) {
   if (!li) return [];
   // Gone at its own line: the selection itself was taken down, not moved
   const when = r.gone_at && li.now === r.line ? 'when last priced' : 'now';
-  const out = [`Line: ${lineText(r, li.from)} when first priced, ${lineText(r, li.now)} ${when}. Bookies move these lines rather than the price, so the price above is this line's only.`];
+  const out = [`Line: ${lineText(r, li.from)} when first priced, ${lineText(r, li.now)} ${when}. `
+    + (hasMovedPrices(r)
+      ? `Bookies move these lines rather than the price: the prices from while it was at ${[...new Set(r.line_history.map(p => p[1]))].filter(x => x !== r.line).map(x => lineText(r, x)).join(', ')} are converted to ${lineText(r, r.line)} (by the model's chances at each line), so the price history runs through the moves.`
+      : "Bookies move these lines rather than the price, so the price above is this line's only.")];
   if (li.now !== r.line) out.push(`This bet is at ${lineText(r, r.line)}: the market has moved ${ptsText(r, li.pts)} its way since.`);
   return out;
 }
