@@ -6,4 +6,4 @@
 // best-bets-shared.js) would change a stake or a calibration for the same
 // data: until the VM has built one with the new number, the page works them
 // out itself, as before.
-export const MODEL_VERSION = 1;
+export const MODEL_VERSION = 2;   // 2: the model carries the slim analysis rows

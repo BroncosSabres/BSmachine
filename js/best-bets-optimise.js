@@ -61,7 +61,10 @@ export function judgeEdgeOf(rows, prefs, calib) {
   if (!calib || (prefs.judge === 'close' && !calib.close)) return null;
   const book = prefs.basis === 'book';
   let sums = null;
-  const mktSum = row => (sums ??= overrounds(rows, 'close')).get(row);
+  // A row's market's closing overround over all the rows; the slim rows of
+  // the VM's model (tools/build-model.mjs) carry it worked out over all of
+  // the analysis data, which they aren't
+  const mktSum = row => ('mkt_sum' in row ? row.mkt_sum : (sums ??= overrounds(rows, 'close')).get(row));
   if (prefs.judge === 'cal') {
     return row => {
       if (row.avg_back == null) return null;

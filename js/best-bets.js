@@ -666,17 +666,30 @@ function buildModel() {
 
 let settledVersion = null;  // /api/best_bets/analysis version (what the calibration is cached by)
 
-// preModel: the /api/best_bets/model request (its data, or null), taken only
-// for the same data version and MODEL_VERSION
-async function loadStakes(pre, preModel = null) {
+// The next task: the page answers input between loadStakes' steps rather
+// than freezing for all of them at once
+const nextTask = () => (globalThis.scheduler?.yield ? scheduler.yield() : new Promise(r => setTimeout(r, 0)));
+
+// preModel: the /api/best_bets/model request (its data, or null). The VM's
+// model for this code's MODEL_VERSION (the API sends it only while it is the
+// current analysis data's) carries the rows of it the page reads (its slim
+// rows), so the analysis data itself is fetched only without one.
+async function loadStakes(preModel = null) {
   let landed = false;
   try {
-    const [data, built] = await Promise.all([fetched(pre, 'best_bets/analysis'), Promise.resolve(preModel).catch(() => null)]);
+    const built = await Promise.resolve(preModel).catch(() => null);
+    const usable = !!built && built.model_version === MODEL_VERSION && Array.isArray(built.rows);
+    const data = usable ? built : await fetched(null, 'best_bets/analysis');
     if (!data) return;
-    settledRows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
+    await nextTask();
+    const rows = decodeRows(data).filter(r => String(r.market_id).startsWith('oddsapi:'));   // no Betfair
+    await nextTask();
+    // All of the new data's state at once: anything that draws between the
+    // steps (a refresh, the account's filters arriving) sees old or new, not both
+    settledRows = rows;
     settledVersion = data.version ?? null;
-    vmModel = built && built.model_version === MODEL_VERSION && built.version != null
-      && built.version === settledVersion ? built : null;
+    vmModel = usable || (built && built.model_version === MODEL_VERSION && built.version != null
+      && built.version === settledVersion) ? built : null;
     fits = outlierFits(data.outliers);
     settledBasis = modelKey = null;
     keepOptimised();
@@ -686,10 +699,12 @@ async function loadStakes(pre, preModel = null) {
   } catch {
     stakesFailed = true;
   }
-  // With this browser's calibration in already, the whole page at once (as
-  // its own redraw would have, straight after)
-  if (landed) { render(); return; }
+  await nextTask();
+  // With the calibration in already, the whole page (as its own redraw would
+  // have, straight after); the track record a task after the list
+  if (landed) renderChrome();
   renderView();
+  await nextTask();
   renderTrackRecord();
 }
 
@@ -2387,6 +2402,14 @@ function renderHeads() {
 }
 
 function render() {
+  renderChrome();
+  renderView();
+  renderTrackRecord();
+}
+
+// Everything render() draws but the view and the track record (loadStakes
+// draws those two a task apart)
+function renderChrome() {
   noteSeen(upcomingRows(), true);
   const isLive = view === 'live', isRecent = view === 'recent', isMulti = view === 'multi', upcoming = view === 'upcoming';
   renderViewSwitch();
@@ -2412,8 +2435,6 @@ function render() {
   if (!isMulti) renderSportPills();   // its sports are the generator's own: the page's choice is kept
   renderDayFilter();
   renderBookFilter();
-  renderView();
-  renderTrackRecord();
 }
 
 function setParam(key, value) {
@@ -2660,7 +2681,7 @@ async function init() {
   const session = await getSession().catch(() => null);   // a failure: api() reads it again, inside the try below
   const list = early.best_bets ? fetched(early.best_bets, 'best_bets') : api('best_bets', session);
   const urlView = new URLSearchParams(location.search).get('view');
-  const ahead = !session ? {} : Object.fromEntries(['results', 'analysis', 'live', ...(urlView === 'recent' ? ['recent'] : [])]
+  const ahead = !session ? {} : Object.fromEntries(['results', 'live', ...(urlView === 'recent' ? ['recent'] : [])]
     .map(p => (p === 'results' ? RESULTS_PATH : `best_bets/${p}`))
     .map(path => [path.split(/[/?]/)[1], early[path] || prefetch(path, session)]));
   let data;
@@ -2687,8 +2708,9 @@ async function init() {
   render();
   scheduleBets();  // and keeps itself current
   loadResults(ahead.results);   // the track record fills in when it arrives
-  // and the Stake column, with the VM's model where it has one for this data
-  loadStakes(ahead.analysis, session ? early['best_bets/model'] || prefetch('best_bets/model', session) : null);
+  // and the Stake column: the VM's model, with the analysis data's rows the
+  // page reads, or without a current one the analysis data itself
+  loadStakes(session ? early['best_bets/model'] || prefetch('best_bets/model', session) : null);
   loadLive(ahead.live);         // and the bets in play (the Live tab's count too)
   if (view === 'recent') loadRecent(ahead.recent);   // the settled ones only once looked at
   // The account's filters, where they differ from this browser's
