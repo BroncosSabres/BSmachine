@@ -21,11 +21,12 @@
 // calibration is in). Legs come from the games starting up to a day chosen
 // (all of them, all but some, or only some: Games), at most one a game but
 // for Same Game Multis and same-game combos. With "My Best Bets filters" (on
-// by default) the legs are only bets the Upcoming list's filters pass.
+// by default) the legs are only bets the Upcoming list's filters pass (and,
+// for insurance, the alternate lines of the standard lines among them).
 // Settings are kept in this browser (bsm_bb_multi); locked and excluded legs
 // for the visit only.
 import { esc, odds, pct, signedPct, signCls, selectionText, bookLabel, sportTag, kickoffText, SPORT_LABELS, money } from './best-bets-shared.js';
-import { MARKETS, marketOf, marketLabel } from './best-bets-filters.js';
+import { MARKETS, marketOf, marketLabel, lineSideKey } from './best-bets-filters.js';
 import { KNOWN_BOOKS } from './best-bets-books.js';
 import { calibrateBet, commissionOf } from './calibrate-client.js';
 import { edgeAt } from './calibrate.js';
@@ -218,6 +219,11 @@ function candidates() {
   if (sgmKind() && !sgm) return [];
   const sameGame = s.type === 'combos' && s.sameGame;
   const passed = s.myFilters && ctx?.filtered ? ctx.filtered() : null;   // the Upcoming list's filters
+  // An insurance multi may take an alternate line or total on the side of a
+  // standard line the filters pass (the same bet, judged by its market's
+  // filters at the standard line): a safer line lowers the chance of losing
+  // the stake. Value legs only still asks value at the alternate's own price.
+  const sides = passed && s.type === 'insurance' && ctx?.filteredSides ? ctx.filteredSides() : null;
   const sport = s.game.split(':')[0];
   const out = [];
   for (const r of scoped()) {
@@ -225,7 +231,7 @@ function candidates() {
     if (!(price > 1) || price < lo - 1e-9 || (hi != null && price > hi + 1e-9)) continue;
     if (!(r.model_prob > 0 && r.model_prob < 1)) continue;
     const id = legId(r);
-    if (excluded.has(id) || (passed && !passed.has(id))) continue;
+    if (excluded.has(id) || (passed && !passed.has(id) && !(r.alternate && sides?.has(lineSideKey(r))))) continue;
     const leg = sgm ? legOf(sport, sgm.gs, r) : null;
     if (sgm && !leg) continue;
     const c = chanceOf(r, price);

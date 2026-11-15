@@ -47,7 +47,7 @@ import { onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
-         edgeClass, marketTitle, edgeText, typedRange, judgeLabel } from './best-bets-filters.js';
+         edgeClass, marketTitle, edgeText, typedRange, judgeLabel, lineSideKey } from './best-bets-filters.js';
 import { listedInfo, pointPasses, hasHistory, spanText, lineSeriesOf, linePointsFor, bestBooksOf,
          HIST_UNLISTED, HIST_OUTLIER, hasMovedPrices, heldNow, listedSince, impliedProb, rejudgeAt, takenAt, edgeAtPoint } from './best-bets-history.js';
 import { localPrefs, syncPrefs, savePrefs as storePrefs, openFilters, filterKeys, filtersDataReady, autoOptimise } from './best-bets-prefs.js';
@@ -944,13 +944,11 @@ function betRow(r, i) {
 // A game's alternate lines and totals win and lose with its standard one, so
 // at most one line is shown per game, market and side. With no odds range
 // typed that is the bookies' standard line; with one, the standard line when
-// its price fits, else the alternate nearest it that does.
-// NHL totals come under two settlement rules (market_id ending ':reg' /
-// ':ot'), each a market of its own with its own standard line.
-const ruleOf = r => /:(reg|ot)$/.exec(r.market_id || '')?.[1] || '';
+// its price fits, else the alternate nearest it that does (lineSideKey: an
+// NHL total's settlement rule a market of its own).
 function oneLinePerSide(rows, oddsTyped) {
   if (!oddsTyped) return rows.filter(r => !r.alternate);
-  const key = r => `${r.sport}:${r.game_id}|${r.market_kind}|${ruleOf(r)}|${r.side}`;
+  const key = lineSideKey;
   const standard = new Set(rows.filter(r => !r.alternate).map(key));
   const nearest = new Map();
   for (const r of rows) {
@@ -2316,9 +2314,14 @@ function renderViewSwitch() {
 
 // The bets the Upcoming list's filters pass - each market's switch and edge
 // range (by the judge), the odds range, the outlier rules - whatever the sport
-// pills, day, My Teams or one line per side say, by rowKey: the Multi
-// Generator's legs under "My Best Bets filters"
-const filteredKeys = () => new Set(candidates().filter(notStarted).map(r => listedAt(r)).filter(Boolean).map(rowKey));
+// pills, day, My Teams or one line per side say: the Multi Generator's legs
+// under "My Best Bets filters". keys: by rowKey; sides: the game, market and
+// side (lineSideKey) of each standard line among them, whose alternates an
+// insurance multi may take in its place.
+function filteredBets() {
+  const listed = candidates().filter(notStarted).map(r => listedAt(r)).filter(Boolean);
+  return { keys: new Set(listed.map(rowKey)), sides: new Set(listed.filter(r => !r.alternate).map(lineSideKey)) };
+}
 // A leg's chance as the Stake column stakes on it at `price` (the Multi
 // Generator's system multis): judging by the calibrated or predicted-close
 // edge, its 90% low end; by the model, its edge cut to what settled bets like
@@ -2345,9 +2348,10 @@ function stakeChance(r, price) {
 // the stake settings and each leg's staking chance (system multis), and a
 // redraw for when its type changes what the page shows
 function multiCtx() {
-  let keys = null;
+  let listed = null;
   const judge = judgeBy();
-  return { api, calib, judge, prefs, filtered: () => (keys ||= filteredKeys()),
+  return { api, calib, judge, prefs, filtered: () => (listed ||= filteredBets()).keys,
+           filteredSides: () => (listed ||= filteredBets()).sides,
            stake: stakePrefs, stakeReady: judge === 'model' || judge === 'book' ? !!model || stakesFailed : calib !== null, stakeChance, refresh: render };
 }
 const renderView = () => view === 'live' ? renderLive() : view === 'recent' ? renderRecent()
