@@ -2632,13 +2632,18 @@ for (const id of ['live-unlisted', 'recent-unlisted']) {
 }
 
 async function init() {
+  // The requests best_bets.html's inline script sent before this module
+  // loaded (window.__bbPre: {path: promise of its data or null}), where it
+  // found a saved session; each one that answers null is asked again below
+  const early = window.__bbPre || {};
+  window.__bbPre = null;
   // The list first, then everything else the page opens with, asked for at
   // once rather than after the list is in (prefetch)
   const session = await getSession().catch(() => null);   // a failure: api() reads it again, inside the try below
-  const list = api('best_bets', session);
+  const list = early.best_bets ? fetched(early.best_bets, 'best_bets') : api('best_bets', session);
   const urlView = new URLSearchParams(location.search).get('view');
   const ahead = !session ? {} : Object.fromEntries(['results', 'analysis', 'live', ...(urlView === 'recent' ? ['recent'] : [])]
-    .map(p => [p, prefetch(`best_bets/${p}`, session)]));
+    .map(p => [p, early[`best_bets/${p}`] || prefetch(`best_bets/${p}`, session)]));
   let data;
   try {
     data = await list;

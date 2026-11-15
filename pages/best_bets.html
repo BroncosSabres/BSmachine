@@ -14,6 +14,10 @@
     <link rel="dns-prefetch" href="https://bsmachine-backend.onrender.com">
     <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
     <script>!function(){var K='bsm_backend_pinged',T=6e5,l=+sessionStorage.getItem(K)||0;if(Date.now()-l>=T){sessionStorage.setItem(K,String(Date.now()));fetch('https://bsmachine-backend.onrender.com/health',{cache:'no-store'}).catch(function(){});}}();</script>
+    <!-- The page's data asked for now, before its modules load: with a saved sign-in good for
+         another minute, each request's promise (its data, or null) waits on window.__bbPre for
+         best-bets.js init(), which asks again itself for anything that comes back null -->
+    <script>!function(){try{var s=JSON.parse(localStorage.getItem('sb-xjqpyyhqzatzlmlojcxv-auth-token')||'null');if(!s||!s.access_token||!(s.expires_at*1e3-Date.now()>6e4))return;var B='https://bsmachine-backend.onrender.com/api/',v=new URLSearchParams(location.search).get('view'),pre={};['best_bets','best_bets/results','best_bets/analysis','best_bets/live'].concat(v==='recent'?['best_bets/recent']:[]).forEach(function(p){pre[p]=fetch(B+p,{headers:{Authorization:'Bearer '+s.access_token}}).then(function(r){return r.ok?r.json():null}).catch(function(){return null})});window.__bbPre=pre}catch(e){}}();</script>
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -26,6 +30,24 @@
     <link rel="modulepreload" href="/js/supabase-client.js">
     <link rel="modulepreload" href="/js/calibrate-client.js">
     <link rel="modulepreload" href="/js/close-model.js">
+    <!-- and the rest of best-bets.js's static imports (keep in step with its import lines) -->
+    <link rel="modulepreload" href="/js/api-config.js">
+    <link rel="modulepreload" href="/js/achievements.js">
+    <link rel="modulepreload" href="/js/my-teams.js">
+    <link rel="modulepreload" href="/js/utils.js">
+    <link rel="modulepreload" href="/js/nfl-logos.js">
+    <link rel="modulepreload" href="/js/nhl-logos.js">
+    <link rel="modulepreload" href="/js/player-stats-modal.js">
+    <link rel="modulepreload" href="/js/best-bets-shared.js">
+    <link rel="modulepreload" href="/js/tap-tips.js">
+    <link rel="modulepreload" href="/js/best-bets-books.js">
+    <link rel="modulepreload" href="/js/safe-stake.js">
+    <link rel="modulepreload" href="/js/roi-stats.js">
+    <link rel="modulepreload" href="/js/best-bets-filters.js">
+    <link rel="modulepreload" href="/js/best-bets-history.js">
+    <link rel="modulepreload" href="/js/best-bets-prefs.js">
+    <link rel="modulepreload" href="/js/best-bets-optimise.js">
+    <link rel="modulepreload" href="/js/calibrate.js">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/auth-js@2.117.3/+esm">
     <link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/@supabase/functions-js@2.117.3/+esm">
