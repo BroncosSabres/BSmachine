@@ -2257,10 +2257,13 @@ function renderSinceChange() {
     + 'Hover a market for what it was before.';
 }
 
-// The tracked picks: the track record's pending count
+// The tracked picks: the track record's pending count, and their markets
+// for the Filters modal (?for=best_bets: only those, each once, not every
+// pick; keep in step with best_bets.html's inline requests)
+const RESULTS_PATH = 'best_bets/results?for=best_bets';
 async function loadResults(pre) {
   try {
-    results = await fetched(pre, 'best_bets/results');
+    results = await fetched(pre, RESULTS_PATH);
   } catch { /* the track record goes without them */ }
   renderTrackRecord();
 }
@@ -2643,7 +2646,8 @@ async function init() {
   const list = early.best_bets ? fetched(early.best_bets, 'best_bets') : api('best_bets', session);
   const urlView = new URLSearchParams(location.search).get('view');
   const ahead = !session ? {} : Object.fromEntries(['results', 'analysis', 'live', ...(urlView === 'recent' ? ['recent'] : [])]
-    .map(p => [p, early[`best_bets/${p}`] || prefetch(`best_bets/${p}`, session)]));
+    .map(p => (p === 'results' ? RESULTS_PATH : `best_bets/${p}`))
+    .map(path => [path.split(/[/?]/)[1], early[path] || prefetch(path, session)]));
   let data;
   try {
     data = await list;
