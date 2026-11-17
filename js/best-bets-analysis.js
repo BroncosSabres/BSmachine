@@ -1352,7 +1352,12 @@ function classCut(g, cls) {
   if (!marketMode()) return +$('out-cut').value;
   return outCutsOf(g)[cls] ?? fits.markets[g]?.classes?.[cls]?.cut ?? OUT_DEFAULT;
 }
-const outBets = (rows, cut, cls = null) => rows.map(r => outlierBet(r, cut, cls)).filter(Boolean);
+// Under "One bet per market", one outlier bet per decision (onePerMarket): an
+// outlier bookie often shows its gap on several of a player's alternate yards
+// lines (or a game's alternate lines and totals) at once, one result counted
+// each time otherwise
+const outOne = bets => ($('f-count').value === 'one' ? onePerMarket(bets) : bets);
+const outBets = (rows, cut, cls = null) => outOne(rows.map(r => outlierBet(r, cut, cls)).filter(Boolean));
 const meanOf = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
 const gapText = cut => signedPct(cut, 0);
 const outNote = cut => `Odds are the best bookie's averaged while the gap was ${cut != null ? `${gapText(cut)} or more` : 'shown'} (first price there, then the gap over the other bookies' median and the median across all of them, below). `
@@ -1548,7 +1553,7 @@ function renderOutliers() {
   // page's slowest tables, and most controls (stage, price, odds, risk, the
   // grid, the charts) don't touch them. The data and fits are set once.
   const key = [$('f-period').value, new Date().toDateString(), $('f-sport').value, $('f-market').value, mine(),
-               JSON.stringify(outPrefs()), $('out-cut').value, outSel].join('|');
+               JSON.stringify(outPrefs()), $('out-cut').value, $('f-count').value, outSel].join('|');
   if (key === outKey) return;
   outKey = key;
   const when = periodTest();
@@ -1580,7 +1585,7 @@ function renderOutliers() {
     const m = fits.markets[g]?.all;
     const mineRows = byGroup.get(g) || [];
     // The bets shown: under each class's threshold (the union), or every class at the gap chosen
-    const bets = mm ? mineRows.map(r => { const k = windowKeys(outPrefs(), g, rowWindow(r), fits); return k.length ? windowBet(r, k) : null; }).filter(Boolean)
+    const bets = mm ? outOne(mineRows.map(r => { const k = windowKeys(outPrefs(), g, rowWindow(r), fits); return k.length ? windowBet(r, k) : null; }).filter(Boolean))
       : outBets(mineRows, +$('out-cut').value);
     const st = ruleStats(bets, { thinRange: true });
     const title = `${groupLabel(g)}${periodText()} · ${mm ? (mine() ? 'your outlier settings' : 'where they\'ve paid') : `gap ${gapText(+$('out-cut').value)} and over`}`;
@@ -1590,10 +1595,10 @@ function renderOutliers() {
     // one that is off, or a gap chosen above: every bet in it at that gap
     const cells = OUT_CLASSES.map(cls => {
       const cut = classCut(g, cls), on = mm && outCutsOf(g)[cls] != null;
-      const bets = on ? mineRows.map(r => {
+      const bets = on ? outOne(mineRows.map(r => {
         const k = windowKeys(outPrefs(), g, rowWindow(r), fits).filter(x => x.startsWith(`${cls}:`));
         return k.length ? windowBet(r, k) : null;
-      }).filter(Boolean) : outBets(mineRows, cut, cls);
+      }).filter(Boolean)) : outBets(mineRows, cut, cls);
       return outCell(`${g}|${cls}`, `${groupLabel(g)}${periodText()} · ${OUT_CLASS_LABELS[cls].toLowerCase()} · gap ${on ? 'from ' : ''}${gapText(cut)}${on ? '' : ' and over'}`,
         bets, outNote(on ? null : cut), `${mm ? `<span class="block text-[10px] text-gray-500">${on ? 'from' : 'at'} ${gapText(cut)}+</span>` : ''}${classStatus(g, cls)}`);
     }).join('');
@@ -1649,6 +1654,7 @@ function renderOutliers() {
     + "28 Oct kept only their first and last prices before kickoff, so theirs are the first price there). Edge classes: the model's edge "
     + 'at the median price across the bookies above 0 (what would list it without any gap), above 0 only at the outlier price (the gap '
     + 'made the value), or neither (or not priced); a bet whose edge moved counts in each class it showed in, and once in a market\'s total. '
+    + ($('f-count').value === 'one' ? 'One bet per market (Count): of a player\'s or a game\'s lines with an outlier price, only one counts (the main line before an alternate, then the side the model likes best). ' : '')
     + "Break-even: the gap a bet needs if the others' median were right after their margin, measured on every settled selection of the "
     + "market. Where they've paid: each class's threshold is the gap at which its settled outlier bets have made the most profit (units, not ROI), once one has "
     + 'at least 15 bets and 5 winners and is in profit (for the classes without a median edge, at or above a cautious break-even); '
