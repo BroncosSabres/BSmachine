@@ -43,7 +43,7 @@ import { openBooks, KNOWN_BOOKS } from './best-bets-books.js';
 import { decodeRows, stakeModel, stakeFor, liveBet, kellyStake, tierLows, RISK_LEVELS, outlierBets,
          marketKey, propKey, settledBets, hydrateModel } from './safe-stake.js';
 import { MODEL_VERSION } from './bb-model-version.js';
-import { onePerMarket, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
+import { onePerMarket, onePerMarketAfter, RULE_MIN_BETS, RULE_MIN_GAMES, profit as betProfit } from './roi-stats.js';
 import { marketOf, passesMarket, passesBet, priceAt, oddsRangeOf, oddsTyped, oddsText, prefsSummary, spanRange,
          edgeRangeOf, inRange, BASES, LIVE_STAGES, LIVE_STAGE_LABELS, SORTS, LIVE_SORTS, LIVE_FINALS,
          closeAt, lineMoved, hasRealClose, outlierPasses, outRuleOf, outCutsFor, outlierFits, windowKeys, windowTake,
@@ -2103,15 +2103,12 @@ function renderTrackRecord() {
   // average best price while it showed as one; one a market, and none the
   // value bets above already count
   const counted = new Set(kept.map(([b]) => b.row));
-  const markets = new Set(kept.map(([b]) => b.market).filter(Boolean));
-  const outs = [];
-  for (const b of prefs.outliers === 'off' || !settledRows ? [] : outlierBets(settledRows, fprefs(), fits)) {
-    const r = b.row;
-    if (r.result === 'void' || !t.kinds.includes(r.market_kind) || !passes(r) || !inRange(b.back, oddsRangeOf(prefs))
-        || counted.has(r) || (b.market && markets.has(b.market))) continue;
-    if (b.market) markets.add(b.market);
-    outs.push(b);
-  }
+  const outs = onePerMarketAfter(kept.map(([b]) => b),
+    (prefs.outliers === 'off' || !settledRows ? [] : outlierBets(settledRows, fprefs(), fits)).filter(b => {
+      const r = b.row;
+      return r.result !== 'void' && t.kinds.includes(r.market_kind) && passes(r) && inRange(b.back, oddsRangeOf(prefs))
+        && !counted.has(r);
+    }));
   const outUnits = outs.reduce((a, b) => a + profit(b.row, b.taken), 0);
   const outWins = outs.reduce((a, b) => a + b.win, 0);
   const allUnits = picks.reduce((a, p) => a + profit(p, p.takeAt), 0) + outUnits, allN = picks.length + outs.length;

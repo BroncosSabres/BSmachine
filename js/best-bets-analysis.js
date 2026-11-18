@@ -30,7 +30,7 @@ import { getSession } from './supabase-client.js';
 import { SPORT_LABELS, esc, odds, pct, signedPct, signCls, wonCount, selectionText, loadStakePrefs, saveStakePrefs, money } from './best-bets-shared.js';
 import { summarise, binByEdge, calibration, expectedWins, fitBlend, profitableFrom, profit, lineMoveStats,
          FIT_MIN_BETS, FIT_MIN_GAMES, teamGames, sportLevels, leanOf, leanFit, LEAN_MIN_POINTS,
-         dropEmptyMarkets, onePerMarket, ruleRows, ruleStats, bestRule, ladderCuts, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
+         dropEmptyMarkets, onePerMarket, onePerMarketAfter, ruleRows, ruleStats, bestRule, ladderCuts, MAX_BOOK, RULE_MIN_BETS, RULE_MIN_GAMES } from './roi-stats.js';
 import { BASES, passesMarket, passesEdge, prefsSummary, oddsRangeOf, oddsTyped, inRange, oddsText as rangeText,
          outlierFits, OUT_CLASSES, OUT_CLASS_LABELS, OUT_DEFAULT_CUT, outCutsFor, outRuleOf, windowKeys, fittedCut,
          edgeText, typedRange, judgeLabel, priceAt } from './best-bets-filters.js';
@@ -1680,17 +1680,10 @@ function mineTimeBets() {
   const when = periodTest(), [oddsLo, oddsHi] = oddsRange(), bbOdds = oddsRangeOf(minePrefs());
   const oneEach = $('f-count').value === 'one';
   const counted = new Set(base.map(b => b.row));
-  const markets = new Set(oneEach ? base.map(b => b.market).filter(Boolean) : []);
-  const added = [];
   const rows = raw.filter(r => !when || when(r));
-  for (const b of selected(outlierBets(rows, minePrefs(), fits, $('f-stage').value))) {
-    if (counted.has(b.row) || !(b.back >= oddsLo && b.back < oddsHi) || !inRange(b.back, bbOdds)) continue;
-    if (oneEach && b.market) {
-      if (markets.has(b.market)) continue;
-      markets.add(b.market);
-    }
-    added.push(b);
-  }
+  const extra = selected(outlierBets(rows, minePrefs(), fits, $('f-stage').value))
+    .filter(b => !counted.has(b.row) && b.back >= oddsLo && b.back < oddsHi && inRange(b.back, bbOdds));
+  const added = oneEach ? onePerMarketAfter(base, extra) : extra;
   return { base, added, all: [...base, ...added] };
 }
 

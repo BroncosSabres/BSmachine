@@ -403,6 +403,16 @@ export function onePerMarket(bets) {
   return bets.filter((b, i) => b.prop == null || keep.has(i));
 }
 
+// The extra bets (outlier prices) to add to bets already counted, one per
+// decision as onePerMarket counts them: none on a `prop` the counted bets
+// already have, and of the rest one per `prop` (a player's yards outlier at
+// 49.5, 59.5, 69.5... is one bet, not one per line). Keyed by prop, not
+// market: a prop's market is a single line, so every alternate line passed.
+export function onePerMarketAfter(counted, extra) {
+  const props = new Set(counted.map(b => b.prop).filter(p => p != null));
+  return onePerMarket(extra.filter(b => b.prop == null || !props.has(b.prop)));
+}
+
 // --- betting rules ----------------------------------------------------------
 // A rule is a range of model edge, { edgeLo, edgeHi }: the low end included,
 // the high end not. The odds it applies to are whatever the bets passed in
